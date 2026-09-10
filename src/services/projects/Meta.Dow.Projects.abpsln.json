@@ -1,0 +1,7 @@
+{
+  "modules": {
+    "Meta.Dow.Projects": {
+      "path": "Meta.Dow.Projects.abpmdl.json"
+    }
+  }
+}

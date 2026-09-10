@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.Administration</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.FeatureManagement.HttpApi.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Http.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.HttpApi.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.SettingManagement.HttpApi.Client" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.Administration.Application.Contracts\Meta.Dow.Administration.Application.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="**\*generate-proxy.json" />
+    <Content Remove="**\*generate-proxy.json" />
+  </ItemGroup>
+</Project>

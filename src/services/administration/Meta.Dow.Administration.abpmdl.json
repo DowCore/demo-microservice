@@ -1,0 +1,79 @@
+{
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {},
+      "host": {}
+    }
+  },
+  "packages": {
+    "Meta.Dow.Administration.Domain.Shared": {
+      "path": "src/Meta.Dow.Administration.Domain.Shared/Meta.Dow.Administration.Domain.Shared.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.Domain": {
+      "path": "src/Meta.Dow.Administration.Domain/Meta.Dow.Administration.Domain.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.Application.Contracts": {
+      "path": "src/Meta.Dow.Administration.Application.Contracts/Meta.Dow.Administration.Application.Contracts.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.Application": {
+      "path": "src/Meta.Dow.Administration.Application/Meta.Dow.Administration.Application.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.MongoDB": {
+      "path": "src/Meta.Dow.Administration.MongoDB/Meta.Dow.Administration.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.MongoDB": {
+      "path": "src/Meta.Dow.Administration.MongoDB/Meta.Dow.Administration.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.HttpApi": {
+      "path": "src/Meta.Dow.Administration.HttpApi/Meta.Dow.Administration.HttpApi.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.HttpApi.Client": {
+      "path": "src/Meta.Dow.Administration.HttpApi.Client/Meta.Dow.Administration.HttpApi.Client.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Administration.TestBase": {
+      "path": "test/Meta.Dow.Administration.TestBase/Meta.Dow.Administration.TestBase.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.MongoDB.Tests": {
+      "path": "test/Meta.Dow.Administration.MongoDB.Tests/Meta.Dow.Administration.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.MongoDB.Tests": {
+      "path": "test/Meta.Dow.Administration.MongoDB.Tests/Meta.Dow.Administration.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.Domain.Tests": {
+      "path": "test/Meta.Dow.Administration.Domain.Tests/Meta.Dow.Administration.Domain.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.Application.Tests": {
+      "path": "test/Meta.Dow.Administration.Application.Tests/Meta.Dow.Administration.Application.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.HttpApi.Host": {
+      "path": "host/Meta.Dow.Administration.HttpApi.Host/Meta.Dow.Administration.HttpApi.Host.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.Administration.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/Meta.Dow.Administration.HttpApi.Client.ConsoleTestApp/Meta.Dow.Administration.HttpApi.Client.ConsoleTestApp.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Administration.IdentityServer": {
+      "path": "host/Meta.Dow.Administration.IdentityServer/Meta.Dow.Administration.IdentityServer.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.Administration.Host.Shared": {
+      "path": "host/Meta.Dow.Administration.Host.Shared/Meta.Dow.Administration.Host.Shared.abppkg.json",
+      "folder": "host"
+    }
+  }
+}

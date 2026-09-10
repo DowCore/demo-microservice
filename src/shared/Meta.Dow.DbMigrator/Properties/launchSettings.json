@@ -1,0 +1,14 @@
+{
+    "$schema": "https://json.schemastore.org/launchsettings.json",
+    "profiles": {
+        "Aspire": {
+            "commandName": "Project"
+        },
+        "Meta.Dow.DbMigrator": {
+            "commandName": "Project"
+        },
+        "Docker": {
+            "commandName": "Docker"
+        }
+    }
+}

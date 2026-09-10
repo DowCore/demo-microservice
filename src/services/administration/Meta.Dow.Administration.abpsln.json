@@ -1,0 +1,7 @@
+{
+  "modules": {
+    "Meta.Dow.Administration": {
+      "path": "Meta.Dow.Administration.abpmdl.json"
+    }
+  }
+}

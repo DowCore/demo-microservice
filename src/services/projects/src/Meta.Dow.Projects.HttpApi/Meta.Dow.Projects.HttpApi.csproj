@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.Projects</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.Projects.Application.Contracts\Meta.Dow.Projects.Application.Contracts.csproj" />
+  </ItemGroup>
+</Project>

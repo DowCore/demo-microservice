@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Meta.Dow" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

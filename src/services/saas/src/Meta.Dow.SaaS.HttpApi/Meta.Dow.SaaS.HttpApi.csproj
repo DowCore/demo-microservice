@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.SaaS</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="IdentityModel" Version="7.0.0" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.TenantManagement.HttpApi" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.SaaS.Application.Contracts\Meta.Dow.SaaS.Application.Contracts.csproj" />
+  </ItemGroup>
+</Project>

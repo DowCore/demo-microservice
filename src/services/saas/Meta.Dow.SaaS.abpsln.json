@@ -1,0 +1,7 @@
+{
+  "modules": {
+    "Meta.Dow.SaaS": {
+      "path": "Meta.Dow.SaaS.abpmdl.json"
+    }
+  }
+}

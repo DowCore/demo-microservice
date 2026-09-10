@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow</RootNamespace>
+    <AssetTargetFallback>$(AssetTargetFallback);portable-net45+win8+wp8+wpa81;</AssetTargetFallback>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <MvcRazorExcludeRefAssembliesFromPublish>false</MvcRazorExcludeRefAssembliesFromPublish>
+    <PreserveCompilationReferences>true</PreserveCompilationReferences>
+    <UserSecretsId>MetaDow-4681b4fd-151f-4221-84a4-929d86723e4c</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <DockerfileContext>..\..</DockerfileContext>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="Pages\**\*.js">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Pages\**\*.css">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.12" />
+    <PackageReference Include="DistributedLock.Redis" Version="1.1.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc.UI.Theme.LeptonXLite" Version="5.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Autofac" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Caching.StackExchangeRedis" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.DistributedLocking" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Serilog" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Account.Web.OpenIddict" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Account.Application" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Account.HttpApi" Version="10.6.0" />
+    <ProjectReference Include="..\..\services\administration\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />
+    <ProjectReference Include="..\..\services\identity\src\Meta.Dow.IdentityService.MongoDB\Meta.Dow.IdentityService.MongoDB.csproj" />
+    <ProjectReference Include="..\..\services\saas\src\Meta.Dow.SaaS.MongoDB\Meta.Dow.SaaS.MongoDB.csproj" />
+    <ProjectReference Include="..\..\shared\Meta.Dow.Microservice.Shared\Meta.Dow.Microservice.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\Meta.Dow.ServiceDefaults\Meta.Dow.ServiceDefaults.csproj" />
+  </ItemGroup>
+  <Target Name="InstallAbpLibs" BeforeTargets="BeforeBuild" Condition="!Exists('$(MSBuildProjectDirectory)\wwwroot\libs')">
+    <Message Importance="high" Text="wwwroot/libs is missing; running abp install-libs..." />
+    <Exec Command="abp install-libs" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+</Project>

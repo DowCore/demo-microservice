@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Account.HttpApi" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Identity.HttpApi" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.IdentityService.Application.Contracts\Meta.Dow.IdentityService.Application.Contracts.csproj" />
+  </ItemGroup>
+</Project>

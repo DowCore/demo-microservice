@@ -1,0 +1,7 @@
+{
+  "modules": {
+    "Meta.Dow.IdentityService": {
+      "path": "Meta.Dow.IdentityService.abpmdl.json"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.Administration</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.AutoMapper" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.FeatureManagement.Application" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.Application" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.SettingManagement.Application" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.Administration.Application.Contracts\Meta.Dow.Administration.Application.Contracts.csproj" />
+    <ProjectReference Include="..\Meta.Dow.Administration.Domain\Meta.Dow.Administration.Domain.csproj" />
+  </ItemGroup>
+</Project>

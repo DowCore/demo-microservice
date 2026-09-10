@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenIddict.Abstractions" Version="7.7.0" />
+    <PackageReference Include="Volo.Abp.Account.Application.Contracts" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Ddd.Application.Contracts" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Authorization" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Identity.Application.Contracts" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.IdentityService.Domain.Shared\Meta.Dow.IdentityService.Domain.Shared.csproj" />
+  </ItemGroup>
+</Project>

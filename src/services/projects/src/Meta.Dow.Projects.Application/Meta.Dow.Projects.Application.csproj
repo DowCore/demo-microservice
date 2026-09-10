@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.Projects</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.AutoMapper" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Ddd.Application" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.Projects.Application.Contracts\Meta.Dow.Projects.Application.Contracts.csproj" />
+    <ProjectReference Include="..\Meta.Dow.Projects.Domain\Meta.Dow.Projects.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,79 @@
+{
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {},
+      "host": {}
+    }
+  },
+  "packages": {
+    "Meta.Dow.IdentityService.Domain.Shared": {
+      "path": "src/Meta.Dow.IdentityService.Domain.Shared/Meta.Dow.IdentityService.Domain.Shared.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.Domain": {
+      "path": "src/Meta.Dow.IdentityService.Domain/Meta.Dow.IdentityService.Domain.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.Application.Contracts": {
+      "path": "src/Meta.Dow.IdentityService.Application.Contracts/Meta.Dow.IdentityService.Application.Contracts.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.Application": {
+      "path": "src/Meta.Dow.IdentityService.Application/Meta.Dow.IdentityService.Application.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.MongoDB": {
+      "path": "src/Meta.Dow.IdentityService.MongoDB/Meta.Dow.IdentityService.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.MongoDB": {
+      "path": "src/Meta.Dow.IdentityService.MongoDB/Meta.Dow.IdentityService.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.HttpApi": {
+      "path": "src/Meta.Dow.IdentityService.HttpApi/Meta.Dow.IdentityService.HttpApi.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.HttpApi.Client": {
+      "path": "src/Meta.Dow.IdentityService.HttpApi.Client/Meta.Dow.IdentityService.HttpApi.Client.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.IdentityService.TestBase": {
+      "path": "test/Meta.Dow.IdentityService.TestBase/Meta.Dow.IdentityService.TestBase.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.MongoDB.Tests": {
+      "path": "test/Meta.Dow.IdentityService.MongoDB.Tests/Meta.Dow.IdentityService.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.MongoDB.Tests": {
+      "path": "test/Meta.Dow.IdentityService.MongoDB.Tests/Meta.Dow.IdentityService.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.Domain.Tests": {
+      "path": "test/Meta.Dow.IdentityService.Domain.Tests/Meta.Dow.IdentityService.Domain.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.Application.Tests": {
+      "path": "test/Meta.Dow.IdentityService.Application.Tests/Meta.Dow.IdentityService.Application.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.HttpApi.Host": {
+      "path": "host/Meta.Dow.IdentityService.HttpApi.Host/Meta.Dow.IdentityService.HttpApi.Host.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.IdentityService.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/Meta.Dow.IdentityService.HttpApi.Client.ConsoleTestApp/Meta.Dow.IdentityService.HttpApi.Client.ConsoleTestApp.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.IdentityService.IdentityServer": {
+      "path": "host/Meta.Dow.IdentityService.IdentityServer/Meta.Dow.IdentityService.IdentityServer.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.IdentityService.Host.Shared": {
+      "path": "host/Meta.Dow.IdentityService.Host.Shared/Meta.Dow.IdentityService.Host.Shared.abppkg.json",
+      "folder": "host"
+    }
+  }
+}

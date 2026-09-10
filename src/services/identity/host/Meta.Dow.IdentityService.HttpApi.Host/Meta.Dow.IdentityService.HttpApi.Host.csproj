@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
+    <PreserveCompilationReferences>true</PreserveCompilationReferences>
+    <UserSecretsId>Meta.Dow.IdentityService-c2d31439-b723-48e2-b061-5ebd7aeb6010</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <DockerfileContext>..\..\..\..</DockerfileContext>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Microservice.Shared\Meta.Dow.Microservice.Shared.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.ServiceDefaults\Meta.Dow.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\..\administration\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />
+    <ProjectReference Include="..\..\..\saas\src\Meta.Dow.SaaS.MongoDB\Meta.Dow.SaaS.MongoDB.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.IdentityService.HttpApi\Meta.Dow.IdentityService.HttpApi.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.IdentityService.Application\Meta.Dow.IdentityService.Application.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.IdentityService.MongoDB\Meta.Dow.IdentityService.MongoDB.csproj" />
+  </ItemGroup>
+</Project>

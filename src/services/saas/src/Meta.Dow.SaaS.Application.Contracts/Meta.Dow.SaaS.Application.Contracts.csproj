@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.SaaS</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Ddd.Application.Contracts" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Authorization" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.TenantManagement.Application.Contracts" Version="10.6.0" />
+    <ProjectReference Include="..\..\..\administration\src\Meta.Dow.Administration.Application.Contracts\Meta.Dow.Administration.Application.Contracts.csproj" />
+    <ProjectReference Include="..\Meta.Dow.SaaS.Domain.Shared\Meta.Dow.SaaS.Domain.Shared.csproj" />
+  </ItemGroup>
+</Project>

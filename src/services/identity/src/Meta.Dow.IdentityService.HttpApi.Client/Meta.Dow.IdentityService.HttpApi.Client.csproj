@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Account.HttpApi.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Http.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Identity.HttpApi.Client" Version="10.6.0" />
+    <ProjectReference Include="..\Meta.Dow.IdentityService.Application.Contracts\Meta.Dow.IdentityService.Application.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="**\*generate-proxy.json" />
+    <Content Remove="**\*generate-proxy.json" />
+  </ItemGroup>
+</Project>

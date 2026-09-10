@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.SaaS</RootNamespace>
+    <PreserveCompilationReferences>true</PreserveCompilationReferences>
+    <UserSecretsId>Meta.Dow.SaaS-c2d31439-b723-48e2-b061-5ebd7aeb6010</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <DockerfileContext>..\..\..\..</DockerfileContext>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <PackageReference Include="Volo.Abp.TenantManagement.MongoDB" Version="10.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Microservice.Shared\Meta.Dow.Microservice.Shared.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.ServiceDefaults\Meta.Dow.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\..\administration\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.SaaS.HttpApi\Meta.Dow.SaaS.HttpApi.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.SaaS.Application\Meta.Dow.SaaS.Application.csproj" />
+    <ProjectReference Include="..\..\src\Meta.Dow.SaaS.MongoDB\Meta.Dow.SaaS.MongoDB.csproj" />
+  </ItemGroup>
+</Project>

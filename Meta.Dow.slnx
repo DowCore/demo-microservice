@@ -1,0 +1,70 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/apps/">
+    <Project Path="src/apps/Meta.Dow.AppHost/Meta.Dow.AppHost.csproj" />
+    <Project Path="src/apps/Meta.Dow.AuthServer/Meta.Dow.AuthServer.csproj" />
+  </Folder>
+  <Folder Name="/src/gateway/">
+    <Project Path="src/gateway/Meta.Dow.Gateway/Meta.Dow.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/src/services/" />
+  <Folder Name="/src/services/administration/" />
+  <Folder Name="/src/services/administration/host/">
+    <Project Path="src/services/administration/host/Meta.Dow.Administration.HttpApi.Host/Meta.Dow.Administration.HttpApi.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/services/administration/src/">
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.Application.Contracts/Meta.Dow.Administration.Application.Contracts.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.Application/Meta.Dow.Administration.Application.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.Domain.Shared/Meta.Dow.Administration.Domain.Shared.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.Domain/Meta.Dow.Administration.Domain.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.HttpApi.Client/Meta.Dow.Administration.HttpApi.Client.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.HttpApi/Meta.Dow.Administration.HttpApi.csproj" />
+    <Project Path="src/services/administration/src/Meta.Dow.Administration.MongoDB/Meta.Dow.Administration.MongoDB.csproj" />
+  </Folder>
+  <Folder Name="/src/services/identity/" />
+  <Folder Name="/src/services/identity/host/">
+    <Project Path="src/services/identity/host/Meta.Dow.IdentityService.HttpApi.Host/Meta.Dow.IdentityService.HttpApi.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/services/identity/src/">
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.Application.Contracts/Meta.Dow.IdentityService.Application.Contracts.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.Application/Meta.Dow.IdentityService.Application.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.Domain.Shared/Meta.Dow.IdentityService.Domain.Shared.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.Domain/Meta.Dow.IdentityService.Domain.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.HttpApi.Client/Meta.Dow.IdentityService.HttpApi.Client.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.HttpApi/Meta.Dow.IdentityService.HttpApi.csproj" />
+    <Project Path="src/services/identity/src/Meta.Dow.IdentityService.MongoDB/Meta.Dow.IdentityService.MongoDB.csproj" />
+  </Folder>
+  <Folder Name="/src/services/projects/" />
+  <Folder Name="/src/services/projects/host/">
+    <Project Path="src/services/projects/host/Meta.Dow.Projects.HttpApi.Host/Meta.Dow.Projects.HttpApi.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/services/projects/src/">
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.Application.Contracts/Meta.Dow.Projects.Application.Contracts.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.Application/Meta.Dow.Projects.Application.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.Domain.Shared/Meta.Dow.Projects.Domain.Shared.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.Domain/Meta.Dow.Projects.Domain.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.HttpApi.Client/Meta.Dow.Projects.HttpApi.Client.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.HttpApi/Meta.Dow.Projects.HttpApi.csproj" />
+    <Project Path="src/services/projects/src/Meta.Dow.Projects.MongoDB/Meta.Dow.Projects.MongoDB.csproj" />
+  </Folder>
+  <Folder Name="/src/services/saas/" />
+  <Folder Name="/src/services/saas/host/">
+    <Project Path="src/services/saas/host/Meta.Dow.SaaS.HttpApi.Host/Meta.Dow.SaaS.HttpApi.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/services/saas/src/">
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.Application.Contracts/Meta.Dow.SaaS.Application.Contracts.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.Application/Meta.Dow.SaaS.Application.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Meta.Dow.SaaS.Domain.Shared.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.Domain/Meta.Dow.SaaS.Domain.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.HttpApi.Client/Meta.Dow.SaaS.HttpApi.Client.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.HttpApi/Meta.Dow.SaaS.HttpApi.csproj" />
+    <Project Path="src/services/saas/src/Meta.Dow.SaaS.MongoDB/Meta.Dow.SaaS.MongoDB.csproj" />
+  </Folder>
+  <Folder Name="/src/shared/">
+    <Project Path="src/shared/Meta.Dow.DbMigrator/Meta.Dow.DbMigrator.csproj" />
+    <Project Path="src/shared/Meta.Dow.Hosting.Shared/Meta.Dow.Hosting.Shared.csproj" />
+    <Project Path="src/shared/Meta.Dow.Microservice.Shared/Meta.Dow.Microservice.Shared.csproj" />
+    <Project Path="src/shared/Meta.Dow.ServiceDefaults/Meta.Dow.ServiceDefaults.csproj" />
+    <Project Path="src/shared/Meta.Dow.Shared/Meta.Dow.Shared.csproj" />
+  </Folder>
+</Solution>

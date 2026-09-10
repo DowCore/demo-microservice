@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.Projects</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.MongoDB" Version="10.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Shared\Meta.Dow.Shared.csproj" />
+    <ProjectReference Include="..\Meta.Dow.Projects.Domain\Meta.Dow.Projects.Domain.csproj" />
+  </ItemGroup>
+</Project>

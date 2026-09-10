@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.MongoDB" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Identity.MongoDB" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.OpenIddict.MongoDB" Version="10.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Shared\Meta.Dow.Shared.csproj" />
+    <ProjectReference Include="..\Meta.Dow.IdentityService.Domain\Meta.Dow.IdentityService.Domain.csproj" />
+  </ItemGroup>
+</Project>

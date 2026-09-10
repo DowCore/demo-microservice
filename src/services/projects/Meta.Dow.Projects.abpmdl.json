@@ -1,0 +1,79 @@
+{
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {},
+      "host": {}
+    }
+  },
+  "packages": {
+    "Meta.Dow.Projects.Domain.Shared": {
+      "path": "src/Meta.Dow.Projects.Domain.Shared/Meta.Dow.Projects.Domain.Shared.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.Domain": {
+      "path": "src/Meta.Dow.Projects.Domain/Meta.Dow.Projects.Domain.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.Application.Contracts": {
+      "path": "src/Meta.Dow.Projects.Application.Contracts/Meta.Dow.Projects.Application.Contracts.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.Application": {
+      "path": "src/Meta.Dow.Projects.Application/Meta.Dow.Projects.Application.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.MongoDB": {
+      "path": "src/Meta.Dow.Projects.MongoDB/Meta.Dow.Projects.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.MongoDB": {
+      "path": "src/Meta.Dow.Projects.MongoDB/Meta.Dow.Projects.MongoDB.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.HttpApi": {
+      "path": "src/Meta.Dow.Projects.HttpApi/Meta.Dow.Projects.HttpApi.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.HttpApi.Client": {
+      "path": "src/Meta.Dow.Projects.HttpApi.Client/Meta.Dow.Projects.HttpApi.Client.abppkg.json",
+      "folder": "src"
+    },
+    "Meta.Dow.Projects.TestBase": {
+      "path": "test/Meta.Dow.Projects.TestBase/Meta.Dow.Projects.TestBase.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.MongoDB.Tests": {
+      "path": "test/Meta.Dow.Projects.MongoDB.Tests/Meta.Dow.Projects.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.MongoDB.Tests": {
+      "path": "test/Meta.Dow.Projects.MongoDB.Tests/Meta.Dow.Projects.MongoDB.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.Domain.Tests": {
+      "path": "test/Meta.Dow.Projects.Domain.Tests/Meta.Dow.Projects.Domain.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.Application.Tests": {
+      "path": "test/Meta.Dow.Projects.Application.Tests/Meta.Dow.Projects.Application.Tests.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.HttpApi.Host": {
+      "path": "host/Meta.Dow.Projects.HttpApi.Host/Meta.Dow.Projects.HttpApi.Host.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.Projects.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/Meta.Dow.Projects.HttpApi.Client.ConsoleTestApp/Meta.Dow.Projects.HttpApi.Client.ConsoleTestApp.abppkg.json",
+      "folder": "test"
+    },
+    "Meta.Dow.Projects.IdentityServer": {
+      "path": "host/Meta.Dow.Projects.IdentityServer/Meta.Dow.Projects.IdentityServer.abppkg.json",
+      "folder": "host"
+    },
+    "Meta.Dow.Projects.Host.Shared": {
+      "path": "host/Meta.Dow.Projects.Host.Shared/Meta.Dow.Projects.Host.Shared.abppkg.json",
+      "folder": "host"
+    }
+  }
+}

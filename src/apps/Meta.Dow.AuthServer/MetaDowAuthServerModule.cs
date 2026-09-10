@@ -1,5 +1,6 @@
 using System;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Logging;
@@ -82,6 +83,13 @@ public class MetaDowAuthServerModule : AbpModule
         Configure<AbpBackgroundJobOptions>(options => options.IsJobExecutionEnabled = false);
 
         Configure<AbpDistributedCacheOptions>(options => options.KeyPrefix = "Meta.Dow:");
+
+        // 从 Vue(http://5666) 顶层跳回 AuthServer 时尽量带上 Cookie（Lax 允许顶层 GET）
+        context.Services.ConfigureApplicationCookie(options =>
+        {
+            options.Cookie.SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax;
+            options.Cookie.SecurePolicy = Microsoft.AspNetCore.Http.CookieSecurePolicy.Always;
+        });
     }
 
     public override void OnApplicationInitialization(ApplicationInitializationContext context)

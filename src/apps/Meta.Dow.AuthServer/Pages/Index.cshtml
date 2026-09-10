@@ -95,8 +95,9 @@
                                                 <h4>@application.DisplayName</h4>
                                                 <span class="text-muted">@application.VisitUrl</span>
                                                 <div class="mt-1">
-                                                    @* SSO 入口需同页跳转，才能保留前端 PKCE sessionStorage *@
-                                                    @if (application.VisitUrl?.Contains("/auth/sso", StringComparison.OrdinalIgnoreCase) == true)
+                                                    @* /vue-sso 须同页跳转，保留 AuthServer 登录 Cookie *@
+                                                    @if (application.VisitUrl?.Contains("/vue-sso", StringComparison.OrdinalIgnoreCase) == true
+                                                         || application.VisitUrl?.Contains("/auth/sso", StringComparison.OrdinalIgnoreCase) == true)
                                                     {
                                                         <a abp-button="Outline_Secondary" href="@application.VisitUrl" rel="noopener">Visit</a>
                                                     }

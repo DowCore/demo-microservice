@@ -106,9 +106,7 @@ internal class Program
             .AddProject<Meta_Dow_Gateway>(MetaDowNames.Gateway, launchProfileName: LaunchProfileName)
             .WithExternalHttpEndpoints()
             .WithReference(seq)
-            .WaitFor(admin)
-            .WaitFor(identity)
-            .WaitFor(saas);
+            .WaitForCompletion(migrator);
 
         builder
             .AddProject<Meta_Dow_AuthServer>(MetaDowNames.AuthServer, launchProfileName: LaunchProfileName)

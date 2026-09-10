@@ -61,6 +61,7 @@ public class OpenIddictDataSeeder(
                     grantTypes: [.. client.GrantTypes],
                     redirectUris: client.RedirectUris,
                     postLogoutRedirectUris: client.PostLogoutRedirectUris,
+                    clientUri: client.RootUrls.FirstOrDefault(),
                     consentType: OpenIddictConstants.ConsentTypes.Implicit
                 )
                 .ConfigureAwait(false);
@@ -103,6 +104,7 @@ public class OpenIddictDataSeeder(
         List<string> scopes,
         string[]? redirectUris = null,
         string[]? postLogoutRedirectUris = null,
+        string? clientUri = null,
         List<string>? permissions = null
     )
     {
@@ -126,24 +128,33 @@ public class OpenIddictDataSeeder(
             throw new BusinessException(l["TheClientSecretIsRequiredForConfidentialApplications"]);
         }
 
-        if (
-            !string.IsNullOrEmpty(name)
-            && await _applicationManager.FindByClientIdAsync(name).ConfigureAwait(false) != null
-        )
+        var client = await _applicationManager.FindByClientIdAsync(name).ConfigureAwait(false);
+        if (client != null)
         {
+            if (!string.IsNullOrWhiteSpace(clientUri))
+            {
+                var descriptor = new AbpApplicationDescriptor();
+                await _applicationManager.PopulateAsync(descriptor, client).ConfigureAwait(false);
+                if (!string.Equals(descriptor.ClientUri, clientUri, StringComparison.Ordinal))
+                {
+                    descriptor.ClientUri = clientUri;
+                    await _applicationManager.UpdateAsync(client, descriptor).ConfigureAwait(false);
+                }
+            }
+
             return;
         }
 
-        var client = await _applicationManager.FindByClientIdAsync(name).ConfigureAwait(false);
         if (client == null)
         {
-            var application = new OpenIddictApplicationDescriptor
+            var application = new AbpApplicationDescriptor
             {
                 ClientId = name,
                 ApplicationType = type,
                 ClientSecret = secret,
                 ConsentType = consentType,
                 DisplayName = displayName,
+                ClientUri = clientUri,
             };
 
             Check.NotNullOrEmpty(grantTypes, nameof(grantTypes));

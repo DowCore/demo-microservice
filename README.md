@@ -37,6 +37,14 @@ Aspire Dashboard 会打印本地地址。默认管理员账号与 ABP 一致：`
 网关（开发）：`https://localhost:7500`  
 认证：`https://localhost:7600`（以 launchSettings 为准）
 
+若用 IDE（Cursor / VS）F5 启动时 Gateway 显示 Finished，日志里出现 `run_session` 超时、随后 `dotnet.exe` 没有参数：这是 Aspire DCP 在 IDE 调试会话超时后的回退缺陷。优先用下面命令启动（不走 IDE run session）：
+
+```bash
+dotnet run --project src/apps/Meta.Dow.AppHost
+```
+
+AppHost 已把 `DCP_IDE_REQUEST_TIMEOUT_SECONDS` 调到 300，并让 Gateway 与各 API 一起在迁移完成后启动，减轻排队超时。
+
 ## 技术选择
 
 | 组件 | 实现 |

@@ -1,0 +1,20 @@
+---
+description: 前端固定为 Vue Vben Admin；实际工程与参考仓库路径
+alwaysApply: true
+---
+
+# 前端工程
+
+本仓库是 ABP 微服务后端。前端不在本仓库内，也不再使用 Angular / Blazor WebApp。
+
+| 角色 | 路径 | 用途 |
+|------|------|------|
+| 实际前端 | `D:\Project\vue-demo` | 正在开发的 Vue Vben Admin 工程 |
+| 前端参考 | `D:\Vue\vue-vben-admin` | 官方 Vben 实现，对照登录、鉴权、路由、Vite 代理 |
+
+约定：
+
+- 主应用是 `vue-demo/apps/web-antd`，开发端口 `http://localhost:5666`。
+- OpenIddict 客户端是 `MetaDow_Vue`（password / authorization_code / refresh_token）。
+- 改前端时在 `D:\Project\vue-demo` 动手，并对照 `D:\Vue\vue-vben-admin` 的同类实现。
+- 不要再向用户确认这两条路径，也不要重新引入 Angular 或 Blazor WebApp 客户端。

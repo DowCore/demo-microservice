@@ -26,8 +26,6 @@ namespace Meta.Dow.DbMigrator;
 [DependsOn(typeof(ProjectsApplicationContractsModule))]
 [DependsOn(typeof(SaaSMongoDbModule))]
 [DependsOn(typeof(SaaSApplicationContractsModule))]
-// [DependsOn(typeof(WebAppEntityFrameworkCoreModule))]
-// [DependsOn(typeof(WebAppApplicationContractsModule))]
 public class MetaDowDbMigratorModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)

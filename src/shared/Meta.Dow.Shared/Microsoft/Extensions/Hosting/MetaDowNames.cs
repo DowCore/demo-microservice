@@ -27,8 +27,4 @@ public static class MetaDowNames
 
     public const string SaaSApi = "MetaDowSaaS";
     public const string SaaSDb = "MetaDowSaaSDb";
-
-    public const string WebAppApi = "MetaDowWebApp";
-    public const string WebAppClient = "MetaDowWebAppClient";
-    public const string WebAppDb = "MetaDowWebAppDb";
 }

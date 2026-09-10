@@ -95,7 +95,15 @@
                                                 <h4>@application.DisplayName</h4>
                                                 <span class="text-muted">@application.VisitUrl</span>
                                                 <div class="mt-1">
-                                                    <a abp-button="Outline_Secondary" href="@application.VisitUrl" target="_blank" rel="noopener">Visit</a>
+                                                    @* SSO 入口需同页跳转，才能保留前端 PKCE sessionStorage *@
+                                                    @if (application.VisitUrl?.Contains("/auth/sso", StringComparison.OrdinalIgnoreCase) == true)
+                                                    {
+                                                        <a abp-button="Outline_Secondary" href="@application.VisitUrl" rel="noopener">Visit</a>
+                                                    }
+                                                    else
+                                                    {
+                                                        <a abp-button="Outline_Secondary" href="@application.VisitUrl" target="_blank" rel="noopener">Visit</a>
+                                                    }
                                                 </div>
                                             </abp-card-body>
                                         </abp-card>

@@ -239,6 +239,10 @@ public class OpenIddictDataSeeder(
             {
                 application.Permissions.Add(OpenIddictConstants.Permissions.GrantTypes.AuthorizationCode);
                 application.Permissions.Add(OpenIddictConstants.Permissions.ResponseTypes.Code);
+                if (string.Equals(type, OpenIddictConstants.ClientTypes.Public, StringComparison.OrdinalIgnoreCase))
+                {
+                    application.Requirements.Add(OpenIddictConstants.Requirements.Features.ProofKeyForCodeExchange);
+                }
             }
 
             if (

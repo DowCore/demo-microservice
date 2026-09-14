@@ -2,6 +2,10 @@
   "culture": "en",
   "texts": {
     "MyAccount": "My account",
-    "SamplePageMessage": "A sample page for the IdentityService module"
+    "SamplePageMessage": "A sample page for the IdentityService module",
+    "Permission:OrganizationUnits": "Organization units",
+    "Permission:OrganizationUnits.ManageOU": "Manage organization unit tree",
+    "Permission:OrganizationUnits.ManageRoles": "Manage organization unit roles",
+    "Permission:OrganizationUnits.ManageMembers": "Manage organization unit members"
   }
 }

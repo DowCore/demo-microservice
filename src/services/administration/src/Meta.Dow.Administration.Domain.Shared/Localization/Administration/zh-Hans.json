@@ -2,6 +2,16 @@
   "culture": "zh-Hans",
   "texts": {
     "MyAccount": "我的账户",
-    "SamplePageMessage": "Administration模块的示例页面"
+    "SamplePageMessage": "Administration模块的示例页面",
+    "Permission:Administration": "系统管理",
+    "Permission:Administration:Settings": "设置",
+    "Permission:Administration:Settings.Update": "更新设置",
+    "Permission:Administration:Menus": "菜单管理",
+    "Permission:Administration:Menus.Create": "创建菜单",
+    "Permission:Administration:Menus.Update": "更新菜单",
+    "Permission:Administration:Menus.Delete": "删除菜单",
+    "Permission:Administration:DataScopes": "数据权限",
+    "Permission:Administration:DataScopes.Manage": "管理数据权限",
+    "Administration:MenuHasChildren": "请先删除子菜单"
   }
 }

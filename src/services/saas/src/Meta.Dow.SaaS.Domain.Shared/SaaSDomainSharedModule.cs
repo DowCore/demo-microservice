@@ -13,6 +13,11 @@ namespace Meta.Dow.SaaS;
 [DependsOn(typeof(AbpTenantManagementDomainSharedModule))]
 public class SaaSDomainSharedModule : AbpModule
 {
+    public override void PreConfigureServices(ServiceConfigurationContext context)
+    {
+        SaaSModuleExtensionConfigurator.Configure();
+    }
+
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         Configure<AbpVirtualFileSystemOptions>(options => options.FileSets.AddEmbedded<SaaSDomainSharedModule>());

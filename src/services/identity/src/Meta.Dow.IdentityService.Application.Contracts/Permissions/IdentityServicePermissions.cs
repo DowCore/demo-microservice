@@ -2,16 +2,17 @@
 
 namespace Meta.Dow.IdentityService.Permissions;
 
+/// <summary>
+/// 对齐 ABP Commercial Identity Pro 的组织机构权限名，供菜单与按钮使用。
+/// </summary>
 public static class IdentityServicePermissions
 {
-    public const string GroupName = "IdentityService";
-
-    public static class Users
+    public static class OrganizationUnits
     {
-        public const string Default = GroupName + ".Users";
-        public const string Create = Default + ".Create";
-        public const string Update = Default + ".Update";
-        public const string Delete = Default + ".Delete";
+        public const string Default = "AbpIdentity.OrganizationUnits";
+        public const string ManageOU = Default + ".ManageOU";
+        public const string ManageRoles = Default + ".ManageRoles";
+        public const string ManageMembers = Default + ".ManageMembers";
     }
 
     public static string[] GetAll()

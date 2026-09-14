@@ -2,6 +2,16 @@
   "culture": "en",
   "texts": {
     "MyAccount": "My account",
-    "SamplePageMessage": "A sample page for the Administration module"
+    "SamplePageMessage": "A sample page for the Administration module",
+    "Permission:Administration": "Administration",
+    "Permission:Administration:Settings": "Settings",
+    "Permission:Administration:Settings.Update": "Update settings",
+    "Permission:Administration:Menus": "Menus",
+    "Permission:Administration:Menus.Create": "Create menu",
+    "Permission:Administration:Menus.Update": "Update menu",
+    "Permission:Administration:Menus.Delete": "Delete menu",
+    "Permission:Administration:DataScopes": "Data scopes",
+    "Permission:Administration:DataScopes.Manage": "Manage data scopes",
+    "Administration:MenuHasChildren": "Please delete child menus first"
   }
 }

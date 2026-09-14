@@ -1,5 +1,6 @@
 using Volo.Abp.Domain;
 using Volo.Abp.Identity;
+using Volo.Abp.MailKit;
 using Volo.Abp.Modularity;
 using Volo.Abp.OpenIddict;
 using Volo.Abp.PermissionManagement.Identity;
@@ -13,4 +14,5 @@ namespace Meta.Dow.IdentityService;
 [DependsOn(typeof(AbpPermissionManagementDomainIdentityModule))]
 [DependsOn(typeof(AbpOpenIddictDomainModule))]
 [DependsOn(typeof(AbpPermissionManagementDomainOpenIddictModule))]
+[DependsOn(typeof(AbpMailKitModule))]
 public class IdentityServiceDomainModule : AbpModule { }

@@ -6,6 +6,7 @@ using Microsoft.OpenApi;
 using Meta.Dow.Administration.MongoDB;
 using Volo.Abp.AspNetCore;
 using Volo.Abp.AspNetCore.Authentication.JwtBearer;
+using Volo.Abp.AspNetCore.Mvc.AntiForgery;
 using Volo.Abp.AspNetCore.Serilog;
 using Volo.Abp.Caching;
 using Volo.Abp.Modularity;
@@ -27,6 +28,9 @@ public class MetaDowMicroserviceModule : AbpModule
         var configuration = context.Services.GetConfiguration();
 
         ConfigureCors(context, configuration);
+
+        // JWT API：浏览器经 Vite 代理会附带 Cookie，自动防伪易导致空 body 的 400
+        Configure<AbpAntiForgeryOptions>(options => options.AutoValidate = false);
     }
 
     private static void ConfigureCors(ServiceConfigurationContext context, IConfiguration configuration)

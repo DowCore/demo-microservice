@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.Application;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.FeatureManagement;
+using Volo.Abp.Identity;
 using Volo.Abp.Modularity;
 using Volo.Abp.PermissionManagement;
 using Volo.Abp.SettingManagement;
@@ -13,6 +14,7 @@ namespace Meta.Dow.Administration;
 [DependsOn(typeof(AbpFeatureManagementApplicationModule))]
 [DependsOn(typeof(AbpPermissionManagementApplicationModule))]
 [DependsOn(typeof(AbpSettingManagementApplicationModule))]
+[DependsOn(typeof(AbpIdentityDomainModule))]
 [DependsOn(typeof(AdministrationApplicationContractsModule))]
 [DependsOn(typeof(AdministrationDomainModule))]
 public class AdministrationApplicationModule : AbpModule

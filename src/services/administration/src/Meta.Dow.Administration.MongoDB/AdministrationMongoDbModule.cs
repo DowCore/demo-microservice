@@ -40,5 +40,9 @@ public class AdministrationMongoDbModule : AbpModule
                 }
             );
         });
+
+        context.Services.AddMongoDbContext<AdministrationDbContext>(options =>
+            options.AddDefaultRepositories(includeAllEntities: true)
+        );
     }
 }

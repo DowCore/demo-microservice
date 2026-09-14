@@ -1,7 +1,9 @@
 using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Logging;
 using Meta.Dow.Administration.MongoDB;
@@ -22,9 +24,12 @@ using Volo.Abp.BackgroundJobs;
 using Volo.Abp.Caching;
 using Volo.Abp.Caching.StackExchangeRedis;
 using Volo.Abp.DistributedLocking;
+using Volo.Abp.Emailing;
+using Volo.Abp.MailKit;
 using Volo.Abp.MongoDB;
 using Volo.Abp.Modularity;
 using Volo.Abp.UI.Navigation.Urls;
+using MailKit.Security;
 
 namespace Meta.Dow;
 
@@ -37,6 +42,7 @@ namespace Meta.Dow;
 [DependsOn(typeof(AbpCachingStackExchangeRedisModule))]
 [DependsOn(typeof(AbpDistributedLockingModule))]
 [DependsOn(typeof(AbpMongoDbModule))]
+[DependsOn(typeof(AbpMailKitModule))]
 [DependsOn(typeof(AdministrationMongoDbModule))]
 [DependsOn(typeof(IdentityServiceMongoDbModule))]
 [DependsOn(typeof(SaaSMongoDbModule))]
@@ -77,8 +83,24 @@ public class MetaDowAuthServerModule : AbpModule
         Configure<AppUrlOptions>(options =>
         {
             options.Applications["MVC"].RootUrl = configuration["App:SelfUrl"];
-            options.RedirectAllowedUrls.AddRange(configuration["App:RedirectAllowedUrls"].Split(','));
+            options.Applications["MVC"].Urls[AccountUrlNames.PasswordReset] = "Account/ResetPassword";
+            options.Applications["Vue"].RootUrl = configuration["App:VueUrl"];
+            options.Applications["Vue"].Urls[AccountUrlNames.PasswordReset] = "auth/reset-password";
+            options.RedirectAllowedUrls.AddRange(
+                configuration["App:RedirectAllowedUrls"]?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    ?? Array.Empty<string>()
+            );
         });
+
+        Configure<AbpMailKitOptions>(options =>
+        {
+            options.SecureSocketOption = SecureSocketOptions.Auto;
+        });
+
+        if (configuration.GetValue("App:UseNullEmailSender", false))
+        {
+            context.Services.Replace(ServiceDescriptor.Singleton<IEmailSender, NullEmailSender>());
+        }
 
         Configure<AbpBackgroundJobOptions>(options => options.IsJobExecutionEnabled = false);
 

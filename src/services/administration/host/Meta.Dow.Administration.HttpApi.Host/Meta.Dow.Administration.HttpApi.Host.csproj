@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\..\identity\src\Meta.Dow.IdentityService.Application.Contracts\Meta.Dow.IdentityService.Application.Contracts.csproj" />
     <ProjectReference Include="..\..\..\identity\src\Meta.Dow.IdentityService.MongoDB\Meta.Dow.IdentityService.MongoDB.csproj" />
     <ProjectReference Include="..\..\..\saas\src\Meta.Dow.SaaS.Application.Contracts\Meta.Dow.SaaS.Application.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\saas\src\Meta.Dow.SaaS.MongoDB\Meta.Dow.SaaS.MongoDB.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.Administration.HttpApi\Meta.Dow.Administration.HttpApi.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.Administration.Application\Meta.Dow.Administration.Application.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />

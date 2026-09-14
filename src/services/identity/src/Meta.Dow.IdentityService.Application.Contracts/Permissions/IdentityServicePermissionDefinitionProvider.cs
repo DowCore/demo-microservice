@@ -1,6 +1,7 @@
 ﻿using System;
 using Meta.Dow.IdentityService.Localization;
 using Volo.Abp.Authorization.Permissions;
+using Volo.Abp.Identity;
 using Volo.Abp.Localization;
 
 namespace Meta.Dow.IdentityService.Permissions;
@@ -11,14 +12,29 @@ public class IdentityServicePermissionDefinitionProvider : PermissionDefinitionP
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var identityGroup = context.AddGroup(IdentityServicePermissions.GroupName, L("Permission:IdentityService"));
-        var userPermissions = identityGroup.AddPermission(
-            IdentityServicePermissions.Users.Default,
-            L("Permission:Users")
+        if (context.GetPermissionOrNull(IdentityServicePermissions.OrganizationUnits.Default) != null)
+        {
+            return;
+        }
+
+        var identityGroup = context.GetGroup(IdentityPermissions.GroupName);
+
+        var ou = identityGroup.AddPermission(
+            IdentityServicePermissions.OrganizationUnits.Default,
+            L("Permission:OrganizationUnits")
         );
-        userPermissions.AddChild(IdentityServicePermissions.Users.Create, L("Permission:Create"));
-        userPermissions.AddChild(IdentityServicePermissions.Users.Update, L("Permission:Update"));
-        userPermissions.AddChild(IdentityServicePermissions.Users.Delete, L("Permission:Delete"));
+        ou.AddChild(
+            IdentityServicePermissions.OrganizationUnits.ManageOU,
+            L("Permission:OrganizationUnits.ManageOU")
+        );
+        ou.AddChild(
+            IdentityServicePermissions.OrganizationUnits.ManageRoles,
+            L("Permission:OrganizationUnits.ManageRoles")
+        );
+        ou.AddChild(
+            IdentityServicePermissions.OrganizationUnits.ManageMembers,
+            L("Permission:OrganizationUnits.ManageMembers")
+        );
     }
 
     private static LocalizableString L(string name)

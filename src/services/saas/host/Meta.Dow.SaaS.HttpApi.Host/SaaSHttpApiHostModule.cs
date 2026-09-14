@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Logging;
 using Meta.Dow.Administration.MongoDB;
+using Meta.Dow.IdentityService.MongoDB;
 using Meta.Dow.MultiTenancy;
 using Meta.Dow.SaaS.MongoDB;
 using Volo.Abp;
@@ -16,6 +17,7 @@ namespace Meta.Dow.SaaS;
 
 [DependsOn(typeof(AbpAspNetCoreMvcUiMultiTenancyModule))]
 [DependsOn(typeof(AdministrationMongoDbModule))]
+[DependsOn(typeof(IdentityServiceMongoDbModule))]
 [DependsOn(typeof(SaaSApplicationModule))]
 [DependsOn(typeof(SaaSMongoDbModule))]
 [DependsOn(typeof(SaaSHttpApiModule))]

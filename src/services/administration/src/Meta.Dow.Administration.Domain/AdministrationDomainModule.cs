@@ -1,6 +1,7 @@
 using Volo.Abp.AuditLogging;
 using Volo.Abp.Domain;
 using Volo.Abp.FeatureManagement;
+using Volo.Abp.MailKit;
 using Volo.Abp.Modularity;
 using Volo.Abp.PermissionManagement;
 using Volo.Abp.PermissionManagement.Identity;
@@ -11,10 +12,12 @@ namespace Meta.Dow.Administration;
 
 [DependsOn(typeof(AbpDddDomainModule))]
 [DependsOn(typeof(AdministrationDomainSharedModule))]
+[DependsOn(typeof(MetaDowSharedModule))]
 [DependsOn(typeof(AbpPermissionManagementDomainIdentityModule))]
 [DependsOn(typeof(AbpPermissionManagementDomainOpenIddictModule))]
 [DependsOn(typeof(AbpPermissionManagementDomainModule))]
 [DependsOn(typeof(AbpSettingManagementDomainModule))]
 [DependsOn(typeof(AbpAuditLoggingDomainModule))]
 [DependsOn(typeof(AbpFeatureManagementDomainModule))]
+[DependsOn(typeof(AbpMailKitModule))]
 public class AdministrationDomainModule : AbpModule { }

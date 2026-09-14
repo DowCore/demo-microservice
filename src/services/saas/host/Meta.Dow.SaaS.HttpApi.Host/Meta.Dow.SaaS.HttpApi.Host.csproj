@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Microservice.Shared\Meta.Dow.Microservice.Shared.csproj" />
     <ProjectReference Include="..\..\..\..\shared\Meta.Dow.ServiceDefaults\Meta.Dow.ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\..\administration\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />
+    <ProjectReference Include="..\..\..\identity\src\Meta.Dow.IdentityService.MongoDB\Meta.Dow.IdentityService.MongoDB.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.SaaS.HttpApi\Meta.Dow.SaaS.HttpApi.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.SaaS.Application\Meta.Dow.SaaS.Application.csproj" />
     <ProjectReference Include="..\..\src\Meta.Dow.SaaS.MongoDB\Meta.Dow.SaaS.MongoDB.csproj" />

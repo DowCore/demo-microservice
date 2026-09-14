@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,7 @@ public static class Extensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
+        builder.ConfigureMongoConnectionStrings();
         builder.ConfigureOpenTelemetry();
 
         builder.AddDefaultHealthChecks();
@@ -32,6 +34,47 @@ public static class Extensions
             // Turn on service discovery by default
             http.AddServiceDiscovery();
         });
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Aspire 单节点 MongoDB 不是 replica set，ABP/驱动默认 retryable writes 会失败。
+    /// </summary>
+    private static IHostApplicationBuilder ConfigureMongoConnectionStrings(this IHostApplicationBuilder builder)
+    {
+        var keys = new[]
+        {
+            MetaDowNames.AdministrationDb,
+            MetaDowNames.IdentityServiceDb,
+            MetaDowNames.ProjectsDb,
+            MetaDowNames.SaaSDb,
+            MetaDowNames.AuthServerDb,
+        };
+
+        var overrides = new Dictionary<string, string?>();
+        foreach (var key in keys)
+        {
+            var cs = builder.Configuration.GetConnectionString(key);
+            if (string.IsNullOrWhiteSpace(cs))
+            {
+                continue;
+            }
+
+            if (cs.Contains("retryWrites=", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            overrides[$"ConnectionStrings:{key}"] = cs.Contains('?', StringComparison.Ordinal)
+                ? cs + "&retryWrites=false"
+                : cs + "?retryWrites=false";
+        }
+
+        if (overrides.Count > 0)
+        {
+            builder.Configuration.AddInMemoryCollection(overrides);
+        }
 
         return builder;
     }

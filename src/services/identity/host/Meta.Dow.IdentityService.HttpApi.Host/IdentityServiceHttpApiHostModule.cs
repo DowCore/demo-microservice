@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Logging;
 using Meta.Dow.Administration.MongoDB;
@@ -9,9 +11,14 @@ using Meta.Dow.IdentityService.MongoDB;
 using Meta.Dow.MultiTenancy;
 using Meta.Dow.SaaS.MongoDB;
 using Volo.Abp;
+using Volo.Abp.Account;
 using Volo.Abp.AspNetCore.Mvc.UI.MultiTenancy;
+using Volo.Abp.Emailing;
+using Volo.Abp.MailKit;
 using Volo.Abp.Modularity;
+using Volo.Abp.UI.Navigation.Urls;
 using Volo.Abp.VirtualFileSystem;
+using MailKit.Security;
 
 namespace Meta.Dow.IdentityService;
 
@@ -28,9 +35,28 @@ public class IdentityServiceHttpApiHostModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var configuration = context.Services.GetConfiguration();
         var hostingEnvironment = context.Services.GetHostingEnvironment();
 
         context.ConfigureMicroservice(MetaDowNames.IdentityServiceApi);
+
+        Configure<AppUrlOptions>(options =>
+        {
+            options.Applications["MVC"].RootUrl = configuration["App:SelfUrl"];
+            options.Applications["Vue"].RootUrl = configuration["App:VueUrl"];
+            options.Applications["Vue"].Urls[AccountUrlNames.PasswordReset] = "auth/reset-password";
+        });
+
+        Configure<AbpMailKitOptions>(options =>
+        {
+            options.SecureSocketOption = SecureSocketOptions.Auto;
+        });
+
+        // 仅当显式 App:UseNullEmailSender=true 时写日志不发信；默认走 SMTP（读取 Setting Management）
+        if (configuration.GetValue("App:UseNullEmailSender", false))
+        {
+            context.Services.Replace(ServiceDescriptor.Singleton<IEmailSender, NullEmailSender>());
+        }
 
         if (hostingEnvironment.IsDevelopment())
         {
@@ -94,6 +120,7 @@ public class IdentityServiceHttpApiHostModule : AbpModule
         }
 
         app.UseAbpRequestLocalization();
+        app.UseDynamicClaims();
         app.UseAuthorization();
         app.UseSwagger();
         app.UseAbpSwaggerUI(options =>

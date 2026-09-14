@@ -2,6 +2,10 @@
   "culture": "zh-Hans",
   "texts": {
     "MyAccount": "我的账户",
-    "SamplePageMessage": "IdentityService模块的示例页面"
+    "SamplePageMessage": "IdentityService模块的示例页面",
+    "Permission:OrganizationUnits": "组织机构",
+    "Permission:OrganizationUnits.ManageOU": "管理组织机构树",
+    "Permission:OrganizationUnits.ManageRoles": "管理组织角色",
+    "Permission:OrganizationUnits.ManageMembers": "管理组织成员"
   }
 }

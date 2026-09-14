@@ -7,10 +7,15 @@ internal class Program
 {
     private static void Main(string[] args)
     {
+        // VS F5 时 Aspire 用 run_session 拉起 AddProject；本机 IDE 调试桥经常超时，
+        // Gateway 等会卡满 300s 后以空参数 fallback 失败。清空会话变量，强制进程启动。
+        DisableAspireIdeRunSession();
+
         const string LaunchProfileName = "Aspire";
         var builder = DistributedApplication.CreateBuilder(args);
 
-        var mongo = builder.AddMongoDB(MetaDowNames.MongoDb).WithMongoExpress();
+        // 仅 Mongo 挂卷，保留业务库；RabbitMQ/Redis/Seq 用临时容器加快启动
+        var mongo = builder.AddMongoDB(MetaDowNames.MongoDb).WithDataVolume().WithMongoExpress();
         var rabbitMq = builder.AddRabbitMQ(MetaDowNames.RabbitMq).WithManagementPlugin();
         var redis = builder.AddRedis(MetaDowNames.Redis).WithRedisCommander();
         var seq = builder.AddSeq(MetaDowNames.Seq);
@@ -34,6 +39,7 @@ internal class Program
             )
             .WaitFor(mongo);
 
+        // IDE run_session 已禁用，DbMigrator 走进程启动；仍 WaitForCompletion 后再起业务服务
         var migrator = builder
             .AddProject<Meta_Dow_DbMigrator>(MetaDowNames.DbMigrator, launchProfileName: LaunchProfileName)
             .WithReference(adminDb)
@@ -52,6 +58,7 @@ internal class Program
             .WithExternalHttpEndpoints()
             .WithReference(adminDb)
             .WithReference(identityDb)
+            .WithReference(saasDb)
             .WithReference(rabbitMq)
             .WithReference(redis)
             .WithReference(seq)
@@ -79,6 +86,7 @@ internal class Program
             .AddProject<Meta_Dow_SaaS_HttpApi_Host>(MetaDowNames.SaaSApi, launchProfileName: LaunchProfileName)
             .WithExternalHttpEndpoints()
             .WithReference(adminDb)
+            .WithReference(identityDb)
             .WithReference(saasDb)
             .WithReference(rabbitMq)
             .WithReference(redis)
@@ -122,5 +130,22 @@ internal class Program
             .WaitForCompletion(migrator);
 
         builder.Build().Run();
+    }
+
+    private static void DisableAspireIdeRunSession()
+    {
+        string[] keys =
+        [
+            "DEBUG_SESSION_PORT",
+            "DEBUG_SESSION_ID",
+            "DEBUG_SESSION_INFO",
+            "DEBUG_SESSION_RUN_MODE",
+            "DEBUG_SESSION_SERVER_CERTIFICATE",
+        ];
+
+        foreach (var key in keys)
+        {
+            Environment.SetEnvironmentVariable(key, null);
+        }
     }
 }

@@ -562,6 +562,7 @@ public static class FinalOutputAssembler
 
     /// <summary>
     /// 节点出参投影：按 type 选择 array 逐行 / object 字段映射（含嵌套 map）。
+    /// type 为空时：源是 JsonArray → array，否则按 object（避免误把对象当数组）。
     /// </summary>
     public static JsonNode? ProjectWithMap(
         JsonNode? source,
@@ -575,7 +576,9 @@ public static class FinalOutputAssembler
             return source?.DeepClone();
         }
 
-        var t = string.IsNullOrWhiteSpace(type) ? "array" : type.Trim();
+        var t = string.IsNullOrWhiteSpace(type)
+            ? source is JsonArray ? "array" : "object"
+            : type.Trim();
         var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visible = new List<string>();
@@ -593,6 +596,21 @@ public static class FinalOutputAssembler
         }
 
         return mapped;
+    }
+
+    /// <summary>
+    /// 按字段表投影为对象（Rabbit 消息体 / End object map 同语义），绝不按 array 解释。
+    /// </summary>
+    public static JsonObject ProjectObjectFields(
+        IEnumerable<FlowOutputMapItemDsl> items,
+        JsonNode? sourceRow,
+        FlowRuntimeContext ctx
+    )
+    {
+        var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visible = new List<string>();
+        return MapItem(items, sourceRow, ctx, roles, permissions, bypass: true, "payload", visible);
     }
 
     /// <summary>
@@ -701,7 +719,9 @@ public static class FinalOutputAssembler
             return [];
         }
 
-        throw new UserFriendlyException($"Output '{fieldName}' expects an array source.");
+        throw new UserFriendlyException(
+            $"Output '{fieldName}' expects an array source, but got {(source is JsonObject ? "object" : source.GetType().Name)}."
+        );
     }
 
     /// <summary>

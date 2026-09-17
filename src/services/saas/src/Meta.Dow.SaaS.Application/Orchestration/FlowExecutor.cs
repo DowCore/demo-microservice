@@ -49,6 +49,7 @@ public class FlowExecutor : ITransientDependency
     private readonly IPermissionChecker _permissionChecker;
     private readonly IDataSourceResolver _dataSourceResolver;
     private readonly ICodeSandboxExecutor _codeSandboxExecutor;
+    private readonly IOrchestrationRabbitPublisher _rabbitPublisher;
     private readonly ILogger<FlowExecutor> _logger;
 
     public FlowExecutor(
@@ -57,6 +58,7 @@ public class FlowExecutor : ITransientDependency
         IPermissionChecker permissionChecker,
         IDataSourceResolver dataSourceResolver,
         ICodeSandboxExecutor codeSandboxExecutor,
+        IOrchestrationRabbitPublisher rabbitPublisher,
         ILogger<FlowExecutor> logger
     )
     {
@@ -65,6 +67,7 @@ public class FlowExecutor : ITransientDependency
         _permissionChecker = permissionChecker;
         _dataSourceResolver = dataSourceResolver;
         _codeSandboxExecutor = codeSandboxExecutor;
+        _rabbitPublisher = rabbitPublisher;
         _logger = logger;
     }
 
@@ -550,6 +553,15 @@ public class FlowExecutor : ITransientDependency
                 case "code":
                 {
                     await ExecuteCodeNodeAsync(node, ctx, record, isDryRun, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
+                case "rabbitmqpublish":
+                case "rabbitpublish":
+                case "broadcast":
+                {
+                    await ExecuteRabbitMqPublishAsync(node, ctx, record, isDryRun, cancellationToken);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -1214,6 +1226,189 @@ public class FlowExecutor : ITransientDependency
         }
 
         return node.Id;
+    }
+
+    private async Task ExecuteRabbitMqPublishAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        CancellationToken cancellationToken
+    )
+    {
+        var nodeInput = FlowContextResolver.MapNodeInputs(node.Inputs, ctx);
+        var exchangeType = string.IsNullOrWhiteSpace(node.ExchangeType)
+            ? OrchestrationRabbitConsts.DefaultExchangeType
+            : node.ExchangeType.Trim();
+        var exchange = string.IsNullOrWhiteSpace(node.Exchange)
+            ? (exchangeType.Equals("fanout", StringComparison.OrdinalIgnoreCase)
+                ? OrchestrationRabbitConsts.BroadcastExchange
+                : OrchestrationRabbitConsts.TopicExchange)
+            : node.Exchange.Trim();
+
+        var routingKeyTemplate = node.RoutingKey ?? string.Empty;
+        var routingKey = ResolveTemplateWithNodeInput(routingKeyTemplate, nodeInput, ctx);
+
+        var payloadNode = BuildRabbitPayload(node, nodeInput, ctx);
+        var jsonBody = payloadNode?.ToJsonString(JsonOptions) ?? "{}";
+        var persistent = node.Persistent ?? true;
+        var onError = (node.OnError ?? "fail").Trim().ToLowerInvariant();
+
+        record.InputJson = JsonSerializer.Serialize(
+            new
+            {
+                exchange,
+                exchangeType,
+                routingKey,
+                persistent,
+                dryRun = isDryRun,
+                payload = payloadNode
+            },
+            JsonOptions
+        );
+
+        var published = false;
+        string? publishError = null;
+
+        if (!isDryRun)
+        {
+            try
+            {
+                await _rabbitPublisher.PublishAsync(
+                    exchange,
+                    exchangeType,
+                    routingKey,
+                    jsonBody,
+                    persistent,
+                    cancellationToken
+                );
+                published = true;
+            }
+            catch (Exception ex)
+            {
+                publishError = ex.Message;
+                if (onError != "ignore")
+                {
+                    throw;
+                }
+
+                _logger.LogWarning(
+                    ex,
+                    "RabbitMqPublish ignored failure. Exchange={Exchange}",
+                    exchange
+                );
+            }
+        }
+
+        var raw = new JsonObject
+        {
+            ["published"] = published,
+            ["dryRun"] = isDryRun,
+            ["exchange"] = exchange,
+            ["exchangeType"] = exchangeType,
+            ["routingKey"] = routingKey,
+            ["persistent"] = persistent,
+            ["payloadBytes"] = Encoding.UTF8.GetByteCount(jsonBody)
+        };
+        if (!string.IsNullOrWhiteSpace(publishError))
+        {
+            raw["error"] = publishError;
+        }
+
+        // 消息体由 payload 决定；出参表可空。空时只自动回执 published/exchange/routingKey，避免把 dryRun 等噪声写成短名。
+        if (node.Outputs is { Count: > 0 })
+        {
+            ApplyExecutableOutputs(node, raw, ctx);
+        }
+        else
+        {
+            var receiptBindings = new List<FlowNodeBindingDsl>
+            {
+                new() { Name = "published", From = JsonValue.Create("published") },
+                new() { Name = "exchange", From = JsonValue.Create("exchange") },
+                new() { Name = "routingKey", From = JsonValue.Create("routingKey") }
+            };
+            FlowContextResolver.ApplyNodeOutputs(
+                receiptBindings,
+                raw,
+                node.Id,
+                ctx,
+                ResolveNodeRef(node),
+                node.ResultRoot
+            );
+        }
+
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+    }
+
+    private static string ResolveTemplateWithNodeInput(
+        string template,
+        JsonObject nodeInput,
+        FlowRuntimeContext ctx
+    )
+    {
+        if (string.IsNullOrEmpty(template))
+        {
+            return string.Empty;
+        }
+
+        if (!template.Contains("{{", StringComparison.Ordinal))
+        {
+            return template;
+        }
+
+        return System.Text.RegularExpressions.Regex.Replace(
+            template,
+            @"\{\{\s*([^}]+?)\s*\}\}",
+            m =>
+            {
+                var path = m.Groups[1].Value.Trim();
+                if (path.StartsWith("input.", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("sys.", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("vars.", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("results.", StringComparison.OrdinalIgnoreCase))
+                {
+                    return FlowContextResolver.ResolvePath(path, ctx)?.ToString() ?? "";
+                }
+
+                var local = FlowContextResolver.GetByPath(nodeInput, path);
+                if (local != null)
+                {
+                    return FlowContextResolver.ToClr(local)?.ToString() ?? "";
+                }
+
+                return FlowContextResolver.ResolvePath(path, ctx)?.ToString() ?? "";
+            }
+        );
+    }
+
+    private static JsonNode? BuildRabbitPayload(
+        FlowDslNode node,
+        JsonObject nodeInput,
+        FlowRuntimeContext ctx
+    )
+    {
+        var mode = (node.PayloadMode ?? "object").Trim().ToLowerInvariant();
+        if (mode == "raw")
+        {
+            var from = string.IsNullOrWhiteSpace(node.PayloadFrom) ? null : node.PayloadFrom.Trim();
+            if (string.IsNullOrWhiteSpace(from))
+            {
+                return nodeInput.DeepClone();
+            }
+
+            return FinalOutputAssembler.ResolveRelative(JsonValue.Create(from), nodeInput, ctx)
+                   ?? FlowContextResolver.ResolvePathNode(from, ctx)?.DeepClone();
+        }
+
+        if (node.Payload?.Item is { Count: > 0 })
+        {
+            // 消息体字段表 = End 出参同语义的「对象投影」，禁止走 ProjectWithMap 的 array 默认分支
+            return FinalOutputAssembler.ProjectObjectFields(node.Payload.Item, nodeInput, ctx);
+        }
+
+        // 未配 payload：默认把本节点 inputs 整包发出（广播调试友好）
+        return nodeInput.DeepClone();
     }
 
     private async Task ExecuteCodeNodeAsync(

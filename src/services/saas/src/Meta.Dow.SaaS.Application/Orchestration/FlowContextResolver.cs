@@ -446,10 +446,13 @@ public static class FlowContextResolver
 
             var value = ResolveFromRaw(rawResult, fromPath, resultRoot);
 
-            // list/object → map.item 投影（支持嵌套）
+            // list/object → map.item 投影（支持嵌套）；type 空时按源形态推断，避免对象被当成 array
             if (binding.Map?.Item is { Count: > 0 })
             {
-                value = FinalOutputAssembler.ProjectWithMap(value, binding.Map, binding.Type, ctx);
+                var mapType = string.IsNullOrWhiteSpace(binding.Type)
+                    ? value is JsonArray ? "array" : "object"
+                    : binding.Type;
+                value = FinalOutputAssembler.ProjectWithMap(value, binding.Map, mapType, ctx);
             }
 
             var to = binding.To;

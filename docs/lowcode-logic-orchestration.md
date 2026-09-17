@@ -15,7 +15,7 @@
 2. [主题校准：代码逻辑编排](#2-主题校准代码逻辑编排不是-ipaas)
 3. [开源与产品对照](#3-开源与产品对照github--国内低代码)
 4. [编排心智模型](#4-本仓库的编排心智模型)
-5. [产品规格：入参 / 系统 API / 节点 / 条件](#5-产品规格入参--系统-api--节点--条件)（含 [引擎能力全景](#58-强大逻辑编排引擎能力全景)）
+5. [产品规格：入参 / 系统 API / 节点 / 条件](#5-产品规格入参--系统-api--节点--条件)（含 [引擎能力全景](#58-强大逻辑编排引擎能力全景)、[同库事务](#547-同库统一事务per-datasource)、[Rabbit 发布](#548-消息发布节点rabbitmqpublish优先本地-rabbitmq)）
 6. [如何进行编排](#6-如何进行编排产品操作说明)
 7. [设计器 UX](#7-设计器交互规格ux)
 8. [目标架构](#8-目标架构对齐现有微服务)
@@ -1549,6 +1549,161 @@ return {
 
 落地顺序（已完成 ①③④ 核心）：① DataSource 登记与权限 → ② Sql 节点参数化（待） → ③ Code 沙箱只读计算 → ④ Code 注入 `db.query/execute/batch`。
 
+#### 5.4.7 同库统一事务（per DataSource）
+
+##### 现状（问题）
+
+今日 Code/`db.*` 是**每次语句独立开连、自动提交**：
+
+```
+CodeA: db.execute #1 → commit
+CodeA: db.execute #2 → commit
+CodeB: db.execute #3 → commit
+Throw / 节点失败 → 流程 Failed，但 #1/#2/#3 已落库，无法回滚
+```
+
+仅单次 `db.batch([...])` 内部有显式事务。跨节点、跨多次 `db.execute` **没有**统一事务。
+
+##### 目标语义
+
+| 场景 | 行为 |
+|------|------|
+| 编排内**同一** SQL DataSource（同一 code）多次写库 | 共用**一条连接 + 一个事务** |
+| 业务 Throw / FailWhen / 节点 Failed / 未捕获异常 | **Rollback** 该 DataSource 上本 run 全部未提交写入 |
+| 成功到达 End 且流程 Succeeded | **Commit** |
+| 编排内使用**多个不同** DataSource | **不要求**分布式事务；各库独立（见下） |
+| Redis / Mongo DataSource | **不参与** SQL 事务（无 XA） |
+| DryRun | 可开事务，结束时**一律 Rollback**（或完全不连库） |
+
+##### 推荐模型（采纳）
+
+流程定义级开关（默认关闭，兼容现有）：
+
+```json
+{
+  "key": "order.submit",
+  "txMode": "sameDataSource"
+}
+```
+
+| `txMode` | 含义 |
+|----------|------|
+| `none`（默认） | 现状：每语句 auto-commit；`db.batch` 仍自带短事务 |
+| `sameDataSource` | 按 DataSource **code** 懒开启 `DbConnection`+`DbTransaction`；同 code 的所有 `db.query/execute/batch` 挂到该事务；**不同 code 各自独立事务**（多库不强求一致） |
+
+实现要点：
+
+1. **`FlowDbSessionScope`** 挂在 `FlowRuntimeContext`（按 DS code → session）。  
+2. `ParameterizedSqlExecutor`：有 session 则复用 conn/tx；无则保持今日 per-call。  
+3. `FlowExecutor`：`Succeeded` → 对各 session `Commit`；`Failed`/异常 → `Rollback`；`finally` Dispose。  
+4. 发布校验：`txMode=sameDataSource` 且节点引用了 ≥2 个 SQL DS → **Warning**（多库各自提交，非原子）。  
+5. 持锁风险：事务开启后若再跑长时间 **HttpCall**，设计器 **Warning**；可选策略 `txPolicy.forbidExternalCallWhileOpen=true` → 发布 Error。  
+6. 只读 `db.query`：默认也走同一连接（可见未提交写入）；可用 `txPolicy.includeSelect=false` 让 SELECT 走短连。
+
+##### 生命周期
+
+```
+Start flow (txMode=sameDataSource)
+  ├─ Code(ds=orderDb) db.execute → lazy BEGIN
+  ├─ Code(ds=orderDb) db.execute → 同一 tx
+  ├─ Code(ds=logDb)  db.execute → 另一 tx（独立）
+  ├─ Throw / Fail     → orderDb ROLLBACK；logDb ROLLBACK
+  └─ End success      → orderDb COMMIT；logDb COMMIT
+```
+
+##### 其它方案对比（为何不选）
+
+| 方案 | 优点 | 缺点 | 结论 |
+|------|------|------|------|
+| **A. 同 DS 统一事务（上）** | 语义清晰、实现可控 | 不能跨库；长事务忌 Http | **主推** |
+| B. 仅加强 `db.batch` | 改动小 | 无法跨 Code 节点；编排者易漏 | 保留作局部手段 |
+| C. XA / 两阶段提交 | 真·跨库原子 | 运维重、Redis/Mongo 难、Aspire 不匹配 | **不做** |
+| D. Saga / 补偿节点 | 适合跨服务 | 要写补偿逻辑，编排复杂 | P2 可选 |
+| E. 事务性 Outbox | 消息与库一致 | 需本地 outbox 表 + 投递器 | 与 **RabbitMQ** 组合时推荐 |
+
+**产品口径**：同库要原子 → 开 `txMode=sameDataSource` 且节点绑同一 DataSource；多库 → 接受最终一致，或拆流程 / 用补偿。
+
+#### 5.4.8 消息发布节点（RabbitMqPublish，优先本地 RabbitMQ）
+
+##### 产品口径（已定 / 已落地）
+
+**优先使用 Aspire 已集成的本地 RabbitMQ**。节点类型：`RabbitMqPublish`。  
+默认 **fanout 广播**：交换机 `Meta.Dow.Orchestration.Broadcast`，所有绑定该交换机的队列都会收到同一份 JSON。与内部 EventBus 交换机 `Meta.Dow` **隔离**。
+
+##### 外部如何订阅广播
+
+1. 连本机 Rabbit（Aspire 映射的 AMQP 端口，管理台通常 `15672`）  
+2. 声明自己的 Queue（任意名）  
+3. Bind：`exchange=Meta.Dow.Orchestration.Broadcast`，`routingKey` 可空（fanout 忽略）  
+4. Consume：消息 body 为 UTF-8 JSON  
+
+也可用管理台 Exchanges → `Meta.Dow.Orchestration.Broadcast` → Bindings 绑定测试队列。
+
+##### 需求
+
+- 经**本地 RabbitMQ** 发布消息（复用 AppHost 连接串 `rabbitmq`）  
+- **默认广播（fanout）**；也可切 `topic` / `direct` 并配置路由键模板  
+- 将本节点 `payload.fields` 拼成 **JSON** 发出（不进全局 vars）  
+- 下游仅回执：`published` / `exchange` / `routingKey`  
+
+##### 节点契约示例
+
+```json
+{
+  "type": "RabbitMqPublish",
+  "ref": "mqBroadcast",
+  "exchange": "Meta.Dow.Orchestration.Broadcast",
+  "exchangeType": "fanout",
+  "persistent": true,
+  "onError": "fail",
+  "payloadMode": "object",
+  "payload": {
+    "item": [
+      { "name": "orderId", "from": "orderId" },
+      { "name": "amount", "from": "amount" }
+    ]
+  },
+  "inputs": [
+    { "name": "orderId", "from": "input.order.id" },
+    { "name": "amount", "from": "input.amount" }
+  ],
+  "outputs": [
+    { "name": "published", "from": "published" },
+    { "name": "exchange", "from": "exchange" }
+  ]
+}
+```
+
+试运行（DryRun）不真实发消息，回执 `published=false, dryRun=true`。
+
+##### 推荐节点契约（设计说明）
+
+原规划保留：`payload.fields` 局部组装；`onError=fail|ignore`。实现方式为 **RabbitMQ.Client 直发**（非 ABP ETO）。
+
+##### 为何载荷不是「全局输出变量」
+
+| 做法 | 问题 |
+|------|------|
+| 先 Assign 一堆 `vars.msg.*` 再发 | 污染上下文 |
+| **`payload.fields` 局部组装（已采用）** | 契约在节点内闭合 |
+
+##### 与统一事务的顺序
+
+仍见 §5.4.7；消息节点失败且 `onError=fail` 时流程 Failed（后续同库事务落地后可联动 Rollback）。
+
+##### 方案对比（当前优先级）
+
+| 方案 | 优先级 |
+|------|--------|
+| **RabbitMqPublish fanout 广播** | **已落地 P0** |
+| topic / direct | 同节点可切换 |
+| Outbox | P2 |
+| MqttPublish | P2 非默认 |
+
+##### 设计器
+
+左侧拖「Rabbit广播」→ 配交换机 / fanout / 消息体 map / 失败策略。
+
 ### 5.5 条件节点：多条件 + 逻辑运算
 
 **条件节点（Condition）** 是独立结构节点，专门做分支；与「执行节点上的进入条件」是两层能力：
@@ -2217,10 +2372,13 @@ return filtered data + meta.visibleFields
 | 结构 | Condition | 条件表 + 出边 combine / else |
 | 动作 | **Assign** | 入参映射 → `results[nodeId]`（取代写变量） |
 | 动作 | HttpCall | HTTP + inputs/outputs |
-| 动作 | Code | 轻量 JSON 表达式 + inputs/outputs |
+| 动作 | Code | 沙箱脚本 + 可选 DataSource/`db.*` |
 | 动作 | Log | `{{path}}` 模板；出参 `message` |
+| 动作 | Mask / Throw | 脱敏 / 业务失败 |
+| 动作 | **RabbitMqPublish** | 本地 Rabbit **fanout 广播**；`payload` 局部 JSON |
+| 横切（规划） | **`txMode=sameDataSource`** | 同 SQL 库跨节点统一事务；失败回滚 |
 
-> 心智模型：动作节点 = C# 方法调用；数据只通过 `results.*` 向下游流动。旧 `SetVariable` / `vars.*` 仅兼容。
+> 心智模型：动作节点 = C# 方法调用；数据只通过 `results.*` 向下游流动。副作用节点（Rabbit）载荷用局部 `payload`，回执才进 outputs。
 
 ### 11.2 日志模板用法（Log）
 
@@ -2253,16 +2411,18 @@ High amount: {{input.amount}}, user={{sys.userName}}, at={{sys.Now}}
 
 | 优先级 | 节点 | 用途 | 说明 |
 |--------|------|------|------|
-| **P0 已有** | Assign / Log / HttpCall / Code | 统一 inputs→outputs→results | 设计器已暴露 |
-| **P1** | Switch | 多路枚举分支 | 与 Condition 互补（值匹配 vs 布尔组合） |
+| **P0 已有** | Assign / Log / HttpCall / Code / Mask / Throw / **RabbitMqPublish** | 统一 I/O + fanout 广播 | 见 §5.4.8 |
+| **P1** | **txMode=sameDataSource** | 同 SQL 库跨节点统一事务 | 失败 Rollback；多库不强求；见 §5.4.7 |
+| **P1** | Switch | 多路枚举分支 | 与 Condition 互补 |
 | **P1** | Loop / ForEach | 数组批处理 | 代码逻辑编排刚需 |
-| **P1** | Throw / Assert | 业务失败短路 | 对接校验规则结果 |
 | **P1** | SubFlow | 调用另一条已发布逻辑 | 组合复用 |
-| **P1** | Sql（白名单） | 受控读写 | 需数据源登记 + 权限 |
+| **P1** | Sql（白名单） | 受控读写 | 与 DataSource 共用 |
+| **P2** | Outbox | 事务性发信到 Rabbit | 库成功 ⟺ 消息必达 |
+| **P2** | MqttPublish | IoT / 设备 MQTT | 非默认；确有需求再做 |
 | **P2** | Parallel / Wait | 并行与汇合 | 非审批 bookmark |
 | **P2** | 领域组件目录 | `pricing.calc` 等 | 产品主路径：注册组件而非堆 HTTP |
 
-刻意不做：UserTask / 会签 / 待办、开放任意脚本沙箱、海量 SaaS 连接器。
+刻意不做：UserTask / 会签 / 待办、开放任意脚本沙箱、海量 SaaS 连接器、跨库 XA。
 
 ### 11.4 产品口径补齐（横切能力）
 
@@ -2271,7 +2431,8 @@ High amount: {{input.amount}}, user={{sys.userName}}, at={{sys.Now}}
 | 契约 | InputSchema / OutputSchema；`sys.*`；日期式 `sys.Now - 3d` |
 | 发布 | `POST /api/logic/{flowKey}` + 出参角色过滤 |
 | 条件 | 编号条件 + `1 and (2 or 3)` + 多出边 / else |
-| 执行 | 每节点 inputs / outputs；可选 `async` |
+| 执行 | 每节点 inputs / outputs；可选 `async`；**同库 `txMode`** |
+| 消息 | **RabbitMqPublish** 局部 payload（优先本地 Rabbit）；可选 Outbox；MQTT 非默认 |
 | 选择器 | literal / input / sys / vars / results / 日期式 |
 | IAM | 调用权限 ≠ 字段可见 |
 

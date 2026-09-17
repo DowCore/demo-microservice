@@ -307,6 +307,30 @@ public class FlowDslNode
 
     public string? Sql { get; set; }
 
+    /// <summary>RabbitMqPublish：交换机名（广播默认 Meta.Dow.Orchestration.Broadcast）</summary>
+    public string? Exchange { get; set; }
+
+    /// <summary>fanout（广播）| topic | direct</summary>
+    public string? ExchangeType { get; set; }
+
+    /// <summary>topic/direct 路由键模板；fanout 可忽略</summary>
+    public string? RoutingKey { get; set; }
+
+    /// <summary>消息是否持久化</summary>
+    public bool? Persistent { get; set; }
+
+    /// <summary>fail | ignore</summary>
+    public string? OnError { get; set; }
+
+    /// <summary>消息体字段映射（局部，不进全局 vars）</summary>
+    public FlowOutputMapDsl? Payload { get; set; }
+
+    /// <summary>object | array | raw</summary>
+    public string? PayloadMode { get; set; }
+
+    /// <summary>payloadMode=raw 时取该路径作为整包 JSON</summary>
+    public string? PayloadFrom { get; set; }
+
     public string? ResolveDataSourceId()
     {
         if (!string.IsNullOrWhiteSpace(DataSourceId))

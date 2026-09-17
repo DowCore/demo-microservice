@@ -17,6 +17,15 @@ public class SaaSApplicationModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
+        context.Services.AddMemoryCache();
+        context.Services.AddHttpClient(
+            "OrchestrationHttpCall",
+            client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(30);
+            }
+        );
+
         context.Services.AddAutoMapperObjectMapper<SaaSApplicationModule>();
         Configure<AbpAutoMapperOptions>(options => options.AddMaps<SaaSApplicationModule>(true));
     }

@@ -6,6 +6,8 @@
     "Permission:OrganizationUnits": "组织机构",
     "Permission:OrganizationUnits.ManageOU": "管理组织机构树",
     "Permission:OrganizationUnits.ManageRoles": "管理组织角色",
-    "Permission:OrganizationUnits.ManageMembers": "管理组织成员"
+    "Permission:OrganizationUnits.ManageMembers": "管理组织成员",
+    "IdentityService:CannotMoveOrganizationUnitToItself": "不能将组织机构移动到自身",
+    "IdentityService:CannotMoveOrganizationUnitToDescendant": "不能将组织机构移动到其子节点下"
   }
 }

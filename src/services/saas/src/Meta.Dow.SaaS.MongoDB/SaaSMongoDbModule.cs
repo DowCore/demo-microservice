@@ -23,5 +23,9 @@ public class SaaSMongoDbModule : AbpModule
 
         Configure<AbpDbConnectionOptions>(options =>
             options.Databases.Configure(MetaDowNames.SaaSDb, db => db.MappedConnections.Add("AbpTenantManagement")));
+
+        context.Services.AddMongoDbContext<SaaSDbContext>(options =>
+            options.AddDefaultRepositories(includeAllEntities: true)
+        );
     }
 }

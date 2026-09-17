@@ -37,6 +37,7 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
 
             await EnsureEmailSettingsMenuAsync();
             await EnsureMenuKeepAliveAsync();
+            await EnsureOrchestrationMenusAsync();
             await RemoveDemoMenusAsync();
         }
     }
@@ -182,6 +183,106 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
             "lucide:database",
             1
         );
+
+        await SeedOrchestrationMenusAsync();
+    }
+
+    private async Task EnsureOrchestrationMenusAsync()
+    {
+        await SeedOrchestrationMenusAsync();
+    }
+
+    private async Task SeedOrchestrationMenusAsync()
+    {
+        var root = await _menuRepository.FirstOrDefaultAsync(x => x.Name == "Orchestration");
+        Guid rootId;
+        if (root == null)
+        {
+            rootId = _guidGenerator.Create();
+            await InsertAsync(
+                rootId,
+                null,
+                "Orchestration",
+                "逻辑编排",
+                MenuType.Directory,
+                "/orchestration",
+                null,
+                null,
+                "lucide:git-branch",
+                30
+            );
+        }
+        else
+        {
+            rootId = root.Id;
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationDefinitions") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationDefinitions",
+                "流程定义",
+                MenuType.Menu,
+                "/orchestration/definitions",
+                "/orchestration/definitions/index",
+                "Orchestration.Definitions",
+                "lucide:workflow",
+                0
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationDesigner") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationDesigner",
+                "流程设计器",
+                MenuType.Menu,
+                "/orchestration/definitions/designer",
+                "/orchestration/definitions/designer",
+                "Orchestration.Definitions.Update",
+                "lucide:pencil-ruler",
+                1,
+                affixTab: false,
+                isVisible: false,
+                keepAlive: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationInstances") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationInstances",
+                "执行实例",
+                MenuType.Menu,
+                "/orchestration/instances",
+                "/orchestration/instances/index",
+                "Orchestration.Instances",
+                "lucide:play-circle",
+                2
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationDataSources") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationDataSources",
+                "数据连接",
+                MenuType.Menu,
+                "/orchestration/data-sources",
+                "/orchestration/data-sources/index",
+                "Orchestration.DataSources",
+                "lucide:database",
+                3
+            );
+        }
     }
 
     private async Task EnsureEmailSettingsMenuAsync()
@@ -297,7 +398,9 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
         string? permission,
         string? icon,
         int order,
-        bool affixTab = false
+        bool affixTab = false,
+        bool isVisible = true,
+        bool keepAlive = true
     )
     {
         var menu = new SysMenu(
@@ -326,10 +429,10 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
             icon,
             MenuConsts.DefaultSystemCode,
             order,
-            isVisible: true,
+            isVisible,
             isEnabled: true,
             affixTab,
-            keepAlive: type == MenuType.Menu
+            keepAlive: keepAlive && type == MenuType.Menu
         );
         await _menuRepository.InsertAsync(menu, autoSave: true);
     }

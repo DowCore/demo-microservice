@@ -110,6 +110,21 @@ public class OrganizationUnitAppService : IdentityServiceAppService, IOrganizati
     public async Task MoveAsync(Guid id, MoveOrganizationUnitDto input)
     {
         ArgumentNullException.ThrowIfNull(input);
+
+        if (input.NewParentId == id)
+        {
+            throw new BusinessException("IdentityService:CannotMoveOrganizationUnitToItself");
+        }
+
+        if (input.NewParentId.HasValue)
+        {
+            var descendants = await _organizationUnitManager.FindChildrenAsync(id, recursive: true);
+            if (descendants.Any(x => x.Id == input.NewParentId.Value))
+            {
+                throw new BusinessException("IdentityService:CannotMoveOrganizationUnitToDescendant");
+            }
+        }
+
         await _organizationUnitManager.MoveAsync(id, input.NewParentId);
     }
 

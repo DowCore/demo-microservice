@@ -6,6 +6,8 @@
     "Permission:OrganizationUnits": "Organization units",
     "Permission:OrganizationUnits.ManageOU": "Manage organization unit tree",
     "Permission:OrganizationUnits.ManageRoles": "Manage organization unit roles",
-    "Permission:OrganizationUnits.ManageMembers": "Manage organization unit members"
+    "Permission:OrganizationUnits.ManageMembers": "Manage organization unit members",
+    "IdentityService:CannotMoveOrganizationUnitToItself": "Cannot move an organization unit to itself",
+    "IdentityService:CannotMoveOrganizationUnitToDescendant": "Cannot move an organization unit under its descendant"
   }
 }

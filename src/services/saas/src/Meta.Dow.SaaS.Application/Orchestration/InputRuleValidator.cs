@@ -396,22 +396,9 @@ public static class InputRuleValidator
 
     private static bool TryGetDecimal(JsonNode value, out decimal number)
     {
-        number = 0;
-        if (value is JsonValue jv)
-        {
-            if (jv.TryGetValue<decimal>(out number))
-            {
-                return true;
-            }
-
-            if (jv.TryGetValue<string>(out var s) &&
-                decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out number))
-            {
-                return true;
-            }
-        }
-
-        return decimal.TryParse(value.ToJsonString().Trim('"'), NumberStyles.Any, CultureInfo.InvariantCulture, out number);
+        var parsed = JsonNodeNumbers.ToDecimal(value);
+        number = parsed ?? 0;
+        return parsed.HasValue;
     }
 
     private static bool TryGetBool(JsonNode value, out bool b)

@@ -858,7 +858,7 @@ public static class FinalOutputAssembler
             case float f:
                 number = (decimal)f;
                 return true;
-            case JsonValue jv when jv.TryGetValue<decimal>(out var jd):
+            case JsonValue jv when JsonNodeNumbers.ToDecimal(jv) is { } jd:
                 number = jd;
                 return true;
             default:

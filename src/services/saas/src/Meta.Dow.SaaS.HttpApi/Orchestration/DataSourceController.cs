@@ -39,6 +39,20 @@ public class DataSourceController : SaaSController, IDataSourceAppService
         return _service.GetProvidersAsync();
     }
 
+    [HttpPost]
+    [Route("test")]
+    public Task<DataSourceTestResultDto> TestAsync(TestDataSourceConnectionDto input)
+    {
+        return _service.TestAsync(input);
+    }
+
+    [HttpPost]
+    [Route("{id}/test")]
+    public Task<DataSourceTestResultDto> TestByIdAsync(Guid id)
+    {
+        return _service.TestAsync(new TestDataSourceConnectionDto { Id = id });
+    }
+
     [HttpGet]
     [Route("{id}")]
     public Task<DataSourceDto> GetAsync(Guid id)

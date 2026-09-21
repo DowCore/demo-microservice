@@ -78,6 +78,11 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         ArgumentNullException.ThrowIfNull(input);
 
         var code = input.Code.Trim();
+        if (SystemResourceFlowKeys.IsSystem(code) || code.StartsWith("sys.", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
         if (await _definitionRepository.AnyAsync(x => x.Code == code))
         {
             throw new UserFriendlyException(L["Orchestration:DefinitionCodeAlreadyExists", code]);
@@ -110,6 +115,11 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         ArgumentNullException.ThrowIfNull(input);
 
         var entity = await _definitionRepository.GetAsync(id);
+        if (entity.IsSystem)
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
         entity.UpdateDraft(
             input.Name.Trim(),
             input.Category?.Trim(),
@@ -125,6 +135,12 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
     [Authorize(OrchestrationPermissions.Definitions.Delete)]
     public async Task DeleteAsync(Guid id)
     {
+        var entity = await _definitionRepository.GetAsync(id);
+        if (entity.IsSystem)
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
         await _usageIndexer.ClearForDefinitionAsync(id);
         await _definitionRepository.DeleteAsync(id, autoSave: true);
     }
@@ -133,6 +149,11 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
     public async Task<FlowVersionDto> PublishAsync(Guid id)
     {
         var entity = await _definitionRepository.GetAsync(id);
+        if (entity.IsSystem)
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
         if (string.IsNullOrWhiteSpace(entity.DslJson))
         {
             throw new UserFriendlyException(L["Orchestration:DslRequired"]);

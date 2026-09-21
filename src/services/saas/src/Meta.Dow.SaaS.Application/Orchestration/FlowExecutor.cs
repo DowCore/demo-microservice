@@ -51,6 +51,7 @@ public class FlowExecutor : ITransientDependency
     private readonly ICodeSandboxExecutor _codeSandboxExecutor;
     private readonly IOrchestrationRabbitPublisher _rabbitPublisher;
     private readonly PublishedFlowCache _publishedFlowCache;
+    private readonly IResourceCrudExecutor _resourceCrudExecutor;
     private readonly ILogger<FlowExecutor> _logger;
 
     public FlowExecutor(
@@ -61,6 +62,7 @@ public class FlowExecutor : ITransientDependency
         ICodeSandboxExecutor codeSandboxExecutor,
         IOrchestrationRabbitPublisher rabbitPublisher,
         PublishedFlowCache publishedFlowCache,
+        IResourceCrudExecutor resourceCrudExecutor,
         ILogger<FlowExecutor> logger
     )
     {
@@ -71,6 +73,7 @@ public class FlowExecutor : ITransientDependency
         _codeSandboxExecutor = codeSandboxExecutor;
         _rabbitPublisher = rabbitPublisher;
         _publishedFlowCache = publishedFlowCache;
+        _resourceCrudExecutor = resourceCrudExecutor;
         _logger = logger;
     }
 
@@ -619,6 +622,18 @@ public class FlowExecutor : ITransientDependency
                 case "component":
                 {
                     await ExecuteSubFlowAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
+                case "resourcequery":
+                case "resourceget":
+                case "resourcecreate":
+                case "resourceupdate":
+                case "resourcedelete":
+                case "resourcecrud":
+                {
+                    await ExecuteResourceCrudAsync(node, ctx, record, isDryRun, cancellationToken);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -1285,6 +1300,36 @@ public class FlowExecutor : ITransientDependency
         return node.Id;
     }
 
+    private async Task ExecuteResourceCrudAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        CancellationToken cancellationToken
+    )
+    {
+        var nodeInput = FlowContextResolver.MapNodeInputs(node.Inputs, ctx);
+        var type = (node.Type ?? "").Trim().ToLowerInvariant();
+        var op = type switch
+        {
+            "resourcequery" => "query",
+            "resourceget" => "get",
+            "resourcecreate" => "create",
+            "resourceupdate" => "update",
+            "resourcedelete" => "delete",
+            _ => (node.Kind ?? "").Trim().ToLowerInvariant()
+        };
+        if (string.IsNullOrWhiteSpace(op) && nodeInput["op"] != null)
+        {
+            op = nodeInput["op"]?.ToString() ?? "";
+        }
+
+        record.InputJson = nodeInput.ToJsonString(JsonOptions);
+        var raw = await _resourceCrudExecutor.ExecuteAsync(op, nodeInput, isDryRun, cancellationToken);
+        ApplyExecutableOutputs(node, raw, ctx);
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+    }
+
     private async Task ExecuteSubFlowAsync(
         FlowDslNode node,
         FlowRuntimeContext ctx,
@@ -1858,6 +1903,18 @@ public class FlowExecutor : ITransientDependency
                 if (string.IsNullOrWhiteSpace(key))
                 {
                     throw new UserFriendlyException($"SubFlow node '{node.Id}' requires subFlowKey.");
+                }
+            }
+
+            if (type is "resourcequery" or "resourceget" or "resourcecreate" or "resourceupdate"
+                or "resourcedelete" or "resourcecrud")
+            {
+                if (node.Inputs is not { Count: > 0 } ||
+                    node.Inputs.All(x => !string.Equals(x.Name, "resourceCode", StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new UserFriendlyException(
+                        $"Resource node '{node.Id}' requires an input named resourceCode."
+                    );
                 }
             }
         }

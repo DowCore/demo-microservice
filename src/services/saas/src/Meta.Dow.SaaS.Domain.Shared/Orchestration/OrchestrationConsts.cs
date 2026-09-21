@@ -7,6 +7,11 @@ public static class OrchestrationConsts
     public const int MaxCategoryLength = 64;
     public const int MaxConnectionStringLength = 2048;
     public const int MaxDataSourceCodeLength = 64;
+    public const int MaxTableNameLength = 64;
+    public const int MaxColumnNameLength = 64;
+    public const int MaxResourceCodeLength = 64;
+    public const int ResourceQueryMaxPageSize = 200;
+    public const int MaxFilterGroupDepth = 3;
     public const int MaxMessageSourceCodeLength = 64;
     public const int MaxTriggerCodeLength = 64;
     public const int MaxScheduleCodeLength = 64;

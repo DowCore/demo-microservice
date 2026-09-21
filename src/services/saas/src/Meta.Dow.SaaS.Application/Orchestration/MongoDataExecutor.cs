@@ -96,7 +96,7 @@ public class MongoDataExecutor : IMongoDataExecutor, ITransientDependency
         var find = coll.Find(filterDoc);
         if (options != null)
         {
-            if (options["limit"] is JsonValue lim && lim.TryGetValue<int>(out var limit) && limit > 0)
+            if (JsonNodeNumbers.ToInt32(options["limit"]) is { } limit && limit > 0)
             {
                 find = find.Limit(Math.Min(limit, OrchestrationConsts.CodeDbQueryMaxRows));
             }

@@ -20,4 +20,6 @@ public interface IDataSourceAppService : IApplicationService
     Task<DataSourceDto> UpdateAsync(Guid id, UpdateDataSourceDto input);
 
     Task DeleteAsync(Guid id);
+
+    Task<DataSourceTestResultDto> TestAsync(TestDataSourceConnectionDto input);
 }

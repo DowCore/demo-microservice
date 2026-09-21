@@ -24,4 +24,10 @@ public class SaaSDbContext : AbpMongoDbContext
     public IMongoCollection<FlowTrigger> FlowTriggers => Collection<FlowTrigger>();
 
     public IMongoCollection<FlowSchedule> FlowSchedules => Collection<FlowSchedule>();
+
+    public IMongoCollection<TableDefinition> TableDefinitions => Collection<TableDefinition>();
+
+    public IMongoCollection<AppResource> AppResources => Collection<AppResource>();
+
+    public IMongoCollection<ReportDefinition> ReportDefinitions => Collection<ReportDefinition>();
 }

@@ -23,6 +23,8 @@ public class FlowDefinitionDto : FullAuditedEntityDto<Guid>
     public int? PublishedVersion { get; set; }
 
     public bool IsReusable { get; set; }
+
+    public bool IsSystem { get; set; }
 }
 
 public class CreateFlowDefinitionDto

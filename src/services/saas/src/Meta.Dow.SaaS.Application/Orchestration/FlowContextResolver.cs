@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Volo.Abp;
@@ -329,47 +330,9 @@ public static class FlowContextResolver
 
     private static bool TryDecimal(JsonNode? value, out decimal number)
     {
-        number = 0;
-        if (value is null)
-        {
-            return false;
-        }
-
-        if (value is JsonValue jv)
-        {
-            if (jv.TryGetValue<decimal>(out var d))
-            {
-                number = d;
-                return true;
-            }
-
-            if (jv.TryGetValue<double>(out var dbl))
-            {
-                number = (decimal)dbl;
-                return true;
-            }
-
-            if (jv.TryGetValue<int>(out var i))
-            {
-                number = i;
-                return true;
-            }
-
-            if (jv.TryGetValue<long>(out var l))
-            {
-                number = l;
-                return true;
-            }
-
-            if (jv.TryGetValue<string>(out var s) &&
-                decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out d))
-            {
-                number = d;
-                return true;
-            }
-        }
-
-        return decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out number);
+        var parsed = JsonNodeNumbers.ToDecimal(value);
+        number = parsed ?? 0;
+        return parsed.HasValue;
     }
 
     public static JsonNode? ResolveBindingFrom(JsonNode? from, FlowRuntimeContext ctx)
@@ -714,15 +677,25 @@ public static class FlowContextResolver
 
     public static object? ToClr(JsonNode? node)
     {
-        return node switch
+        if (node is null)
         {
-            null => null,
-            JsonValue value when value.TryGetValue<bool>(out var b) => b,
-            JsonValue value when value.TryGetValue<decimal>(out var d) => d,
-            JsonValue value when value.TryGetValue<string>(out var s) => s,
-            JsonValue value => value.ToString(),
-            _ => node.ToJsonString()
-        };
+            return null;
+        }
+
+        if (node is JsonValue value)
+        {
+            return value.GetValueKind() switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => JsonNodeNumbers.ToNumberObject(value) ?? value.ToString(),
+                JsonValueKind.String => value.GetValue<string>(),
+                JsonValueKind.Null => null,
+                _ => value.ToString()
+            };
+        }
+
+        return node.ToJsonString();
     }
 
     public static JsonNode? ToJsonNode(object? value)

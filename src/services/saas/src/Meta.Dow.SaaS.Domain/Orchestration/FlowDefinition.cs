@@ -26,6 +26,9 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     /// <summary>标记为可复用逻辑组件，出现在编排「逻辑组件」选用列表。</summary>
     public bool IsReusable { get; protected set; }
 
+    /// <summary>系统种子逻辑，禁止改 DSL / 删除。</summary>
+    public bool IsSystem { get; protected set; }
+
     protected FlowDefinition()
     {
     }
@@ -36,7 +39,8 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         string code,
         string? category = null,
         Guid? tenantId = null,
-        bool isReusable = false
+        bool isReusable = false,
+        bool isSystem = false
     )
         : base(id)
     {
@@ -45,6 +49,7 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         Category = category;
         TenantId = tenantId;
         IsReusable = isReusable;
+        IsSystem = isSystem;
         Status = FlowDefinitionStatus.Draft;
     }
 
@@ -70,6 +75,8 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     {
         IsReusable = isReusable;
     }
+
+    public void MarkSystem() => IsSystem = true;
 
     public void MarkPublished(int version)
     {

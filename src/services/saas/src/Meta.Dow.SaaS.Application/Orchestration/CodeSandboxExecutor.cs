@@ -262,10 +262,7 @@ public sealed class CodeDbHost
         if (options != null)
         {
             var opt = ToJsonObject(options);
-            if (opt?["ttl"] is JsonValue jv && jv.TryGetValue<int>(out var t))
-            {
-                ttl = t;
-            }
+            ttl = JsonNodeNumbers.ToInt32(opt?["ttl"]);
         }
 
         return _redisExecutor

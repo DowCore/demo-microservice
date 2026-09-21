@@ -29,6 +29,36 @@ public static class OrchestrationPermissions
         public const string Create = Default + ".Create";
         public const string Update = Default + ".Update";
         public const string Delete = Default + ".Delete";
+        public const string Ddl = Default + ".Ddl";
+    }
+
+    public static class Tables
+    {
+        public const string Default = GroupName + ".Tables";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Ddl = Default + ".Ddl";
+    }
+
+    public static class Resources
+    {
+        public const string Default = GroupName + ".Resources";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Publish = Default + ".Publish";
+        public const string Execute = Default + ".Execute";
+    }
+
+    public static class Reports
+    {
+        public const string Default = GroupName + ".Reports";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Publish = Default + ".Publish";
+        public const string Execute = Default + ".Execute";
     }
 
     public static class MessageSources

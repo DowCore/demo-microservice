@@ -33,7 +33,8 @@ public interface IPublishedFlowInvoker
         string? triggerSource = null,
         Guid? tenantId = null,
         bool filterOutputsByRole = false,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool persistOnSuccess = true
     );
 }
 
@@ -72,7 +73,8 @@ public class PublishedFlowInvoker : IPublishedFlowInvoker, ITransientDependency
         string? triggerSource = null,
         Guid? tenantId = null,
         bool filterOutputsByRole = false,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool persistOnSuccess = true
     )
     {
         using (_currentTenant.Change(tenantId))
@@ -117,7 +119,11 @@ public class PublishedFlowInvoker : IPublishedFlowInvoker, ITransientDependency
                 instance.Fail(execution.Error ?? "Failed", execution.VariablesJson);
             }
 
-            await _instanceRepository.InsertAsync(instance, autoSave: true);
+            if (persistOnSuccess || !execution.Succeeded)
+            {
+                await _instanceRepository.InsertAsync(instance, autoSave: true);
+            }
+
             await uow.CompleteAsync(cancellationToken);
 
             if (!execution.Succeeded)
@@ -133,7 +139,7 @@ public class PublishedFlowInvoker : IPublishedFlowInvoker, ITransientDependency
             return new PublishedFlowInvokeResult
             {
                 Success = execution.Succeeded,
-                InstanceId = instance.Id,
+                InstanceId = persistOnSuccess || !execution.Succeeded ? instance.Id : Guid.Empty,
                 DataJson = execution.OutputDataJson,
                 Error = execution.Error,
                 FlowKey = published.FlowKey,

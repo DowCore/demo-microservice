@@ -114,3 +114,25 @@ public class DataSourceProviderOptionDto
 
     public string ConnectionHint { get; set; } = null!;
 }
+
+public class TestDataSourceConnectionDto
+{
+    /// <summary>已保存数据源；编辑时连接串留空则用库里的值。</summary>
+    public Guid? Id { get; set; }
+
+    [Required]
+    [StringLength(32)]
+    public string Provider { get; set; } = DataSourceProvider.Postgres;
+
+    [StringLength(OrchestrationConsts.MaxConnectionStringLength)]
+    public string? ConnectionString { get; set; }
+}
+
+public class DataSourceTestResultDto
+{
+    public bool Success { get; set; }
+
+    public int ElapsedMs { get; set; }
+
+    public string? Message { get; set; }
+}

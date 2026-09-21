@@ -44,6 +44,36 @@ public class SaaSPermissionDefinitionProvider : PermissionDefinitionProvider
         dataSources.AddChild(OrchestrationPermissions.DataSources.Create, L("Permission:Orchestration:DataSources.Create"));
         dataSources.AddChild(OrchestrationPermissions.DataSources.Update, L("Permission:Orchestration:DataSources.Update"));
         dataSources.AddChild(OrchestrationPermissions.DataSources.Delete, L("Permission:Orchestration:DataSources.Delete"));
+        dataSources.AddChild(OrchestrationPermissions.DataSources.Ddl, L("Permission:Orchestration:DataSources.Ddl"));
+
+        var tables = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Tables.Default,
+            L("Permission:Orchestration:Tables")
+        );
+        tables.AddChild(OrchestrationPermissions.Tables.Create, L("Permission:Orchestration:Tables.Create"));
+        tables.AddChild(OrchestrationPermissions.Tables.Update, L("Permission:Orchestration:Tables.Update"));
+        tables.AddChild(OrchestrationPermissions.Tables.Delete, L("Permission:Orchestration:Tables.Delete"));
+        tables.AddChild(OrchestrationPermissions.Tables.Ddl, L("Permission:Orchestration:Tables.Ddl"));
+
+        var resources = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Resources.Default,
+            L("Permission:Orchestration:Resources")
+        );
+        resources.AddChild(OrchestrationPermissions.Resources.Create, L("Permission:Orchestration:Resources.Create"));
+        resources.AddChild(OrchestrationPermissions.Resources.Update, L("Permission:Orchestration:Resources.Update"));
+        resources.AddChild(OrchestrationPermissions.Resources.Delete, L("Permission:Orchestration:Resources.Delete"));
+        resources.AddChild(OrchestrationPermissions.Resources.Publish, L("Permission:Orchestration:Resources.Publish"));
+        resources.AddChild(OrchestrationPermissions.Resources.Execute, L("Permission:Orchestration:Resources.Execute"));
+
+        var reports = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Reports.Default,
+            L("Permission:Orchestration:Reports")
+        );
+        reports.AddChild(OrchestrationPermissions.Reports.Create, L("Permission:Orchestration:Reports.Create"));
+        reports.AddChild(OrchestrationPermissions.Reports.Update, L("Permission:Orchestration:Reports.Update"));
+        reports.AddChild(OrchestrationPermissions.Reports.Delete, L("Permission:Orchestration:Reports.Delete"));
+        reports.AddChild(OrchestrationPermissions.Reports.Publish, L("Permission:Orchestration:Reports.Publish"));
+        reports.AddChild(OrchestrationPermissions.Reports.Execute, L("Permission:Orchestration:Reports.Execute"));
 
         var messageSources = orchestrationGroup.AddPermission(
             OrchestrationPermissions.MessageSources.Default,

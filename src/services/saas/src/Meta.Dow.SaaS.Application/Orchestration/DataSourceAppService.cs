@@ -12,10 +12,15 @@ namespace Meta.Dow.SaaS.Orchestration;
 public class DataSourceAppService : SaaSAppService, IDataSourceAppService
 {
     private readonly IRepository<DataSource, Guid> _repository;
+    private readonly IDataSourceConnectionTester _connectionTester;
 
-    public DataSourceAppService(IRepository<DataSource, Guid> repository)
+    public DataSourceAppService(
+        IRepository<DataSource, Guid> repository,
+        IDataSourceConnectionTester connectionTester
+    )
     {
         _repository = repository;
+        _connectionTester = connectionTester;
     }
 
     [Authorize(OrchestrationPermissions.DataSources.Default)]
@@ -139,6 +144,32 @@ public class DataSourceAppService : SaaSAppService, IDataSourceAppService
     public async Task DeleteAsync(Guid id)
     {
         await _repository.DeleteAsync(id);
+    }
+
+    [Authorize(OrchestrationPermissions.DataSources.Default)]
+    public async Task<DataSourceTestResultDto> TestAsync(TestDataSourceConnectionDto input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var connectionString = input.ConnectionString?.Trim();
+        var provider = input.Provider;
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            if (!input.Id.HasValue)
+            {
+                throw new UserFriendlyException(L["Orchestration:DataSourceConnectionRequired"]);
+            }
+
+            var entity = await _repository.GetAsync(input.Id.Value);
+            connectionString = entity.ConnectionString;
+            provider = entity.Provider;
+        }
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new UserFriendlyException(L["Orchestration:DataSourceConnectionRequired"]);
+        }
+
+        return await _connectionTester.TestAsync(provider, connectionString);
     }
 
     private static DataSourceDto MapToDto(DataSource entity)

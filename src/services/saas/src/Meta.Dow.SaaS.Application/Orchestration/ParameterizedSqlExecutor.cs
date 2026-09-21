@@ -227,7 +227,7 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         if (expectRows)
         {
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-            var rows = await ReadRowsAsync(reader, cancellationToken);
+            var rows = await ReadRowsAsync(reader, dataSource.Provider, cancellationToken);
             _logger.LogInformation(
                 "[CodeDb] query ds={DataSource} fingerprint={Fingerprint} rowCount={Count} paramShape={Shape}",
                 dataSource.Code,
@@ -359,7 +359,26 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
                 DataSourceProvider.Oracle => name, // OracleParameter 通常不带冒号
                 _ => name
             };
-            p.Value = ToDbValue(value) ?? DBNull.Value;
+            p.Value = ToDbValue(value, provider) ?? DBNull.Value;
+            p.DbType = p.Value switch
+            {
+                DateTimeOffset => DbType.DateTimeOffset,
+                DateTime dt when dt.Kind == DateTimeKind.Unspecified && dt.TimeOfDay == TimeSpan.Zero
+                    => DbType.Date,
+                DateTime => DbType.DateTime,
+                Guid => DbType.Guid,
+                bool => DbType.Boolean,
+                byte[] => DbType.Binary,
+                byte => DbType.Byte,
+                short => DbType.Int16,
+                int => DbType.Int32,
+                long => DbType.Int64,
+                decimal => DbType.Decimal,
+                double => DbType.Double,
+                float => DbType.Single,
+                _ => p.DbType
+            };
+
             cmd.Parameters.Add(p);
         }
 
@@ -388,7 +407,7 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         return false;
     }
 
-    private static object? ToDbValue(JsonNode? node)
+    private static object? ToDbValue(JsonNode? node, string? provider = null)
     {
         if (node == null || node is JsonValue jv && jv.GetValueKind() == JsonValueKind.Null)
         {
@@ -399,26 +418,50 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         {
             return value.GetValueKind() switch
             {
-                JsonValueKind.String => value.GetValue<string>(),
-                JsonValueKind.Number => value.TryGetValue<long>(out var l)
-                    ? l
-                    : value.GetValue<double>(),
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
+                JsonValueKind.String => CoerceString(value.GetValue<string>(), provider),
+                JsonValueKind.Number => JsonNodeNumbers.ToNumberObject(value)
+                    ?? throw new UserFriendlyException("Invalid numeric SQL parameter."),
+                JsonValueKind.True => SqlDialect.ToProviderBoolean(provider, true),
+                JsonValueKind.False => SqlDialect.ToProviderBoolean(provider, false),
+                JsonValueKind.Null => null,
                 _ => value.ToJsonString()
             };
         }
 
         if (node is JsonArray arr)
         {
-            // 数组作为单个参数值（如 PG 数组）——驱动层用字符串 JSON 不够；优先转 object[]
-            return arr.Select(ToDbValue).ToArray();
+            return arr.Select(x => ToDbValue(x, provider)).ToArray();
         }
 
         return node.ToJsonString();
     }
 
-    private static async Task<JsonArray> ReadRowsAsync(DbDataReader reader, CancellationToken cancellationToken)
+    private static object? CoerceString(string? text, string? provider)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        if (SqlDialect.TryParseTemporal(text, out var parsed, out var dateOnly))
+        {
+            return SqlDialect.ToProviderTemporal(provider, parsed, dateOnly);
+        }
+
+        if (Guid.TryParse(text, out var guid) &&
+            SqlDialect.NormalizeProvider(provider ?? string.Empty) == DataSourceProvider.Oracle)
+        {
+            return SqlDialect.ToProviderGuid(provider, guid);
+        }
+
+        return text;
+    }
+
+    private static async Task<JsonArray> ReadRowsAsync(
+        DbDataReader reader,
+        string provider,
+        CancellationToken cancellationToken
+    )
     {
         var rows = new JsonArray();
         var count = 0;
@@ -435,7 +478,9 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
             for (var i = 0; i < reader.FieldCount; i++)
             {
                 var name = reader.GetName(i);
-                obj[name] = reader.IsDBNull(i) ? null : FromClr(reader.GetValue(i));
+                obj[name] = reader.IsDBNull(i)
+                    ? null
+                    : FromClr(reader.GetValue(i), reader.GetDataTypeName(i), provider);
             }
 
             rows.Add(obj);
@@ -444,21 +489,36 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         return rows;
     }
 
-    private static JsonNode? FromClr(object value)
+    private static JsonNode? FromClr(object value, string? dbType, string? provider)
     {
         return value switch
         {
             null or DBNull => null,
             string s => s,
             bool b => b,
-            byte or sbyte or short or ushort or int or uint or long or ulong => Convert.ToInt64(value, CultureInfo.InvariantCulture),
-            float or double or decimal => Convert.ToDouble(value, CultureInfo.InvariantCulture),
-            DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
-            DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
+            byte or sbyte or short or ushort or int => Convert.ToInt32(value, CultureInfo.InvariantCulture),
+            uint or long or ulong => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+            decimal d => d,
+            float or double => Convert.ToDouble(value, CultureInfo.InvariantCulture),
+            DateTime dt => FormatTemporal(dt, dbType, provider),
+            DateTimeOffset dto => FormatTemporal(dto.UtcDateTime, dbType, provider),
             Guid g => g.ToString(),
+            byte[] bytes when SqlDialect.NormalizeProvider(provider ?? string.Empty) == DataSourceProvider.Oracle &&
+                              bytes.Length == 16
+                => new Guid(bytes).ToString(),
             byte[] bytes => Convert.ToBase64String(bytes),
             _ => JsonValue.Create(Convert.ToString(value, CultureInfo.InvariantCulture))
         };
+    }
+
+    private static string FormatTemporal(DateTime value, string? dbType, string? provider)
+    {
+        if (SqlDialect.IsDateOnlyDbType(provider, dbType))
+        {
+            return value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        return value.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
     }
 
     private static string Fingerprint(string sql)

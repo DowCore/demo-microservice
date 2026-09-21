@@ -347,6 +347,139 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
                 7
             );
         }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationTables") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationTables",
+                "托管表",
+                MenuType.Menu,
+                "/orchestration/tables",
+                "/orchestration/tables/index",
+                "Orchestration.Tables",
+                "lucide:table-2",
+                8
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationTableDesigner") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationTableDesigner",
+                "表设计器",
+                MenuType.Menu,
+                "/orchestration/tables/designer",
+                "/orchestration/tables/designer",
+                "Orchestration.Tables.Update",
+                "lucide:columns-3",
+                9,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationResources") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationResources",
+                "应用资源",
+                MenuType.Menu,
+                "/orchestration/resources",
+                "/orchestration/resources/index",
+                "Orchestration.Resources",
+                "lucide:app-window",
+                10
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationResourceEditor") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationResourceEditor",
+                "资源配置",
+                MenuType.Menu,
+                "/orchestration/resources/editor",
+                "/orchestration/resources/editor",
+                "Orchestration.Resources.Update",
+                "lucide:panel-right",
+                11,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "AppResourceRuntime") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                null,
+                "AppResourceRuntime",
+                "资源运行时",
+                MenuType.Menu,
+                "/app/:code",
+                "/orchestration/app/runtime",
+                "Orchestration.Resources.Execute",
+                "lucide:layout-list",
+                40,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationReports") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationReports",
+                "报表",
+                MenuType.Menu,
+                "/orchestration/reports",
+                "/orchestration/reports/index",
+                "Orchestration.Reports",
+                "lucide:table",
+                12
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationReportEditor") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationReportEditor",
+                "报表配置",
+                MenuType.Menu,
+                "/orchestration/reports/editor",
+                "/orchestration/reports/editor",
+                "Orchestration.Reports.Update",
+                "lucide:panel-right",
+                13,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "AppReportRuntime") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                null,
+                "AppReportRuntime",
+                "报表运行时",
+                MenuType.Menu,
+                "/app/reports/:code",
+                "/orchestration/reports/runtime",
+                "Orchestration.Reports.Execute",
+                "lucide:layout-list",
+                41,
+                isVisible: false
+            );
+        }
     }
 
     private async Task EnsureEmailSettingsMenuAsync()

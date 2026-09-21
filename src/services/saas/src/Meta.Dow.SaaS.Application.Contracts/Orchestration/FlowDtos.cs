@@ -21,6 +21,8 @@ public class FlowDefinitionDto : FullAuditedEntityDto<Guid>
     public string? DslJson { get; set; }
 
     public int? PublishedVersion { get; set; }
+
+    public bool IsReusable { get; set; }
 }
 
 public class CreateFlowDefinitionDto
@@ -39,6 +41,8 @@ public class CreateFlowDefinitionDto
     public string? GraphJson { get; set; }
 
     public string? DslJson { get; set; }
+
+    public bool IsReusable { get; set; }
 }
 
 public class UpdateFlowDefinitionDto
@@ -53,6 +57,8 @@ public class UpdateFlowDefinitionDto
     public string? GraphJson { get; set; }
 
     public string? DslJson { get; set; }
+
+    public bool? IsReusable { get; set; }
 }
 
 public class FlowDefinitionGetListInput : PagedAndSortedResultRequestDto
@@ -60,6 +66,38 @@ public class FlowDefinitionGetListInput : PagedAndSortedResultRequestDto
     public string? Filter { get; set; }
 
     public FlowDefinitionStatus? Status { get; set; }
+
+    public bool? IsReusable { get; set; }
+}
+
+public class ReusableFlowLookupDto
+{
+    public Guid Id { get; set; }
+
+    public string Code { get; set; } = null!;
+
+    public string Name { get; set; } = null!;
+
+    public string? Category { get; set; }
+
+    public int PublishedVersion { get; set; }
+}
+
+public class FlowUsageDto : EntityDto<Guid>
+{
+    public Guid CallerDefinitionId { get; set; }
+
+    public string CallerCode { get; set; } = null!;
+
+    public string CallerName { get; set; } = null!;
+
+    public string CalleeFlowKey { get; set; } = null!;
+
+    public string? NodeId { get; set; }
+
+    public string? NodeRef { get; set; }
+
+    public DateTime CreationTime { get; set; }
 }
 
 public class FlowVersionDto : EntityDto<Guid>
@@ -110,6 +148,8 @@ public class FlowInstanceDto : CreationAuditedEntityDto<Guid>
 
     public bool IsDryRun { get; set; }
 
+    public string? TriggerSource { get; set; }
+
     public List<NodeExecutionDto> Nodes { get; set; } = [];
 }
 
@@ -140,4 +180,11 @@ public class DryRunFlowInstanceDto
     public string? DslJson { get; set; }
 
     public string? VariablesJson { get; set; }
+}
+
+public class DeleteManyFlowInstancesDto
+{
+    [Required]
+    [MinLength(1)]
+    public List<Guid> Ids { get; set; } = [];
 }

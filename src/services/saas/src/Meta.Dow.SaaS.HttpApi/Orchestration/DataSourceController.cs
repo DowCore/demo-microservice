@@ -26,13 +26,6 @@ public class DataSourceController : SaaSController, IDataSourceAppService
     }
 
     [HttpGet]
-    [Route("{id}")]
-    public Task<DataSourceDto> GetAsync(Guid id)
-    {
-        return _service.GetAsync(id);
-    }
-
-    [HttpGet]
     [Route("lookup")]
     public Task<ListResultDto<DataSourceLookupDto>> GetLookupAsync()
     {
@@ -44,6 +37,13 @@ public class DataSourceController : SaaSController, IDataSourceAppService
     public Task<ListResultDto<DataSourceProviderOptionDto>> GetProvidersAsync()
     {
         return _service.GetProvidersAsync();
+    }
+
+    [HttpGet]
+    [Route("{id}")]
+    public Task<DataSourceDto> GetAsync(Guid id)
+    {
+        return _service.GetAsync(id);
     }
 
     [HttpPost]

@@ -331,6 +331,9 @@ public class FlowDslNode
     /// <summary>payloadMode=raw 时取该路径作为整包 JSON</summary>
     public string? PayloadFrom { get; set; }
 
+    /// <summary>SubFlow：被调用的已发布逻辑编码（flowKey）</summary>
+    public string? SubFlowKey { get; set; }
+
     public string? ResolveDataSourceId()
     {
         if (!string.IsNullOrWhiteSpace(DataSourceId))

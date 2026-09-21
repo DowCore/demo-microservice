@@ -37,8 +37,8 @@
 
 | 类型 | 典型产品 | 解决什么 | 本方案 |
 |------|----------|----------|--------|
-| **A. 页面/表单低代码** | LowCodeEngine、Amis | 拖拽页面、CRUD | 否 |
-| **B. 审批/BPM** | 钉钉审批、Flowable、Camunda | 人审、会签、待办 | **明确不做**（LiteFlow 官方也不做角色任务流转） |
+| **A. 页面/表单低代码** | LowCodeEngine、Amis、NocoBase | 拖拽页面、CRUD、看板视图 | **另文规划**，见 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)（本文不实现） |
+| **B. 审批/BPM** | 钉钉审批、Flowable、Camunda | 人审、会签、待办 | **另文规划**（同上）；逻辑编排画布内仍明确不做 |
 | **C. 自动化 / iPaaS** | n8n、Zapier、阿里云逻辑编排（连接器） | 把 Slack/钉钉/HTTP 等 SaaS 串起来 | **易偏离主题，仅借鉴调试/版本，不做成连接器市场** |
 | **D. 代码逻辑编排** | **LiteFlow**、宜搭「逻辑编排」、微搭逻辑流、LogicFlow 逻辑图 | 把 **if/顺序/并行/循环/调内部服务** 从代码里抽出来可视化拼装 | **是（主方案）** |
 
@@ -1704,6 +1704,78 @@ Start flow (txMode=sameDataSource)
 
 左侧拖「Rabbit广播」→ 配交换机 / fanout / 消息体 map / 失败策略。
 
+#### 5.4.9 SubFlow（逻辑组件调用）
+
+##### 产品口径（已落地 MVP）
+
+- **逻辑组件** = 勾选 `isReusable` 且 **已发布** 的流程定义（`code` = flowKey）。
+- 画布节点类型：`SubFlow`（兼容别名 `LogicComponent` / `Component`）。
+- 同步调用：本节点 `inputs` → 子流程请求体；子流程跑完 End 出参装入信封 `data`。
+- 默认 `resultRoot=data`；出参 `from` 相对子流程业务结果；信封字段 `success` / `subFlowKey` / `subFlowVersion` / `executeMs` 仍可从 raw 根取。
+- **嵌套上限** 5 层；**禁止循环**（调用栈含同一 flowKey）。
+- `onError`：`fail`（默认）中断父流程；`ignore` 继续并把 `success=false` 写出。
+- 试运行（DryRun）会递归执行子流程（Http 等仍按 DryRun 规则跳过）。
+- **不单独落子实例**：子节点执行明细不写入父 `FlowInstance.Nodes`（仅本 SubFlow 节点一条记录）。
+
+##### 引用索引（FlowUsage）
+
+保存草稿 / 发布时扫描 DSL 中的 SubFlow，写入 `FlowUsage`：
+
+| 字段 | 说明 |
+|------|------|
+| CallerDefinitionId / CallerCode | 谁在调用 |
+| CalleeFlowKey | 被调 flowKey |
+| NodeId / NodeRef | 画布节点 |
+
+API：
+
+- `GET /api/orchestration/definitions/reusable-lookup` — 设计器选用列表  
+- `GET /api/orchestration/definitions/usages/by-callee?flowKey=` — 谁在用该组件  
+- `GET /api/orchestration/definitions/{id}/usages` — 该定义调用了谁  
+
+前端：「逻辑组件」菜单页 + 设计器 SubFlow 下拉。
+
+##### 节点契约示例
+
+```json
+{
+  "type": "SubFlow",
+  "ref": "sub1",
+  "subFlowKey": "pricing-calc",
+  "onError": "fail",
+  "resultRoot": "data",
+  "inputs": [
+    { "name": "amount", "from": "input.amount" }
+  ],
+  "outputs": [
+    { "name": "level", "from": "level" },
+    { "name": "ok", "from": "success" }
+  ]
+}
+```
+
+#### 5.4.10 触发层：消息订阅 / 定时（不扩展画布）
+
+编排只负责「业务怎么跑」。**何时启动**由触发层完成：订阅器 / 定时任务直接按 **已发布 `flowKey`（编码）** 调用，与 `POST /api/logic/{flowKey}` 同源（`PublishedFlowInvoker`）。
+
+| 概念 | 类比 | 说明 |
+|------|------|------|
+| MessageSource | DataSource | 登记 Rabbit/Kafka/MQTT 连接；Rabbit 连接串留空 = 平台 `rabbitmq` |
+| FlowTrigger | — | 队列 + 交换机绑定 → `flowKey`；消息 JSON = 流程入参 |
+| FlowSchedule | — | Cron + 固定 VariablesJson → `flowKey` |
+
+**已落地：** Rabbit / **Kafka** / **MQTT** 消费 HostedService（约 20s 热更新监听）；Cronos 进程内轮询定时；管理页「消息连接 / 消息触发 / 定时任务」。
+
+字段约定（`FlowTrigger`）：
+
+| 协议 | Queue 字段 | RoutingKey 字段 | 连接串 |
+|------|------------|-----------------|--------|
+| Rabbit | 队列名 | topic/direct 路由键 | 可空→平台 rabbitmq |
+| Kafka | Topic | Consumer Group（空=`orch-{code}`） | **必填** bootstrap |
+| MQTT | Topic（支持 +/#） | QoS 0/1/2（默认 1） | **必填** tcp:// 或 Host= |
+
+**刻意不做：** 画布 Kafka/MQTT/Cron 节点；触发器内嵌业务 DSL。
+
 ### 5.5 条件节点：多条件 + 逻辑运算
 
 **条件节点（Condition）** 是独立结构节点，专门做分支；与「执行节点上的进入条件」是两层能力：
@@ -2411,11 +2483,10 @@ High amount: {{input.amount}}, user={{sys.userName}}, at={{sys.Now}}
 
 | 优先级 | 节点 | 用途 | 说明 |
 |--------|------|------|------|
-| **P0 已有** | Assign / Log / HttpCall / Code / Mask / Throw / **RabbitMqPublish** | 统一 I/O + fanout 广播 | 见 §5.4.8 |
+| **P0 已有** | Assign / Log / HttpCall / Code / Mask / Throw / **RabbitMqPublish** / **SubFlow** | 统一 I/O + fanout + 逻辑组件 | 见 §5.4.8 / §5.4.9 |
 | **P1** | **txMode=sameDataSource** | 同 SQL 库跨节点统一事务 | 失败 Rollback；多库不强求；见 §5.4.7 |
 | **P1** | Switch | 多路枚举分支 | 与 Condition 互补 |
 | **P1** | Loop / ForEach | 数组批处理 | 代码逻辑编排刚需 |
-| **P1** | SubFlow | 调用另一条已发布逻辑 | 组合复用 |
 | **P1** | Sql（白名单） | 受控读写 | 与 DataSource 共用 |
 | **P2** | Outbox | 事务性发信到 Rabbit | 库成功 ⟺ 消息必达 |
 | **P2** | MqttPublish | IoT / 设备 MQTT | 非默认；确有需求再做 |
@@ -2563,8 +2634,9 @@ Gateway：`/api/orchestration/{*any}` 与 `/api/logic/{*any}` → SaaS。
 
 ### 阶段 3（强大引擎）
 
-- [ ] Wait、SWITCH、WHEN、SubFlow  
-- [ ] 领域组件目录；EL 文本对照  
+- [ ] Wait、SWITCH、WHEN  
+- [x] **SubFlow** + 逻辑组件目录 / FlowUsage 引用索引（§5.4.9）  
+- [ ] 领域组件目录（领域服务注册）；EL 文本对照  
 - [ ] 单条逻辑独立调用权限码；字段级审计  
 
 ---

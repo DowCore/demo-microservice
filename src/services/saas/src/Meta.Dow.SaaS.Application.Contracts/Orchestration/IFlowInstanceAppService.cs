@@ -16,4 +16,8 @@ public interface IFlowInstanceAppService : IApplicationService
     Task<FlowInstanceDto> DryRunAsync(DryRunFlowInstanceDto input);
 
     Task CancelAsync(Guid id);
+
+    Task DeleteAsync(Guid id);
+
+    Task DeleteManyAsync(DeleteManyFlowInstancesDto input);
 }

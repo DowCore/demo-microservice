@@ -23,6 +23,9 @@ public class FlowInstance : CreationAuditedAggregateRoot<Guid>, IMultiTenant
 
     public bool IsDryRun { get; protected set; }
 
+    /// <summary>触发来源：Http / Message:{code} / Schedule:{code}</summary>
+    public string? TriggerSource { get; protected set; }
+
     public List<NodeExecutionRecord> Nodes { get; protected set; } = [];
 
     protected FlowInstance()
@@ -36,7 +39,8 @@ public class FlowInstance : CreationAuditedAggregateRoot<Guid>, IMultiTenant
         int version,
         bool isDryRun,
         string? variablesJson,
-        Guid? tenantId = null
+        Guid? tenantId = null,
+        string? triggerSource = null
     )
         : base(id)
     {
@@ -46,6 +50,7 @@ public class FlowInstance : CreationAuditedAggregateRoot<Guid>, IMultiTenant
         IsDryRun = isDryRun;
         VariablesJson = variablesJson;
         TenantId = tenantId;
+        TriggerSource = triggerSource;
         Status = FlowInstanceStatus.Running;
     }
 

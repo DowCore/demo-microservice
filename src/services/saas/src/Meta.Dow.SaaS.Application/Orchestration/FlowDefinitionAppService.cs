@@ -14,17 +14,23 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
 {
     private readonly IRepository<FlowDefinition, Guid> _definitionRepository;
     private readonly IRepository<FlowVersion, Guid> _versionRepository;
+    private readonly IRepository<FlowUsage, Guid> _usageRepository;
     private readonly PublishedFlowCache _publishedFlowCache;
+    private readonly IFlowUsageIndexer _usageIndexer;
 
     public FlowDefinitionAppService(
         IRepository<FlowDefinition, Guid> definitionRepository,
         IRepository<FlowVersion, Guid> versionRepository,
-        PublishedFlowCache publishedFlowCache
+        IRepository<FlowUsage, Guid> usageRepository,
+        PublishedFlowCache publishedFlowCache,
+        IFlowUsageIndexer usageIndexer
     )
     {
         _definitionRepository = definitionRepository;
         _versionRepository = versionRepository;
+        _usageRepository = usageRepository;
         _publishedFlowCache = publishedFlowCache;
+        _usageIndexer = usageIndexer;
     }
 
     public async Task<PagedResultDto<FlowDefinitionDto>> GetListAsync(FlowDefinitionGetListInput input)
@@ -40,6 +46,11 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         if (input.Status.HasValue)
         {
             query = query.Where(x => x.Status == input.Status.Value);
+        }
+
+        if (input.IsReusable.HasValue)
+        {
+            query = query.Where(x => x.IsReusable == input.IsReusable.Value);
         }
 
         var total = query.Count();
@@ -77,11 +88,19 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
             input.Name.Trim(),
             code,
             input.Category?.Trim(),
-            CurrentTenant.Id
+            CurrentTenant.Id,
+            input.IsReusable
         );
-        entity.UpdateDraft(input.Name.Trim(), input.Category?.Trim(), input.GraphJson, input.DslJson);
+        entity.UpdateDraft(
+            input.Name.Trim(),
+            input.Category?.Trim(),
+            input.GraphJson,
+            input.DslJson,
+            input.IsReusable
+        );
 
         await _definitionRepository.InsertAsync(entity, autoSave: true);
+        await _usageIndexer.RebuildForDefinitionAsync(entity);
         return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
     }
 
@@ -91,14 +110,22 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         ArgumentNullException.ThrowIfNull(input);
 
         var entity = await _definitionRepository.GetAsync(id);
-        entity.UpdateDraft(input.Name.Trim(), input.Category?.Trim(), input.GraphJson, input.DslJson);
+        entity.UpdateDraft(
+            input.Name.Trim(),
+            input.Category?.Trim(),
+            input.GraphJson,
+            input.DslJson,
+            input.IsReusable
+        );
         await _definitionRepository.UpdateAsync(entity, autoSave: true);
+        await _usageIndexer.RebuildForDefinitionAsync(entity);
         return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
     }
 
     [Authorize(OrchestrationPermissions.Definitions.Delete)]
     public async Task DeleteAsync(Guid id)
     {
+        await _usageIndexer.ClearForDefinitionAsync(id);
         await _definitionRepository.DeleteAsync(id, autoSave: true);
     }
 
@@ -146,6 +173,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         await _versionRepository.InsertAsync(version, autoSave: true);
         entity.MarkPublished(nextVersion);
         await _definitionRepository.UpdateAsync(entity, autoSave: true);
+        await _usageIndexer.RebuildForDefinitionAsync(entity);
         _publishedFlowCache.InvalidateByDefinition(entity);
 
         return ObjectMapper.Map<FlowVersion, FlowVersionDto>(version);
@@ -162,6 +190,73 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
 
         return new ListResultDto<FlowVersionDto>(
             ObjectMapper.Map<List<FlowVersion>, List<FlowVersionDto>>(list)
+        );
+    }
+
+    public async Task<ListResultDto<ReusableFlowLookupDto>> GetReusableLookupAsync(string? filter = null)
+    {
+        var query = await _definitionRepository.GetQueryableAsync();
+        query = query.Where(x =>
+            x.IsReusable &&
+            x.Status == FlowDefinitionStatus.Published &&
+            x.PublishedVersion != null
+        );
+
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            var f = filter.Trim();
+            query = query.Where(x => x.Name.Contains(f) || x.Code.Contains(f));
+        }
+
+        var list = query
+            .OrderBy(x => x.Name)
+            .Take(200)
+            .ToList()
+            .Select(x => new ReusableFlowLookupDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                Name = x.Name,
+                Category = x.Category,
+                PublishedVersion = x.PublishedVersion ?? 0
+            })
+            .ToList();
+
+        return new ListResultDto<ReusableFlowLookupDto>(list);
+    }
+
+    public async Task<ListResultDto<FlowUsageDto>> GetUsagesByCalleeAsync(string flowKey)
+    {
+        if (string.IsNullOrWhiteSpace(flowKey))
+        {
+            throw new UserFriendlyException(L["Orchestration:FlowKeyRequired"]);
+        }
+
+        var key = flowKey.Trim();
+        var query = await _usageRepository.GetQueryableAsync();
+        var list = query
+            .Where(x => x.CalleeFlowKey == key)
+            .OrderByDescending(x => x.CreationTime)
+            .Take(500)
+            .ToList();
+
+        return new ListResultDto<FlowUsageDto>(
+            ObjectMapper.Map<List<FlowUsage>, List<FlowUsageDto>>(list)
+        );
+    }
+
+    public async Task<ListResultDto<FlowUsageDto>> GetUsagesByCallerAsync(Guid definitionId)
+    {
+        await _definitionRepository.GetAsync(definitionId);
+        var query = await _usageRepository.GetQueryableAsync();
+        var list = query
+            .Where(x => x.CallerDefinitionId == definitionId)
+            .OrderBy(x => x.CalleeFlowKey)
+            .Take(500)
+            .ToList();
+
+        return new ListResultDto<FlowUsageDto>(
+            ObjectMapper.Map<List<FlowUsage>, List<FlowUsageDto>>(list)
         );
     }
 }

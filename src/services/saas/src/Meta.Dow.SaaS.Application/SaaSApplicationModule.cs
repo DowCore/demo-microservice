@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Meta.Dow.Administration;
+using Meta.Dow.SaaS.Orchestration;
 using Volo.Abp.Application;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Modularity;
@@ -28,5 +29,10 @@ public class SaaSApplicationModule : AbpModule
 
         context.Services.AddAutoMapperObjectMapper<SaaSApplicationModule>();
         Configure<AbpAutoMapperOptions>(options => options.AddMaps<SaaSApplicationModule>(true));
+
+        context.Services.AddHostedService<RabbitMessageTriggerHostedService>();
+        context.Services.AddHostedService<KafkaMessageTriggerHostedService>();
+        context.Services.AddHostedService<MqttMessageTriggerHostedService>();
+        context.Services.AddHostedService<FlowScheduleHostedService>();
     }
 }

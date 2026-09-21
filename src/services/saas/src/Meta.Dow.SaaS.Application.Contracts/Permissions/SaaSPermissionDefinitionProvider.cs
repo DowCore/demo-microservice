@@ -35,6 +35,7 @@ public class SaaSPermissionDefinitionProvider : PermissionDefinitionProvider
         );
         instances.AddChild(OrchestrationPermissions.Instances.Run, L("Permission:Orchestration:Instances.Run"));
         instances.AddChild(OrchestrationPermissions.Instances.Cancel, L("Permission:Orchestration:Instances.Cancel"));
+        instances.AddChild(OrchestrationPermissions.Instances.Delete, L("Permission:Orchestration:Instances.Delete"));
 
         var dataSources = orchestrationGroup.AddPermission(
             OrchestrationPermissions.DataSources.Default,
@@ -43,6 +44,31 @@ public class SaaSPermissionDefinitionProvider : PermissionDefinitionProvider
         dataSources.AddChild(OrchestrationPermissions.DataSources.Create, L("Permission:Orchestration:DataSources.Create"));
         dataSources.AddChild(OrchestrationPermissions.DataSources.Update, L("Permission:Orchestration:DataSources.Update"));
         dataSources.AddChild(OrchestrationPermissions.DataSources.Delete, L("Permission:Orchestration:DataSources.Delete"));
+
+        var messageSources = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.MessageSources.Default,
+            L("Permission:Orchestration:MessageSources")
+        );
+        messageSources.AddChild(OrchestrationPermissions.MessageSources.Create, L("Permission:Orchestration:MessageSources.Create"));
+        messageSources.AddChild(OrchestrationPermissions.MessageSources.Update, L("Permission:Orchestration:MessageSources.Update"));
+        messageSources.AddChild(OrchestrationPermissions.MessageSources.Delete, L("Permission:Orchestration:MessageSources.Delete"));
+
+        var triggers = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Triggers.Default,
+            L("Permission:Orchestration:Triggers")
+        );
+        triggers.AddChild(OrchestrationPermissions.Triggers.Create, L("Permission:Orchestration:Triggers.Create"));
+        triggers.AddChild(OrchestrationPermissions.Triggers.Update, L("Permission:Orchestration:Triggers.Update"));
+        triggers.AddChild(OrchestrationPermissions.Triggers.Delete, L("Permission:Orchestration:Triggers.Delete"));
+
+        var schedules = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Schedules.Default,
+            L("Permission:Orchestration:Schedules")
+        );
+        schedules.AddChild(OrchestrationPermissions.Schedules.Create, L("Permission:Orchestration:Schedules.Create"));
+        schedules.AddChild(OrchestrationPermissions.Schedules.Update, L("Permission:Orchestration:Schedules.Update"));
+        schedules.AddChild(OrchestrationPermissions.Schedules.Delete, L("Permission:Orchestration:Schedules.Delete"));
+        schedules.AddChild(OrchestrationPermissions.Schedules.Run, L("Permission:Orchestration:Schedules.Run"));
 
         orchestrationGroup.AddPermission(
             OrchestrationPermissions.Sql.Write,

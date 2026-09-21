@@ -23,6 +23,9 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public int? PublishedVersion { get; protected set; }
 
+    /// <summary>标记为可复用逻辑组件，出现在编排「逻辑组件」选用列表。</summary>
+    public bool IsReusable { get; protected set; }
+
     protected FlowDefinition()
     {
     }
@@ -32,7 +35,8 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         string name,
         string code,
         string? category = null,
-        Guid? tenantId = null
+        Guid? tenantId = null,
+        bool isReusable = false
     )
         : base(id)
     {
@@ -40,15 +44,31 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         SetCode(code);
         Category = category;
         TenantId = tenantId;
+        IsReusable = isReusable;
         Status = FlowDefinitionStatus.Draft;
     }
 
-    public void UpdateDraft(string name, string? category, string? graphJson, string? dslJson)
+    public void UpdateDraft(
+        string name,
+        string? category,
+        string? graphJson,
+        string? dslJson,
+        bool? isReusable = null
+    )
     {
         SetName(name);
         Category = category;
         GraphJson = graphJson;
         DslJson = dslJson;
+        if (isReusable.HasValue)
+        {
+            IsReusable = isReusable.Value;
+        }
+    }
+
+    public void SetReusable(bool isReusable)
+    {
+        IsReusable = isReusable;
     }
 
     public void MarkPublished(int version)

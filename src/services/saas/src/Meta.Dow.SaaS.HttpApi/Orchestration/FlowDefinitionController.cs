@@ -26,6 +26,27 @@ public class FlowDefinitionController : SaaSController, IFlowDefinitionAppServic
     }
 
     [HttpGet]
+    [Route("reusable-lookup")]
+    public Task<ListResultDto<ReusableFlowLookupDto>> GetReusableLookupAsync(string? filter = null)
+    {
+        return _service.GetReusableLookupAsync(filter);
+    }
+
+    [HttpGet]
+    [Route("usages/by-callee")]
+    public Task<ListResultDto<FlowUsageDto>> GetUsagesByCalleeAsync(string flowKey)
+    {
+        return _service.GetUsagesByCalleeAsync(flowKey);
+    }
+
+    [HttpGet]
+    [Route("{id}/usages")]
+    public Task<ListResultDto<FlowUsageDto>> GetUsagesByCallerAsync(Guid id)
+    {
+        return _service.GetUsagesByCallerAsync(id);
+    }
+
+    [HttpGet]
     [Route("{id}")]
     public Task<FlowDefinitionDto> GetAsync(Guid id)
     {

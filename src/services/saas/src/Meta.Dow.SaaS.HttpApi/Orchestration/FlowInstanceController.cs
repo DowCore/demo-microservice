@@ -51,4 +51,18 @@ public class FlowInstanceController : SaaSController, IFlowInstanceAppService
     {
         return _service.CancelAsync(id);
     }
+
+    [HttpDelete]
+    [Route("{id}")]
+    public Task DeleteAsync(Guid id)
+    {
+        return _service.DeleteAsync(id);
+    }
+
+    [HttpPost]
+    [Route("delete-many")]
+    public Task DeleteManyAsync(DeleteManyFlowInstancesDto input)
+    {
+        return _service.DeleteManyAsync(input);
+    }
 }

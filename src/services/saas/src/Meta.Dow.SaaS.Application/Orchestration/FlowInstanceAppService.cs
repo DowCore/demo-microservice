@@ -183,4 +183,32 @@ public class FlowInstanceAppService : SaaSAppService, IFlowInstanceAppService
         entity.Cancel();
         await _instanceRepository.UpdateAsync(entity, autoSave: true);
     }
+
+    [Authorize(OrchestrationPermissions.Instances.Delete)]
+    public async Task DeleteAsync(Guid id)
+    {
+        await _instanceRepository.DeleteAsync(id, autoSave: true);
+    }
+
+    [Authorize(OrchestrationPermissions.Instances.Delete)]
+    public async Task DeleteManyAsync(DeleteManyFlowInstancesDto input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        var ids = (input.Ids ?? [])
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .Take(500)
+            .ToList();
+
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var id in ids)
+        {
+            await _instanceRepository.DeleteAsync(id, autoSave: false);
+        }
+    }
 }

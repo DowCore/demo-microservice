@@ -50,6 +50,7 @@ public class FlowExecutor : ITransientDependency
     private readonly IDataSourceResolver _dataSourceResolver;
     private readonly ICodeSandboxExecutor _codeSandboxExecutor;
     private readonly IOrchestrationRabbitPublisher _rabbitPublisher;
+    private readonly PublishedFlowCache _publishedFlowCache;
     private readonly ILogger<FlowExecutor> _logger;
 
     public FlowExecutor(
@@ -59,6 +60,7 @@ public class FlowExecutor : ITransientDependency
         IDataSourceResolver dataSourceResolver,
         ICodeSandboxExecutor codeSandboxExecutor,
         IOrchestrationRabbitPublisher rabbitPublisher,
+        PublishedFlowCache publishedFlowCache,
         ILogger<FlowExecutor> logger
     )
     {
@@ -68,6 +70,7 @@ public class FlowExecutor : ITransientDependency
         _dataSourceResolver = dataSourceResolver;
         _codeSandboxExecutor = codeSandboxExecutor;
         _rabbitPublisher = rabbitPublisher;
+        _publishedFlowCache = publishedFlowCache;
         _logger = logger;
     }
 
@@ -78,7 +81,8 @@ public class FlowExecutor : ITransientDependency
         bool filterOutputsByRole = false,
         Volo.Abp.Users.ICurrentUser? currentUser = null,
         CancellationToken cancellationToken = default,
-        bool skipValidation = false
+        bool skipValidation = false,
+        HashSet<string>? callStack = null
     )
     {
         var swAll = Stopwatch.StartNew();
@@ -108,6 +112,7 @@ public class FlowExecutor : ITransientDependency
             filterOutputsByRole,
             currentUser,
             result,
+            callStack ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             cancellationToken
         );
         result.ExecuteMs = (int)swAll.ElapsedMilliseconds;
@@ -144,6 +149,48 @@ public class FlowExecutor : ITransientDependency
         bool filterOutputsByRole,
         Volo.Abp.Users.ICurrentUser? currentUser,
         FlowExecutionResult result,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        var flowKey = (dsl.Key ?? "").Trim();
+        if (!string.IsNullOrEmpty(flowKey) && !callStack.Add(flowKey))
+        {
+            result.Succeeded = false;
+            result.Error = $"SubFlow cycle detected involving '{flowKey}'.";
+            return;
+        }
+
+        try
+        {
+            await ExecuteParsedCoreBodyAsync(
+                dsl,
+                requestBodyJson,
+                isDryRun,
+                filterOutputsByRole,
+                currentUser,
+                result,
+                callStack,
+                cancellationToken
+            );
+        }
+        finally
+        {
+            if (!string.IsNullOrEmpty(flowKey))
+            {
+                callStack.Remove(flowKey);
+            }
+        }
+    }
+
+    private async Task ExecuteParsedCoreBodyAsync(
+        FlowDslDocument dsl,
+        string? requestBodyJson,
+        bool isDryRun,
+        bool filterOutputsByRole,
+        Volo.Abp.Users.ICurrentUser? currentUser,
+        FlowExecutionResult result,
+        HashSet<string> callStack,
         CancellationToken cancellationToken
     )
     {
@@ -176,7 +223,7 @@ public class FlowExecutor : ITransientDependency
                     throw new UserFriendlyException($"Cycle detected at node '{currentId}'.");
                 }
 
-                var record = await ExecuteNodeAsync(node, ctx, isDryRun, cancellationToken);
+                var record = await ExecuteNodeAsync(node, ctx, isDryRun, callStack, cancellationToken);
                 result.Nodes.Add(record);
 
                 if (string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase))
@@ -425,6 +472,7 @@ public class FlowExecutor : ITransientDependency
         FlowDslNode node,
         FlowRuntimeContext ctx,
         bool isDryRun,
+        HashSet<string> callStack,
         CancellationToken cancellationToken
     )
     {
@@ -562,6 +610,15 @@ public class FlowExecutor : ITransientDependency
                 case "broadcast":
                 {
                     await ExecuteRabbitMqPublishAsync(node, ctx, record, isDryRun, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
+                case "subflow":
+                case "logiccomponent":
+                case "component":
+                {
+                    await ExecuteSubFlowAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -1228,6 +1285,113 @@ public class FlowExecutor : ITransientDependency
         return node.Id;
     }
 
+    private async Task ExecuteSubFlowAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        var subKey = (node.SubFlowKey ?? node.Url ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(subKey))
+        {
+            throw new UserFriendlyException("SubFlow requires subFlowKey (published flow code).");
+        }
+
+        if (callStack.Count >= OrchestrationConsts.MaxSubFlowDepth)
+        {
+            throw new UserFriendlyException(
+                $"SubFlow nesting exceeds limit ({OrchestrationConsts.MaxSubFlowDepth})."
+            );
+        }
+
+        if (callStack.Contains(subKey))
+        {
+            throw new UserFriendlyException(
+                $"SubFlow cycle detected: {string.Join(" → ", callStack)} → {subKey}"
+            );
+        }
+
+        var nodeInput = FlowContextResolver.MapNodeInputs(node.Inputs, ctx);
+        var bodyJson = nodeInput.ToJsonString(JsonOptions);
+        var onError = (node.OnError ?? "fail").Trim().ToLowerInvariant();
+
+        record.InputJson = JsonSerializer.Serialize(
+            new
+            {
+                subFlowKey = subKey,
+                dryRun = isDryRun,
+                input = nodeInput
+            },
+            JsonOptions
+        );
+
+        var snap = await _publishedFlowCache.GetByKeyAsync(subKey);
+        var child = await ExecuteAsync(
+            snap.DslJson,
+            bodyJson,
+            isDryRun,
+            filterOutputsByRole: false,
+            currentUser: null,
+            cancellationToken,
+            skipValidation: true,
+            callStack
+        );
+
+        if (!child.Succeeded)
+        {
+            if (onError != "ignore")
+            {
+                throw new UserFriendlyException(
+                    child.Error ?? $"SubFlow '{subKey}' failed."
+                );
+            }
+
+            _logger.LogWarning(
+                "SubFlow ignored failure. Key={Key} Error={Error}",
+                subKey,
+                child.Error
+            );
+        }
+
+        JsonNode? dataNode = null;
+        if (!string.IsNullOrWhiteSpace(child.OutputDataJson))
+        {
+            try
+            {
+                dataNode = JsonNode.Parse(child.OutputDataJson);
+            }
+            catch
+            {
+                dataNode = JsonValue.Create(child.OutputDataJson);
+            }
+        }
+
+        var raw = new JsonObject
+        {
+            ["success"] = child.Succeeded,
+            ["subFlowKey"] = subKey,
+            ["subFlowVersion"] = snap.Version,
+            ["executeMs"] = child.ExecuteMs,
+            ["data"] = dataNode?.DeepClone() ?? new JsonObject()
+        };
+        if (!string.IsNullOrWhiteSpace(child.Error))
+        {
+            raw["error"] = child.Error;
+        }
+
+        // 默认业务根 = data（子流程 End 出参）；outputs.from 相对 data
+        if (string.IsNullOrWhiteSpace(node.ResultRoot))
+        {
+            node.ResultRoot = "data";
+        }
+
+        ApplyExecutableOutputs(node, raw, ctx);
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+    }
+
     private async Task ExecuteRabbitMqPublishAsync(
         FlowDslNode node,
         FlowRuntimeContext ctx,
@@ -1685,6 +1849,16 @@ public class FlowExecutor : ITransientDependency
             if (node.Entry != null && node.Entry.Items.Count > 0 && !string.IsNullOrWhiteSpace(node.Entry.Combine))
             {
                 ConditionCombineEvaluator.Validate(node.Entry.Combine, node.Entry.Items.Select(x => x.No));
+            }
+
+            var type = (node.Type ?? "").Trim().ToLowerInvariant();
+            if (type is "subflow" or "logiccomponent" or "component")
+            {
+                var key = (node.SubFlowKey ?? node.Url ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    throw new UserFriendlyException($"SubFlow node '{node.Id}' requires subFlowKey.");
+                }
             }
         }
     }

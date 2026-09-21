@@ -283,6 +283,70 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
                 3
             );
         }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationComponents") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationComponents",
+                "逻辑组件",
+                MenuType.Menu,
+                "/orchestration/components",
+                "/orchestration/components/index",
+                "Orchestration.Definitions",
+                "lucide:blocks",
+                4
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationMessageSources") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationMessageSources",
+                "消息连接",
+                MenuType.Menu,
+                "/orchestration/message-sources",
+                "/orchestration/message-sources/index",
+                "Orchestration.MessageSources",
+                "lucide:radio-tower",
+                5
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationTriggers") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationTriggers",
+                "消息触发",
+                MenuType.Menu,
+                "/orchestration/triggers",
+                "/orchestration/triggers/index",
+                "Orchestration.Triggers",
+                "lucide:bell-ring",
+                6
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationSchedules") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationSchedules",
+                "定时任务",
+                MenuType.Menu,
+                "/orchestration/schedules",
+                "/orchestration/schedules/index",
+                "Orchestration.Schedules",
+                "lucide:timer",
+                7
+            );
+        }
     }
 
     private async Task EnsureEmailSettingsMenuAsync()

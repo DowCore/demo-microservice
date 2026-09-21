@@ -20,6 +20,7 @@ public static class OrchestrationPermissions
         public const string Default = GroupName + ".Instances";
         public const string Run = Default + ".Run";
         public const string Cancel = Default + ".Cancel";
+        public const string Delete = Default + ".Delete";
     }
 
     public static class DataSources
@@ -28,6 +29,31 @@ public static class OrchestrationPermissions
         public const string Create = Default + ".Create";
         public const string Update = Default + ".Update";
         public const string Delete = Default + ".Delete";
+    }
+
+    public static class MessageSources
+    {
+        public const string Default = GroupName + ".MessageSources";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+    }
+
+    public static class Triggers
+    {
+        public const string Default = GroupName + ".Triggers";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+    }
+
+    public static class Schedules
+    {
+        public const string Default = GroupName + ".Schedules";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Run = Default + ".Run";
     }
 
     public static class Sql

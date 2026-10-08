@@ -37,6 +37,15 @@ public interface IParameterizedSqlExecutor
         CancellationToken cancellationToken = default
     );
 
+    /// <summary>查询视图/表值函数/存储过程结果集。允许 SELECT 以及 EXEC/CALL。</summary>
+    Task<ParameterizedSqlResult> QueryRoutineAsync(
+        DataSource dataSource,
+        string sql,
+        JsonObject? args,
+        bool isDryRun,
+        CancellationToken cancellationToken = default
+    );
+
     Task<ParameterizedSqlResult> ExecuteAsync(
         DataSource dataSource,
         string sql,
@@ -76,7 +85,18 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         CancellationToken cancellationToken = default
     )
     {
-        return RunSingleAsync(dataSource, sql, args, isDryRun, expectRows: true, cancellationToken);
+        return RunSingleAsync(dataSource, sql, args, isDryRun, expectRows: true, allowRoutine: false, cancellationToken);
+    }
+
+    public Task<ParameterizedSqlResult> QueryRoutineAsync(
+        DataSource dataSource,
+        string sql,
+        JsonObject? args,
+        bool isDryRun,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return RunSingleAsync(dataSource, sql, args, isDryRun, expectRows: true, allowRoutine: true, cancellationToken);
     }
 
     public Task<ParameterizedSqlResult> ExecuteAsync(
@@ -87,7 +107,7 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         CancellationToken cancellationToken = default
     )
     {
-        return RunSingleAsync(dataSource, sql, args, isDryRun, expectRows: false, cancellationToken);
+        return RunSingleAsync(dataSource, sql, args, isDryRun, expectRows: false, allowRoutine: false, cancellationToken);
     }
 
     public async Task<ParameterizedSqlResult> BatchAsync(
@@ -180,15 +200,17 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         JsonObject? args,
         bool isDryRun,
         bool expectRows,
+        bool allowRoutine,
         CancellationToken cancellationToken
     )
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         var text = NormalizeSql(sql);
-        var op = DetectOp(text);
-        EnsureAllowed(dataSource, op);
+        var op = DetectOp(text, allowRoutine);
+        var accessOp = op is "exec" or "call" ? "select" : op;
+        EnsureAllowed(dataSource, accessOp);
 
-        if (expectRows && op != "select")
+        if (expectRows && op is not ("select" or "exec" or "call"))
         {
             throw new UserFriendlyException("db.query only allows SELECT/WITH statements.");
         }
@@ -289,13 +311,25 @@ public class ParameterizedSqlExecutor : IParameterizedSqlExecutor, ITransientDep
         return text;
     }
 
-    private static string DetectOp(string sql)
+    private static string DetectOp(string sql, bool allowRoutine = false)
     {
         var trimmed = sql.TrimStart();
         if (trimmed.StartsWith("select", StringComparison.OrdinalIgnoreCase) ||
             trimmed.StartsWith("with", StringComparison.OrdinalIgnoreCase))
         {
             return "select";
+        }
+
+        if (allowRoutine &&
+            (trimmed.StartsWith("exec", StringComparison.OrdinalIgnoreCase) ||
+             trimmed.StartsWith("execute", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "exec";
+        }
+
+        if (allowRoutine && trimmed.StartsWith("call", StringComparison.OrdinalIgnoreCase))
+        {
+            return "call";
         }
 
         if (trimmed.StartsWith("insert", StringComparison.OrdinalIgnoreCase))

@@ -43,34 +43,44 @@ public class SystemResourceFlowSeedContributor : IDataSeedContributor, ITransien
                 "query",
                 """
                 [
-                  { "name": "resourceCode", "type": "string", "required": true, "source": "input" },
+                  { "name": "resourceCode", "type": "string", "source": "input" },
+                  { "name": "dataSourceCode", "type": "string", "source": "input" },
+                  { "name": "tableName", "type": "string", "source": "input" },
                   { "name": "page", "type": "number", "source": "input" },
                   { "name": "pageSize", "type": "number", "source": "input" },
                   { "name": "sorting", "type": "string", "source": "input" },
+                  { "name": "filter", "type": "object", "source": "input" },
                   { "name": "filters", "type": "object", "source": "input" },
-                  { "name": "columns", "type": "array", "source": "input" }
+                  { "name": "columns", "type": "array", "source": "input" },
+                  { "name": "summaryFields", "type": "array", "source": "input" }
                 ]
                 """,
                 """
                 [
                   { "name": "resourceCode", "from": "input.resourceCode" },
+                  { "name": "dataSourceCode", "from": "input.dataSourceCode" },
+                  { "name": "tableName", "from": "input.tableName" },
                   { "name": "page", "from": "input.page" },
                   { "name": "pageSize", "from": "input.pageSize" },
                   { "name": "sorting", "from": "input.sorting" },
+                  { "name": "filter", "from": "input.filter" },
                   { "name": "filters", "from": "input.filters" },
-                  { "name": "columns", "from": "input.columns" }
+                  { "name": "columns", "from": "input.columns" },
+                  { "name": "summaryFields", "from": "input.summaryFields" }
                 ]
                 """,
                 """
                 [
                   { "name": "items", "type": "array", "from": "items" },
-                  { "name": "total", "type": "number", "from": "total" }
+                  { "name": "total", "type": "number", "from": "total" },
+                  { "name": "summary", "type": "object", "from": "summary" }
                 ]
                 """,
                 """
                 [
                   { "name": "items", "type": "array", "from": "items", "visibleTo": { "mode": "all" } },
-                  { "name": "total", "type": "number", "from": "total", "visibleTo": { "mode": "all" } }
+                  { "name": "total", "type": "number", "from": "total", "visibleTo": { "mode": "all" } },
+                  { "name": "summary", "type": "object", "from": "summary", "visibleTo": { "mode": "all" } }
                 ]
                 """
             );

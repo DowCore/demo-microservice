@@ -109,6 +109,98 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
     }
 
+    public async Task<FlowDefinitionDto> GetByCodeAsync(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            throw new UserFriendlyException(L["Orchestration:FlowKeyRequired"]);
+        }
+
+        var key = code.Trim();
+        var entity = await _definitionRepository.FirstOrDefaultAsync(x => x.Code == key);
+        if (entity == null)
+        {
+            throw new UserFriendlyException(L["Orchestration:DefinitionNotFound", key]);
+        }
+
+        return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
+    }
+
+    /// <summary>
+    /// 表单×流程升级：复制系统 CRUD 流 DSL 为可编辑草稿（系统源本身仍只读）。
+    /// </summary>
+    [Authorize(OrchestrationPermissions.Definitions.Create)]
+    public async Task<FlowDefinitionDto> CloneAsCustomAsync(CloneFlowDefinitionDto input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        var sourceCode = input.SourceCode.Trim();
+        var newCode = input.NewCode.Trim();
+        if (string.IsNullOrWhiteSpace(sourceCode) || string.IsNullOrWhiteSpace(newCode))
+        {
+            throw new UserFriendlyException(L["Orchestration:FlowKeyRequired"]);
+        }
+
+        if (SystemResourceFlowKeys.IsSystem(newCode) || newCode.StartsWith("sys.", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
+        if (await _definitionRepository.AnyAsync(x => x.Code == newCode))
+        {
+            throw new UserFriendlyException(L["Orchestration:DefinitionCodeAlreadyExists", newCode]);
+        }
+
+        var source = await _definitionRepository.FirstOrDefaultAsync(x => x.Code == sourceCode);
+        if (source == null)
+        {
+            throw new UserFriendlyException(L["Orchestration:DefinitionNotFound", sourceCode]);
+        }
+
+        var dslJson = source.DslJson;
+        var graphJson = source.GraphJson ?? "{}";
+        if (string.IsNullOrWhiteSpace(dslJson) && source.PublishedVersion is > 0)
+        {
+            var versions = await _versionRepository.GetQueryableAsync();
+            var published = versions
+                .Where(x => x.DefinitionId == source.Id && x.Version == source.PublishedVersion)
+                .OrderByDescending(x => x.CreationTime)
+                .FirstOrDefault();
+            if (published != null)
+            {
+                dslJson = published.DslJson;
+                graphJson = published.GraphJson;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(dslJson))
+        {
+            throw new UserFriendlyException(L["Orchestration:DslRequired"]);
+        }
+
+        var created = await CreateAsync(
+            new CreateFlowDefinitionDto
+            {
+                Name = input.NewName.Trim(),
+                Code = newCode,
+                Category = string.IsNullOrWhiteSpace(input.Category)
+                    ? (source.Category ?? "自定义")
+                    : input.Category.Trim(),
+                GraphJson = graphJson,
+                DslJson = dslJson,
+                IsReusable = input.IsReusable
+            }
+        );
+
+        if (input.Publish)
+        {
+            await PublishAsync(created.Id);
+            return await GetAsync(created.Id);
+        }
+
+        return created;
+    }
+
     [Authorize(OrchestrationPermissions.Definitions.Update)]
     public async Task<FlowDefinitionDto> UpdateAsync(Guid id, UpdateFlowDefinitionDto input)
     {

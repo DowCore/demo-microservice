@@ -59,6 +59,20 @@ public class FlowDefinitionController : SaaSController, IFlowDefinitionAppServic
         return _service.CreateAsync(input);
     }
 
+    [HttpPost]
+    [Route("clone-as-custom")]
+    public Task<FlowDefinitionDto> CloneAsCustomAsync(CloneFlowDefinitionDto input)
+    {
+        return _service.CloneAsCustomAsync(input);
+    }
+
+    [HttpGet]
+    [Route("by-code/{code}")]
+    public Task<FlowDefinitionDto> GetByCodeAsync(string code)
+    {
+        return _service.GetByCodeAsync(code);
+    }
+
     [HttpPut]
     [Route("{id}")]
     public Task<FlowDefinitionDto> UpdateAsync(Guid id, UpdateFlowDefinitionDto input)

@@ -33,6 +33,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
 
     private readonly IRepository<AppResource, Guid> _resourceRepository;
     private readonly IRepository<TableDefinition, Guid> _tableRepository;
+    private readonly IRepository<DbQueryObject, Guid> _queryObjectRepository;
     private readonly IDataSourceResolver _dataSourceResolver;
     private readonly IParameterizedSqlExecutor _sqlExecutor;
     private readonly ICurrentTenant _currentTenant;
@@ -43,6 +44,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
     public ResourceCrudExecutor(
         IRepository<AppResource, Guid> resourceRepository,
         IRepository<TableDefinition, Guid> tableRepository,
+        IRepository<DbQueryObject, Guid> queryObjectRepository,
         IDataSourceResolver dataSourceResolver,
         IParameterizedSqlExecutor sqlExecutor,
         ICurrentTenant currentTenant,
@@ -53,6 +55,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
     {
         _resourceRepository = resourceRepository;
         _tableRepository = tableRepository;
+        _queryObjectRepository = queryObjectRepository;
         _dataSourceResolver = dataSourceResolver;
         _sqlExecutor = sqlExecutor;
         _currentTenant = currentTenant;
@@ -68,29 +71,67 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         CancellationToken cancellationToken = default
     )
     {
-        var resourceCode = ReadString(nodeInput, "resourceCode")
-                           ?? throw new UserFriendlyException("resourceCode is required.");
-        var resource = await _resourceRepository.FirstOrDefaultAsync(
-            x => x.Code == resourceCode,
-            cancellationToken
-        ) ?? throw new UserFriendlyException($"Resource was not found: {resourceCode}");
-
-        var table = await _tableRepository.FirstOrDefaultAsync(
-            x => x.DataSourceCode == resource.DataSourceCode && x.TableName == resource.TableName,
-            cancellationToken
-        ) ?? throw new UserFriendlyException($"Table was not found: {resource.TableName}");
-
-        var dataSource = await _dataSourceResolver.ResolveEnabledAsync(resource.DataSourceCode, cancellationToken);
-        var provider = dataSource.Provider;
         var normalized = op.Trim().ToLowerInvariant();
+        var resourceCode = ReadString(nodeInput, "resourceCode");
+        var dataSourceCode = ReadString(nodeInput, "dataSourceCode");
+        var tableName = ReadString(nodeInput, "tableName");
+        var tableOverride = normalized == "query" &&
+                            !string.IsNullOrWhiteSpace(dataSourceCode) &&
+                            !string.IsNullOrWhiteSpace(tableName);
 
+        AppResource? resource = null;
+        if (!string.IsNullOrWhiteSpace(resourceCode))
+        {
+            resource = await _resourceRepository.FirstOrDefaultAsync(
+                x => x.Code == resourceCode,
+                cancellationToken
+            ) ?? throw new UserFriendlyException($"Resource was not found: {resourceCode}");
+        }
+
+        QuerySchema schema;
+        DataSource dataSource;
+        if (tableOverride)
+        {
+            var table = await _tableRepository.FirstOrDefaultAsync(
+                x => x.DataSourceCode == dataSourceCode && x.TableName == tableName,
+                cancellationToken
+            ) ?? throw new UserFriendlyException($"Table was not found: {tableName}");
+            dataSource = await _dataSourceResolver.ResolveEnabledAsync(dataSourceCode!, cancellationToken);
+            schema = QuerySchema.FromTable(table);
+        }
+        else if (resource != null)
+        {
+            dataSource = await _dataSourceResolver.ResolveEnabledAsync(resource.DataSourceCode, cancellationToken);
+            schema = await ResolveSchemaAsync(resource, cancellationToken);
+        }
+        else
+        {
+            throw new UserFriendlyException(
+                normalized == "query"
+                    ? "query requires resourceCode or dataSourceCode+tableName."
+                    : "resourceCode is required."
+            );
+        }
+
+        if (normalized != "query" && resource == null)
+        {
+            throw new UserFriendlyException("resourceCode is required.");
+        }
+
+        if (normalized != "query" && schema.IsQueryCatalog)
+        {
+            throw new UserFriendlyException("View and procedure resources support query only.");
+        }
+
+        var provider = dataSource.Provider;
         return normalized switch
         {
-            "query" => await QueryAsync(provider, dataSource, resource, table, nodeInput, isDryRun, cancellationToken),
-            "get" => await GetAsync(provider, dataSource, resource, table, nodeInput, isDryRun, cancellationToken),
-            "create" => await CreateAsync(provider, dataSource, resource, table, nodeInput, isDryRun, cancellationToken),
-            "update" => await UpdateAsync(provider, dataSource, resource, table, nodeInput, isDryRun, cancellationToken),
-            "delete" => await DeleteAsync(provider, dataSource, resource, table, nodeInput, isDryRun, cancellationToken),
+            "query" => await QueryAsync(
+                provider, dataSource, resource, schema, nodeInput, tableOverride, isDryRun, cancellationToken),
+            "get" => await GetAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
+            "create" => await CreateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
+            "update" => await UpdateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
+            "delete" => await DeleteAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
             _ => throw new UserFriendlyException($"Unsupported resource op: {op}")
         };
     }
@@ -98,32 +139,51 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
     private async Task<JsonObject> QueryAsync(
         string provider,
         DataSource dataSource,
-        AppResource resource,
-        TableDefinition table,
+        AppResource? resource,
+        QuerySchema schema,
         JsonObject input,
+        bool tableOverride,
         bool isDryRun,
         CancellationToken cancellationToken
     )
     {
         var page = Math.Max(1, ReadInt(input, "page") ?? 1);
         var pageSize = Math.Clamp(
-            ReadInt(input, "pageSize") ?? resource.ListView.PageSize,
+            ReadInt(input, "pageSize") ?? resource?.ListView.PageSize ?? 20,
             1,
             OrchestrationConsts.ResourceQueryMaxPageSize
         );
+
+        if (schema.Kind == QueryObjectKind.Procedure && !schema.CanSelectFrom)
+        {
+            return await QueryExecAsync(
+                provider, dataSource, schema, input, page, pageSize, isDryRun, cancellationToken);
+        }
+
         var filter = FilterSqlBuilder.Build(
             provider,
-            table,
-            resource.Filter,
-            input["filter"] ?? input["filters"],
+            schema.Columns,
+            tableOverride || schema.Kind == QueryObjectKind.Procedure ? null : resource?.Filter,
+            schema.Kind == QueryObjectKind.Procedure ? null : input["filter"] ?? input["filters"],
             _currentTenant.Id
         );
-        var t = SqlDialect.QuoteIdent(provider, table.TableName);
-        var columns = ResolveSelectColumns(table, input["columns"]);
-        var selectList = string.Join(", ", columns.Select(c => SqlDialect.QuoteIdent(provider, c)));
-        var orderBy = BuildOrderBy(provider, table, ReadString(input, "sorting") ?? resource.ListView.DefaultSorting);
+        if (schema.Kind == QueryObjectKind.Procedure)
+        {
+            MergeRoutineArgs(filter.Args, schema, input);
+        }
+
+        var fromSql = BuildFromSql(provider, schema);
+        var columns = ResolveSelectColumns(schema.Columns, input["columns"]);
+        var selectList = columns.Count == 0
+            ? "*"
+            : string.Join(", ", columns.Select(c => SqlDialect.QuoteIdent(provider, c)));
+        var orderBy = BuildOrderBy(
+            provider,
+            schema.Columns,
+            ReadString(input, "sorting") ?? resource?.ListView.DefaultSorting
+        );
         var countSql =
-            $"SELECT COUNT(1) AS {SqlDialect.QuoteIdent(provider, "cnt")} FROM {t} WHERE {filter.WhereSql}";
+            $"SELECT COUNT(1) AS {SqlDialect.QuoteIdent(provider, "cnt")} FROM {fromSql} WHERE {filter.WhereSql}";
         var count = await _sqlExecutor.QueryAsync(dataSource, countSql, filter.Args, isDryRun, cancellationToken);
         long total = 0;
         if (count.Rows is { Count: > 0 } && count.Rows[0] is JsonObject row)
@@ -135,7 +195,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         var pageArgs = filter.Args.DeepClone()!.AsObject();
         pageArgs["take"] = pageSize;
         pageArgs["skip"] = offset;
-        var pageSql = BuildPagedSelect(provider, t, selectList, filter.WhereSql, orderBy);
+        var pageSql = BuildPagedSelect(provider, fromSql, selectList, filter.WhereSql, orderBy);
         var data = await _sqlExecutor.QueryAsync(dataSource, pageSql, pageArgs, isDryRun, cancellationToken);
         var result = new JsonObject
         {
@@ -146,11 +206,11 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         var summary = await QuerySummaryAsync(
             provider,
             dataSource,
-            table,
-            t,
+            schema.Columns,
+            fromSql,
             filter,
             input["summaryFields"],
-            resource.ListView.Columns,
+            tableOverride ? [] : resource?.ListView.Columns ?? [],
             isDryRun,
             cancellationToken
         );
@@ -162,23 +222,51 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         return result;
     }
 
+    private async Task<JsonObject> QueryExecAsync(
+        string provider,
+        DataSource dataSource,
+        QuerySchema schema,
+        JsonObject input,
+        int page,
+        int pageSize,
+        bool isDryRun,
+        CancellationToken cancellationToken
+    )
+    {
+        var args = new JsonObject();
+        MergeRoutineArgs(args, schema, input);
+        var sql = BuildExecSql(provider, schema);
+        var data = await _sqlExecutor.QueryRoutineAsync(dataSource, sql, args, isDryRun, cancellationToken);
+        var rows = data.Rows?.OfType<JsonObject>().Select(x => x.DeepClone()!.AsObject()).ToList() ?? [];
+        var total = rows.Count;
+        var offset = (page - 1) * pageSize;
+        var pageRows = rows.Skip(offset).Take(pageSize).ToList();
+        return new JsonObject
+        {
+            ["items"] = new JsonArray(pageRows.Select(x => (JsonNode)x).ToArray()),
+            ["total"] = total
+        };
+    }
+
     private async Task<JsonObject> GetAsync(
         string provider,
         DataSource dataSource,
         AppResource resource,
-        TableDefinition table,
+        QuerySchema schema,
         JsonObject input,
         bool isDryRun,
         CancellationToken cancellationToken
     )
     {
         var id = ReadString(input, "id") ?? throw new UserFriendlyException("id is required.");
-        var filter = FilterSqlBuilder.Build(provider, table, null, null, _currentTenant.Id);
+        var filter = FilterSqlBuilder.Build(provider, schema.Columns, null, null, _currentTenant.Id);
         var args = filter.Args.DeepClone()!.AsObject();
         args["id"] = id;
-        var t = SqlDialect.QuoteIdent(provider, table.TableName);
+        var t = SqlDialect.QuoteIdent(provider, schema.ObjectName);
         var pk = SqlDialect.QuoteIdent(provider, resource.PrimaryKey);
-        var cols = string.Join(", ", table.Columns.Select(c => SqlDialect.QuoteIdent(provider, c.Name)));
+        var cols = schema.Columns.Count == 0
+            ? "*"
+            : string.Join(", ", schema.Columns.Select(c => SqlDialect.QuoteIdent(provider, c.Name)));
         var sql =
             $"SELECT {cols} FROM {t} WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "id")}";
         var result = await _sqlExecutor.QueryAsync(dataSource, sql, args, isDryRun, cancellationToken);
@@ -191,13 +279,14 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         string provider,
         DataSource dataSource,
         AppResource resource,
-        TableDefinition table,
+        QuerySchema schema,
         JsonObject input,
         bool isDryRun,
         CancellationToken cancellationToken
     )
     {
         await EnsureWriteAsync();
+        var table = schema.RequireTable();
         var record = input["record"] as JsonObject ?? input;
         var values = new Dictionary<string, JsonNode?>(StringComparer.OrdinalIgnoreCase);
         foreach (var col in table.Columns.Where(c => c.Origin != TableOrigin.Convention))
@@ -266,13 +355,14 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         string provider,
         DataSource dataSource,
         AppResource resource,
-        TableDefinition table,
+        QuerySchema schema,
         JsonObject input,
         bool isDryRun,
         CancellationToken cancellationToken
     )
     {
         await EnsureWriteAsync();
+        var table = schema.RequireTable();
         var id = ReadString(input, "id") ?? throw new UserFriendlyException("id is required.");
         var stamp = ReadString(input, "concurrencyStamp");
         var record = input["record"] as JsonObject ?? input;
@@ -365,13 +455,14 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         string provider,
         DataSource dataSource,
         AppResource resource,
-        TableDefinition table,
+        QuerySchema schema,
         JsonObject input,
         bool isDryRun,
         CancellationToken cancellationToken
     )
     {
         await EnsureWriteAsync();
+        var table = schema.RequireTable();
         var id = ReadString(input, "id") ?? throw new UserFriendlyException("id is required.");
         var filter = FilterSqlBuilder.Build(provider, table, null, null, _currentTenant.Id);
         var args = filter.Args.DeepClone()!.AsObject();
@@ -408,9 +499,9 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         }
     }
 
-    private static List<string> ResolveSelectColumns(TableDefinition table, JsonNode? columnsNode)
+    private static List<string> ResolveSelectColumns(IReadOnlyList<TableColumn> columns, JsonNode? columnsNode)
     {
-        var all = table.Columns.Select(c => c.Name).ToList();
+        var all = columns.Select(c => c.Name).ToList();
         if (columnsNode is JsonArray arr && arr.Count > 0)
         {
             var requested = arr
@@ -420,7 +511,8 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
                 .ToList();
             var allowed = all.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var cols = requested.Where(allowed.Contains).ToList();
-            if (!cols.Any(c => c.Equals("Id", StringComparison.OrdinalIgnoreCase)))
+            if (all.Any(c => c.Equals("Id", StringComparison.OrdinalIgnoreCase)) &&
+                !cols.Any(c => c.Equals("Id", StringComparison.OrdinalIgnoreCase)))
             {
                 cols.Insert(0, "Id");
             }
@@ -431,15 +523,18 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         return all;
     }
 
-    private static string BuildOrderBy(string provider, TableDefinition table, string? sorting)
+    private static string BuildOrderBy(string provider, IReadOnlyList<TableColumn> columns, string? sorting)
     {
-        var names = table.Columns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var text = (sorting ?? "CreationTime desc").Trim();
+        var names = columns.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var fallback = names.Contains("CreationTime")
+            ? "CreationTime"
+            : columns.FirstOrDefault()?.Name ?? "Id";
+        var text = (sorting ?? fallback + " desc").Trim();
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var field = parts.Length > 0 ? parts[0] : "CreationTime";
+        var field = parts.Length > 0 ? parts[0] : fallback;
         if (!names.Contains(field))
         {
-            field = names.Contains("CreationTime") ? "CreationTime" : table.Columns[0].Name;
+            field = fallback;
         }
 
         var desc = parts.Length > 1 && parts[1].Equals("desc", StringComparison.OrdinalIgnoreCase);
@@ -476,7 +571,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
     private async Task<JsonObject?> QuerySummaryAsync(
         string provider,
         DataSource dataSource,
-        TableDefinition table,
+        IReadOnlyList<TableColumn> tableColumns,
         string quotedTable,
         FilterSqlResult filter,
         JsonNode? summaryNode,
@@ -491,7 +586,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
             return null;
         }
 
-        var colMap = table.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var colMap = tableColumns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         var selectParts = new List<string>
         {
             $"COUNT(1) AS {SqlDialect.QuoteIdent(provider, "cnt")}"
@@ -676,4 +771,200 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         new string(name.Where(char.IsLetterOrDigit).ToArray());
 
     private static string NewStamp() => Guid.NewGuid().ToString("N");
+
+    private async Task<QuerySchema> ResolveSchemaAsync(AppResource resource, CancellationToken cancellationToken)
+    {
+        if (resource.IsQueryCatalog())
+        {
+            DbQueryObject? queryObject = null;
+            if (resource.QueryObjectId.HasValue)
+            {
+                queryObject = await _queryObjectRepository.FirstOrDefaultAsync(
+                    x => x.Id == resource.QueryObjectId.Value,
+                    cancellationToken
+                );
+            }
+
+            queryObject ??= await _queryObjectRepository.FirstOrDefaultAsync(
+                x => x.DataSourceCode == resource.DataSourceCode &&
+                     x.ObjectName == resource.TableName &&
+                     x.Kind == resource.SourceKind,
+                cancellationToken
+            );
+
+            if (queryObject == null)
+            {
+                throw new UserFriendlyException($"Query object was not found: {resource.TableName}");
+            }
+
+            return QuerySchema.FromQueryObject(queryObject);
+        }
+
+        var table = await _tableRepository.FirstOrDefaultAsync(
+            x => x.DataSourceCode == resource.DataSourceCode && x.TableName == resource.TableName,
+            cancellationToken
+        ) ?? throw new UserFriendlyException($"Table was not found: {resource.TableName}");
+        return QuerySchema.FromTable(table);
+    }
+
+    private static string BuildFromSql(string provider, QuerySchema schema)
+    {
+        var quoted = SqlDialect.QuoteIdent(provider, schema.ObjectName);
+        if (schema.Kind != QueryObjectKind.Procedure || !schema.CanSelectFrom)
+        {
+            return quoted;
+        }
+
+        var inputs = schema.Parameters.Where(p => QueryParameterDirection.IsInput(p.Direction)).ToList();
+        var callArgs = string.Join(
+            ", ",
+            inputs.Select(p => SqlDialect.ParamName(provider, ParamKey(p.Name)))
+        );
+        return $"{quoted}({callArgs})";
+    }
+
+    private static string BuildExecSql(string provider, QuerySchema schema)
+    {
+        var p = SqlDialect.NormalizeProvider(provider);
+        var quoted = SqlDialect.QuoteIdent(provider, schema.ObjectName);
+        var inputs = schema.Parameters.Where(x => QueryParameterDirection.IsInput(x.Direction)).ToList();
+        if (p == DataSourceProvider.SqlServer)
+        {
+            if (inputs.Count == 0)
+            {
+                return "EXEC " + quoted;
+            }
+
+            var parts = inputs.Select(x => SqlDialect.ParamName(provider, ParamKey(x.Name)));
+            return "EXEC " + quoted + " " + string.Join(", ", parts);
+        }
+
+        var callArgs = string.Join(
+            ", ",
+            inputs.Select(x => SqlDialect.ParamName(provider, ParamKey(x.Name)))
+        );
+        return $"CALL {quoted}({callArgs})";
+    }
+
+    private static void MergeRoutineArgs(JsonObject args, QuerySchema schema, JsonObject input)
+    {
+        var values = new Dictionary<string, JsonNode?>(StringComparer.OrdinalIgnoreCase);
+        CollectEqValues(input["filter"] ?? input["filters"], values);
+        if (input["parameters"] is JsonObject parameters)
+        {
+            foreach (var prop in parameters)
+            {
+                values[prop.Key] = prop.Value?.DeepClone();
+            }
+        }
+
+        foreach (var param in schema.Parameters.Where(x => QueryParameterDirection.IsInput(x.Direction)))
+        {
+            var key = ParamKey(param.Name);
+            if (values.TryGetValue(param.Name, out var value) || values.TryGetValue(key, out value))
+            {
+                args[key] = value?.DeepClone();
+            }
+            else if (!args.ContainsKey(key))
+            {
+                args[key] = null;
+            }
+        }
+    }
+
+    private static void CollectEqValues(JsonNode? node, Dictionary<string, JsonNode?> values)
+    {
+        if (node is JsonObject obj)
+        {
+            var kind = obj["kind"]?.GetValue<string>();
+            if (string.Equals(kind, "rule", StringComparison.OrdinalIgnoreCase))
+            {
+                var left = obj["left"]?.GetValue<string>() ?? obj["field"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(left) && obj["right"] != null)
+                {
+                    values[left] = obj["right"]?.DeepClone();
+                }
+            }
+
+            if (obj["children"] is JsonArray children)
+            {
+                foreach (var child in children)
+                {
+                    CollectEqValues(child, values);
+                }
+            }
+
+            if (obj["items"] is JsonArray items)
+            {
+                foreach (var item in items)
+                {
+                    CollectEqValues(item, values);
+                }
+            }
+
+            return;
+        }
+
+        if (node is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                CollectEqValues(item, values);
+            }
+        }
+    }
+
+    private static string ParamKey(string name)
+    {
+        var key = Sanitize(name);
+        return string.IsNullOrWhiteSpace(key) ? "p" : key;
+    }
+
+    private sealed class QuerySchema
+    {
+        public string ObjectName { get; init; } = null!;
+
+        public string Kind { get; init; } = AppResourceSourceKind.Table;
+
+        public bool CanSelectFrom { get; init; } = true;
+
+        public bool IsQueryCatalog { get; init; }
+
+        public IReadOnlyList<TableColumn> Columns { get; init; } = [];
+
+        public IReadOnlyList<QueryObjectParameter> Parameters { get; init; } = [];
+
+        public TableDefinition? Table { get; init; }
+
+        public static QuerySchema FromTable(TableDefinition table)
+        {
+            return new QuerySchema
+            {
+                ObjectName = table.TableName,
+                Kind = AppResourceSourceKind.Table,
+                CanSelectFrom = true,
+                IsQueryCatalog = false,
+                Columns = table.Columns,
+                Table = table
+            };
+        }
+
+        public static QuerySchema FromQueryObject(DbQueryObject queryObject)
+        {
+            return new QuerySchema
+            {
+                ObjectName = queryObject.ObjectName,
+                Kind = queryObject.Kind,
+                CanSelectFrom = queryObject.CanSelectFrom || queryObject.Kind == QueryObjectKind.View,
+                IsQueryCatalog = true,
+                Columns = queryObject.Columns,
+                Parameters = queryObject.Parameters
+            };
+        }
+
+        public TableDefinition RequireTable()
+        {
+            return Table ?? throw new UserFriendlyException("View and procedure resources support query only.");
+        }
+    }
 }

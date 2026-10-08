@@ -27,7 +27,17 @@ public class SaaSDbContext : AbpMongoDbContext
 
     public IMongoCollection<TableDefinition> TableDefinitions => Collection<TableDefinition>();
 
+    public IMongoCollection<DbQueryObject> DbQueryObjects => Collection<DbQueryObject>();
+
     public IMongoCollection<AppResource> AppResources => Collection<AppResource>();
 
     public IMongoCollection<ReportDefinition> ReportDefinitions => Collection<ReportDefinition>();
+
+    public IMongoCollection<FormDefinition> FormDefinitions => Collection<FormDefinition>();
+
+    public IMongoCollection<WorkflowDefinition> WorkflowDefinitions => Collection<WorkflowDefinition>();
+
+    public IMongoCollection<WorkflowInstance> WorkflowInstances => Collection<WorkflowInstance>();
+
+    public IMongoCollection<WorkflowTask> WorkflowTasks => Collection<WorkflowTask>();
 }

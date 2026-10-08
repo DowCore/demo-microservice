@@ -72,6 +72,79 @@ public static class SystemResourceFlowKeys
         All.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase);
 }
 
+public static class QueryObjectKind
+{
+    public const string View = "view";
+    public const string Procedure = "procedure";
+
+    public static bool IsSupported(string? kind)
+    {
+        var value = Normalize(kind);
+        return value is View or Procedure;
+    }
+
+    public static string Normalize(string? kind)
+    {
+        var value = (kind ?? "").Trim().ToLowerInvariant();
+        return value is "proc" or "storedprocedure" or "stored_procedure" ? Procedure : value;
+    }
+}
+
+public static class AppResourceSourceKind
+{
+    public const string Table = "table";
+    public const string View = "view";
+    public const string Procedure = "procedure";
+
+    public static bool IsQueryCatalog(string? kind)
+    {
+        var value = (kind ?? Table).Trim().ToLowerInvariant();
+        return value is View or Procedure;
+    }
+
+    public static string Normalize(string? kind)
+    {
+        var value = (kind ?? Table).Trim().ToLowerInvariant();
+        return value switch
+        {
+            View => View,
+            Procedure or "proc" => Procedure,
+            _ => Table
+        };
+    }
+}
+
+public static class QueryRoutineKind
+{
+    public const string View = "view";
+    public const string Procedure = "procedure";
+    public const string Function = "function";
+}
+
+public static class QueryParameterDirection
+{
+    public const string In = "in";
+    public const string Out = "out";
+    public const string InOut = "inout";
+
+    public static bool IsInput(string? direction)
+    {
+        var value = (direction ?? In).Trim().ToLowerInvariant();
+        return value is In or InOut or "in/out";
+    }
+
+    public static string Normalize(string? direction)
+    {
+        var value = (direction ?? In).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "out" or "output" => Out,
+            "inout" or "in/out" or "in out" => InOut,
+            _ => In
+        };
+    }
+}
+
 public static class SqlIdentifier
 {
     public static bool IsValid(string? name)
@@ -90,6 +163,31 @@ public static class SqlIdentifier
         {
             var c = name[i];
             if (c is not ((>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>列名引用：允许 Unicode 字母，拒绝引号、点号和空白，避免拼进 SQL。</summary>
+    public static bool IsQuotable(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 128)
+        {
+            return false;
+        }
+
+        if (!char.IsLetter(name[0]) && name[0] != '_')
+        {
+            return false;
+        }
+
+        for (var i = 1; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (!char.IsLetterOrDigit(c) && c != '_')
             {
                 return false;
             }

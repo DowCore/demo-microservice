@@ -20,6 +20,10 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public string? ResourceCode { get; protected set; }
 
+    public string? DataSourceCode { get; protected set; }
+
+    public string? TableName { get; protected set; }
+
     public string QueryFlowKey { get; protected set; } = SystemResourceFlowKeys.Query;
 
     public int Status { get; protected set; } = AppResourceStatus.Draft;
@@ -38,6 +42,10 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public List<ActionDef> Actions { get; protected set; } = [];
 
+    public FormDef Form { get; protected set; } = new();
+
+    public List<NamedDict> Dictionaries { get; protected set; } = [];
+
     public string? DefaultSorting { get; protected set; } = "CreationTime desc";
 
     public int PageSize { get; protected set; } = 20;
@@ -55,11 +63,13 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     {
         SetCode(code);
         SetName(name);
-        Kind = string.IsNullOrWhiteSpace(kind) ? ReportKind.Resource : kind.Trim().ToLowerInvariant();
+        Kind = ReportKind.Normalize(kind);
         TenantId = tenantId;
         Status = AppResourceStatus.Draft;
         DataScope = new FilterNode { Kind = "group", Op = "and" };
         SearchForm = new SearchFormDef();
+        Form = new FormDef();
+        Dictionaries = [];
         AdvancedFilter = true;
         Presets = [];
         Kpis = [];
@@ -72,6 +82,8 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         string name,
         string kind,
         string? resourceCode,
+        string? dataSourceCode,
+        string? tableName,
         string? queryFlowKey,
         FilterNode? dataScope,
         SearchFormDef? searchForm,
@@ -80,6 +92,8 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         List<KpiDef>? kpis,
         List<ListColumnDef>? columns,
         List<ActionDef>? actions,
+        FormDef? form,
+        List<NamedDict>? dictionaries,
         string? defaultSorting,
         int? pageSize,
         bool selectionEnabled,
@@ -87,8 +101,10 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     )
     {
         SetName(name);
-        Kind = string.IsNullOrWhiteSpace(kind) ? Kind : kind.Trim().ToLowerInvariant();
+        Kind = ReportKind.Normalize(kind);
         ResourceCode = string.IsNullOrWhiteSpace(resourceCode) ? null : resourceCode.Trim();
+        DataSourceCode = string.IsNullOrWhiteSpace(dataSourceCode) ? null : dataSourceCode.Trim();
+        TableName = string.IsNullOrWhiteSpace(tableName) ? null : tableName.Trim();
         if (!string.IsNullOrWhiteSpace(queryFlowKey))
         {
             QueryFlowKey = queryFlowKey.Trim();
@@ -101,6 +117,8 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         Kpis = kpis ?? Kpis;
         Columns = columns ?? Columns;
         Actions = actions ?? Actions;
+        Form = form ?? Form;
+        Dictionaries = dictionaries ?? Dictionaries;
         if (!string.IsNullOrWhiteSpace(defaultSorting))
         {
             DefaultSorting = defaultSorting.Trim();
@@ -119,6 +137,8 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     {
         Kind = ReportKind.Resource;
         ResourceCode = resource.Code;
+        DataSourceCode = resource.DataSourceCode;
+        TableName = resource.TableName;
         QueryFlowKey = resource.QueryFlowKey;
         resource.Filter.EnsureSearchForm();
         SearchForm = resource.Filter.SearchForm ?? new SearchFormDef();
@@ -127,12 +147,82 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         Presets = resource.Filter.Presets ?? [];
         Columns = resource.ListView.Columns.Select(CloneColumn).ToList();
         Actions = resource.ListView.Actions.Select(CloneAction).ToList();
+        Form = CloneForm(resource.Form);
+        Dictionaries = CloneDicts(resource.ListView.Dictionaries);
         DefaultSorting = resource.ListView.DefaultSorting;
         PageSize = resource.ListView.PageSize;
         SelectionEnabled = Actions.Any(a =>
+            a.MultiSelect ||
             string.Equals(a.Scene, "batch", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(a.Position, "batch", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(a.Scope, "selection", StringComparison.OrdinalIgnoreCase));
+    }
+
+    public void ApplyFromTable(TableDefinition table)
+    {
+        Kind = ReportKind.Table;
+        DataSourceCode = table.DataSourceCode;
+        TableName = table.TableName;
+        QueryFlowKey = SystemResourceFlowKeys.Query;
+        SearchForm = new SearchFormDef();
+        AdvancedFilter = true;
+        DataScope = new FilterNode { Kind = "group", Op = "and" };
+        Presets = [];
+        Columns = ColumnsFromTable(table);
+        Actions = [];
+        Form = new FormDef();
+        Dictionaries = [];
+        DefaultSorting = table.Columns.Any(c =>
+            string.Equals(c.Name, "CreationTime", StringComparison.OrdinalIgnoreCase))
+            ? "CreationTime desc"
+            : null;
+        PageSize = 20;
+        SelectionEnabled = false;
+    }
+
+    public void SetWriteResource(string? resourceCode)
+    {
+        ResourceCode = string.IsNullOrWhiteSpace(resourceCode) ? null : resourceCode.Trim();
+    }
+
+    public void SetQueryFlowKey(string queryFlowKey)
+    {
+        QueryFlowKey = Check.NotNullOrWhiteSpace(queryFlowKey, nameof(queryFlowKey)).Trim();
+    }
+
+    public void SetPhysicalTable(string? dataSourceCode, string? tableName)
+    {
+        DataSourceCode = string.IsNullOrWhiteSpace(dataSourceCode) ? null : dataSourceCode.Trim();
+        TableName = string.IsNullOrWhiteSpace(tableName) ? null : tableName.Trim();
+    }
+
+    public static List<ListColumnDef> ColumnsFromTable(TableDefinition table)
+    {
+        return table.Columns
+            .Where(c => c.Origin != TableOrigin.Convention ||
+                        string.Equals(c.Name, "CreationTime", StringComparison.OrdinalIgnoreCase))
+            .Select(c =>
+            {
+                var col = new ListColumnDef
+                {
+                    Field = c.Name,
+                    Title = c.DisplayName,
+                    Visible = true,
+                    Sortable = c.PlatformType is TablePlatformType.DateTime or TablePlatformType.Int
+                        or TablePlatformType.Long or TablePlatformType.Decimal or TablePlatformType.String,
+                    FormatPreset = c.PlatformType switch
+                    {
+                        TablePlatformType.DateTime => "datetime",
+                        TablePlatformType.Date => "date",
+                        TablePlatformType.Decimal => "currency",
+                        TablePlatformType.Boolean => "boolean",
+                        _ => "text"
+                    }
+                };
+                ListColumnDef.ApplyLayoutDefaults(col);
+                return col;
+            })
+            .ToList();
     }
 
     public void Publish() => Status = AppResourceStatus.Published;
@@ -166,8 +256,14 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
             Visible = c.Visible,
             FormatPreset = c.FormatPreset,
             Align = c.Align,
+            Ellipsis = c.Ellipsis,
+            Fixed = c.Fixed,
             Render = c.Render,
             DictMap = new Dictionary<string, string>(c.DictMap),
+            Options = c.Options.Select(CloneOption).ToList(),
+            DictCode = c.DictCode,
+            FormatFn = c.FormatFn,
+            RenderFn = c.RenderFn,
             StyleRules = c.StyleRules.Select(r => new ColumnStyleRule
             {
                 Op = r.Op,
@@ -189,12 +285,95 @@ public class ReportDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
             Scope = a.Scope,
             Kind = a.Kind,
             FlowKey = a.FlowKey,
-            Open = a.Open,
+            Open = string.IsNullOrWhiteSpace(a.Open)
+                ? (a.Kind is "create" or "update" or "detail" ? "page" : "none")
+                : a.Open,
+            Fixed = string.Equals(a.Scene, "row", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a.Position, "row", StringComparison.OrdinalIgnoreCase)
+                ? "right"
+                : a.Fixed,
+            FormKey = string.IsNullOrWhiteSpace(a.FormKey)
+                ? (a.Kind is "create" or "update" or "detail" ? a.Kind : a.FormMode)
+                : a.FormKey,
             FormMode = a.FormMode,
             FieldsMode = a.FieldsMode,
             Fields = [.. a.Fields],
             Confirm = a.Confirm,
             ConfirmText = a.ConfirmText,
-            BatchLimit = a.BatchLimit
+            BatchLimit = a.BatchLimit,
+            Description = a.Description,
+            MultiSelect = a.MultiSelect ||
+                          string.Equals(a.Scope, "selection", StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(a.Scene, "batch", StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(a.Position, "batch", StringComparison.OrdinalIgnoreCase)
         };
+
+    private static FormDef CloneForm(FormDef form) =>
+        new()
+        {
+            SubmitFlowKey = form.SubmitFlowKey,
+            Fields = form.Fields.Select(f => new FormFieldDef
+            {
+                Field = f.Field,
+                Title = f.Title,
+                Control = f.Control,
+                Span = f.Span <= 0 ? 12 : f.Span,
+                Placeholder = f.Placeholder,
+                VisibleOnCreate = f.VisibleOnCreate,
+                VisibleOnUpdate = f.VisibleOnUpdate,
+                VisibleOnDetail = f.VisibleOnDetail,
+                ReadonlyOnCreate = f.ReadonlyOnCreate,
+                ReadonlyOnUpdate = f.ReadonlyOnUpdate,
+                RequiredOnCreate = f.RequiredOnCreate,
+                RequiredOnUpdate = f.RequiredOnUpdate,
+                Children = f.Children?.Select(c => new FormFieldDef
+                {
+                    Field = c.Field,
+                    Title = c.Title,
+                    Control = c.Control,
+                    Span = c.Span
+                }).ToList() ?? []
+            }).ToList(),
+            Layout = form.Layout?.Select(CloneWidget).ToList() ?? [],
+            VformJson = form.VformJson
+        };
+
+    private static FormWidgetDef CloneWidget(FormWidgetDef w) =>
+        new()
+        {
+            Id = w.Id,
+            Kind = w.Kind,
+            Container = w.Container,
+            Columns = w.Columns,
+            Title = w.Title,
+            Hidden = w.Hidden,
+            Field = w.Field,
+            Control = w.Control,
+            Span = w.Span,
+            Placeholder = w.Placeholder,
+            VisibleOnCreate = w.VisibleOnCreate,
+            VisibleOnUpdate = w.VisibleOnUpdate,
+            VisibleOnDetail = w.VisibleOnDetail,
+            ReadonlyOnCreate = w.ReadonlyOnCreate,
+            ReadonlyOnUpdate = w.ReadonlyOnUpdate,
+            RequiredOnCreate = w.RequiredOnCreate,
+            RequiredOnUpdate = w.RequiredOnUpdate,
+            Children = w.Children?.Select(CloneWidget).ToList() ?? []
+        };
+
+    private static DictOption CloneOption(DictOption o) =>
+        new()
+        {
+            Value = o.Value,
+            Label = o.Label,
+            Tone = o.Tone
+        };
+
+    private static List<NamedDict> CloneDicts(List<NamedDict>? source) =>
+        (source ?? []).Select(d => new NamedDict
+        {
+            Code = d.Code,
+            Name = d.Name,
+            Options = d.Options.Select(CloneOption).ToList()
+        }).ToList();
 }

@@ -41,6 +41,14 @@ public static class OrchestrationPermissions
         public const string Ddl = Default + ".Ddl";
     }
 
+    public static class QueryObjects
+    {
+        public const string Default = GroupName + ".QueryObjects";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+    }
+
     public static class Resources
     {
         public const string Default = GroupName + ".Resources";
@@ -59,6 +67,24 @@ public static class OrchestrationPermissions
         public const string Delete = Default + ".Delete";
         public const string Publish = Default + ".Publish";
         public const string Execute = Default + ".Execute";
+    }
+
+    public static class Forms
+    {
+        public const string Default = GroupName + ".Forms";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Publish = Default + ".Publish";
+    }
+
+    public static class Workflows
+    {
+        public const string Default = GroupName + ".Workflows";
+        public const string Create = Default + ".Create";
+        public const string Update = Default + ".Update";
+        public const string Delete = Default + ".Delete";
+        public const string Publish = Default + ".Publish";
     }
 
     public static class MessageSources

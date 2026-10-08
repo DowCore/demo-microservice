@@ -63,6 +63,33 @@ public class UpdateFlowDefinitionDto
     public bool? IsReusable { get; set; }
 }
 
+/// <summary>
+/// 另存为自定义逻辑：从系统流 / 已有流克隆 DSL，得到可编辑草稿。
+/// </summary>
+public class CloneFlowDefinitionDto
+{
+    /// <summary>源 flowKey / code，如 sys.resource.create</summary>
+    [Required]
+    [StringLength(OrchestrationConsts.MaxCodeLength)]
+    public string SourceCode { get; set; } = null!;
+
+    [Required]
+    [StringLength(OrchestrationConsts.MaxCodeLength)]
+    public string NewCode { get; set; } = null!;
+
+    [Required]
+    [StringLength(OrchestrationConsts.MaxNameLength)]
+    public string NewName { get; set; } = null!;
+
+    [StringLength(OrchestrationConsts.MaxCategoryLength)]
+    public string? Category { get; set; }
+
+    public bool IsReusable { get; set; } = true;
+
+    /// <summary>克隆后立即发布（便于表单立刻改绑）</summary>
+    public bool Publish { get; set; }
+}
+
 public class FlowDefinitionGetListInput : PagedAndSortedResultRequestDto
 {
     public string? Filter { get; set; }

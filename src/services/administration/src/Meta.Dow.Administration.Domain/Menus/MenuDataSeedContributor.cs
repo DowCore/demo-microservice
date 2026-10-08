@@ -364,6 +364,38 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
             );
         }
 
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationViews") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationViews",
+                "视图",
+                MenuType.Menu,
+                "/orchestration/views",
+                "/orchestration/query-objects/index",
+                "Orchestration.QueryObjects",
+                "lucide:eye",
+                9
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationProcedures") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationProcedures",
+                "存储过程",
+                MenuType.Menu,
+                "/orchestration/procedures",
+                "/orchestration/query-objects/index",
+                "Orchestration.QueryObjects",
+                "lucide:code-2",
+                10
+            );
+        }
+
         if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationTableDesigner") == null)
         {
             await InsertAsync(
@@ -447,6 +479,72 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
             );
         }
 
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationForms") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationForms",
+                "表单库",
+                MenuType.Menu,
+                "/orchestration/forms",
+                "/orchestration/forms/index",
+                "Orchestration.Forms",
+                "lucide:clipboard-list",
+                11
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationFormDesigner") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationFormDesigner",
+                "表单设计",
+                MenuType.Menu,
+                "/orchestration/forms/designer",
+                "/orchestration/forms/designer",
+                "Orchestration.Forms.Update",
+                "lucide:layout-template",
+                11,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationWorkflows") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationWorkflows",
+                "OA审批流",
+                MenuType.Menu,
+                "/orchestration/workflows",
+                "/orchestration/workflows/index",
+                "Orchestration.Workflows",
+                "lucide:git-branch",
+                10
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationWorkflowDesigner") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                rootId,
+                "OrchestrationWorkflowDesigner",
+                "审批流设计",
+                MenuType.Menu,
+                "/orchestration/workflows/designer",
+                "/orchestration/workflows/designer",
+                "Orchestration.Workflows.Update",
+                "lucide:workflow",
+                10,
+                isVisible: false
+            );
+        }
+
         if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "OrchestrationReportEditor") == null)
         {
             await InsertAsync(
@@ -477,6 +575,40 @@ public class MenuDataSeedContributor : IDataSeedContributor, ITransientDependenc
                 "Orchestration.Reports.Execute",
                 "lucide:layout-list",
                 41,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "AppReportForm") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                null,
+                "AppReportForm",
+                "报表表单",
+                MenuType.Menu,
+                "/app/reports/:code/form/:formKey/:id?",
+                "/orchestration/reports/form",
+                "Orchestration.Reports.Execute",
+                "lucide:panel-right",
+                42,
+                isVisible: false
+            );
+        }
+
+        if (await _menuRepository.FirstOrDefaultAsync(x => x.Name == "AppResourceForm") == null)
+        {
+            await InsertAsync(
+                _guidGenerator.Create(),
+                null,
+                "AppResourceForm",
+                "资源表单",
+                MenuType.Menu,
+                "/app/:code/form/:formKey/:id?",
+                "/orchestration/app/form",
+                "Orchestration.Resources.Execute",
+                "lucide:panel-right",
+                43,
                 isVisible: false
             );
         }

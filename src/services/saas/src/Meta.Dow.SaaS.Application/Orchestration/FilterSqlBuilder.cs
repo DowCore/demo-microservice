@@ -36,9 +36,20 @@ public static class FilterSqlBuilder
         Guid? tenantId
     )
     {
+        return Build(provider, table.Columns, designerFilter, runtimeFilters, tenantId);
+    }
+
+    public static FilterSqlResult Build(
+        string provider,
+        IReadOnlyList<TableColumn> columns,
+        FilterDef? designerFilter,
+        JsonNode? runtimeFilters,
+        Guid? tenantId
+    )
+    {
         var args = new JsonObject();
         var predicates = new List<string>();
-        var colMap = table.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var colMap = columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
         if (colMap.ContainsKey("TenantId"))
         {

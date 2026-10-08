@@ -52,6 +52,16 @@
 
 **禁止**把人审画进逻辑编排画布（与现有文档「不做 BPM」一致）；工作流单独设计器与引擎。
 
+### 1.1 三分离落地（2026-09 修订）
+
+| 能力 | 产品入口 | 设计器 | 说明 |
+|------|----------|--------|------|
+| **逻辑编排** | 已有「流程定义」 | DSL 画布 | **已落地，勿轻易改实现**；查询/写入唯一 Invoker |
+| **独立表单库** | 「表单库」`FormDefinition` | **WYSIWYG 24 栅格** | Schema 可被资源/报表/`formRef` 复用；对齐 [VariantForm](http://120.92.142.115:81/vform3/)、[form-create](https://www.form-create.com/designer/) |
+| **OA 人审** | 规划 P3 | 钉钉式审批树 | 参考 [Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)；节点可挂 FlowKey，**不改编排引擎** |
+
+表单页 / 详情页交互对齐 [Ant Design 表单页](https://ant.design/docs/spec/research-form-cn)、[详情页](https://ant.design/docs/spec/detail-page-cn)：设计器顶栏切换新增/编辑/详情预览；画布即真实控件，span 并排可见。
+
 ---
 
 ## 2. 开源对标（GitHub）：设计较好的参考
@@ -591,7 +601,7 @@ DbMigrator / SaaS 种子写入并发布（Host，`isReusable=true`，`isSystem=t
 
 | flowKey | 图 | End `data` |
 |---------|----|------------|
-| `sys.resource.query` | Start → ResourceQuery → End | `{ items, total }`（可 `promote`） |
+| `sys.resource.query` | Start → ResourceQuery → End | `{ items, total, summary? }`（可 `promote`） |
 | `sys.resource.get` | Start → ResourceGet → End | 一行对象 |
 | `sys.resource.create` | Start → ResourceCreate → End | `{ id }` |
 | `sys.resource.update` | Start → ResourceUpdate → End | `{ id, concurrencyStamp }` |
@@ -602,17 +612,21 @@ DbMigrator / SaaS 种子写入并发布（Host，`isReusable=true`，`isSystem=t
 ```json
 {
   "inputs": [
-    { "name": "resourceCode", "type": "string", "required": true, "source": "input" },
+    { "name": "resourceCode", "type": "string", "source": "input" },
+    { "name": "dataSourceCode", "type": "string", "source": "input" },
+    { "name": "tableName", "type": "string", "source": "input" },
     { "name": "page", "type": "number", "default": 1 },
     { "name": "pageSize", "type": "number", "default": 20 },
     { "name": "sorting", "type": "string" },
+    { "name": "filter", "type": "object" },
     { "name": "filters", "type": "object" },
-    { "name": "columns", "type": "array" }
+    { "name": "columns", "type": "array" },
+    { "name": "summaryFields", "type": "array" }
   ]
 }
 ```
 
-`resourceCode` / `columns` 由资源运行时注入，**不允许终端用户在筛选框里改**（防越权查别的表、防 `SELECT *`）。`filters` 即 §5.9 载荷。
+`resourceCode` **或** `dataSourceCode` + `tableName` 由报表/资源运行时注入，**不允许终端用户在筛选框里改**（防越权查别的表、防 `SELECT *`）。`filter` / `filters` 即 §5.9 载荷。
 
 create 入参：`resourceCode` + `record`（object，表单字段）。系统节点丢掉约定列里应由引擎填写的键，再插入。
 
@@ -642,7 +656,7 @@ create 入参：`resourceCode` + `record`（object，表单字段）。系统节
 3. 发布 `order.create`；把资源 `createFlowKey` 改成 `order.create`。  
 4. 表单 Schema **不用改**（入参仍是 `record` + 系统字段）。
 
-自定义查询同理：以 ResourceQuery 为底，前面加 Condition（按角色分流），或改用 Sql/Code 自己查，但 End 必须仍是 `{ items, total }`。  
+自定义查询同理：以 ResourceQuery 为底，前面加 Condition（按角色分流），或改用 Sql/Code 自己查，但 End 必须仍是 `{ items, total, summary? }`。  
 禁止自定义流把 `resourceCode` 暴露给匿名调用方乱填——发布校验：系统注入字段 `source` 应为运行时绑定，或 `visibleTo.none`。
 
 列表/按钮只认 **已发布** 版本，与现有编排一致。
@@ -830,6 +844,8 @@ function render(value, row, ctx) {
 ---
 
 ## 6. 工作流引擎规划
+
+节点规则和「一个审批流只绑一张表单」的结论见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)。
 
 ### 6.1 要解决的问题
 
@@ -1046,7 +1062,7 @@ Resource
 - 不做跨库分布式事务（与编排一致）。  
 - 不首期上完整 BPMN 引擎与复杂 DMN。  
 - 不首期做多人实时协同编辑设计器。  
-- **不做通用 DBA 工具**（存储过程、视图、触发器、分区、随意 RENAME）。  
+- **不做通用 DBA 设计器**（不提供 CREATE/ALTER VIEW、CREATE/ALTER PROCEDURE、触发器、分区、随意 RENAME）。已有视图和存储过程可以登记为只读查询目录，再生成查询资源，运行时与应用资源同一套列表。  
 - **不在列表单元格渲染任意 HTML / 任意 Vue SFC**。  
 - **不把 ALTER TABLE 画进业务编排画布**。  
 - **不另开 WriteService 旁路**（简单 CRUD 也是系统逻辑，不是直写 API）。  

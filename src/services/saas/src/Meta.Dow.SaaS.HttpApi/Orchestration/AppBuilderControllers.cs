@@ -53,6 +53,47 @@ public class TableDefinitionController : SaaSController, ITableDefinitionAppServ
 
 [Area(SaaSRemoteServiceConsts.ModuleName)]
 [RemoteService(Name = SaaSRemoteServiceConsts.RemoteServiceName)]
+[Route("api/orchestration/query-objects")]
+public class DbQueryObjectController : SaaSController, IDbQueryObjectAppService
+{
+    private readonly IDbQueryObjectAppService _service;
+
+    public DbQueryObjectController(IDbQueryObjectAppService service) => _service = service;
+
+    [HttpGet]
+    public Task<PagedResultDto<DbQueryObjectDto>> GetListAsync(DbQueryObjectGetListInput input) =>
+        _service.GetListAsync(input);
+
+    [HttpGet]
+    [Route("catalog")]
+    public Task<PagedResultDto<QueryObjectCatalogItemDto>> GetCatalogAsync(QueryObjectCatalogInput input) =>
+        _service.GetCatalogAsync(input);
+
+    [HttpPost]
+    [Route("import")]
+    public Task<ImportQueryObjectsResultDto> ImportAsync(ImportQueryObjectsInput input) =>
+        _service.ImportAsync(input);
+
+    [HttpGet]
+    [Route("{id}")]
+    public Task<DbQueryObjectDto> GetAsync(Guid id) => _service.GetAsync(id);
+
+    [HttpPost]
+    [Route("{id}/refresh")]
+    public Task<DbQueryObjectDto> RefreshAsync(Guid id) => _service.RefreshAsync(id);
+
+    [HttpDelete]
+    [Route("{id}")]
+    public Task DeleteAsync(Guid id) => _service.DeleteAsync(id);
+
+    [HttpPost]
+    [Route("{id}/resources")]
+    public Task<AppResourceDto> CreateResourceAsync(Guid id, CreateAppResourceDto input) =>
+        _service.CreateResourceAsync(id, input);
+}
+
+[Area(SaaSRemoteServiceConsts.ModuleName)]
+[RemoteService(Name = SaaSRemoteServiceConsts.RemoteServiceName)]
 [Route("api/orchestration/resources")]
 public class AppResourceController : SaaSController, IAppResourceAppService
 {
@@ -151,6 +192,11 @@ public class ReportDefinitionController : SaaSController, IReportDefinitionAppSe
     public Task<ReportDefinitionDto> CreateFromResourceAsync(CreateReportFromResourceDto input) =>
         _service.CreateFromResourceAsync(input);
 
+    [HttpPost]
+    [Route("from-table")]
+    public Task<ReportDefinitionDto> CreateFromTableAsync(CreateReportFromTableDto input) =>
+        _service.CreateFromTableAsync(input);
+
     [HttpPut]
     [Route("{id}")]
     public Task<ReportDefinitionDto> UpdateAsync(Guid id, UpdateReportDefinitionDto input) =>
@@ -168,4 +214,117 @@ public class ReportDefinitionController : SaaSController, IReportDefinitionAppSe
     [Route("{code}/query")]
     public Task<ResourceInvokeResultDto> QueryAsync(string code, ResourceRuntimeQueryInput input) =>
         _service.QueryAsync(code, input);
+}
+
+[Area(SaaSRemoteServiceConsts.ModuleName)]
+[RemoteService(Name = SaaSRemoteServiceConsts.RemoteServiceName)]
+[Route("api/orchestration/forms")]
+public class FormDefinitionController : SaaSController, IFormDefinitionAppService
+{
+    private readonly IFormDefinitionAppService _service;
+
+    public FormDefinitionController(IFormDefinitionAppService service) => _service = service;
+
+    [HttpGet]
+    public Task<PagedResultDto<FormDefinitionDto>> GetListAsync(FormDefinitionGetListInput input) =>
+        _service.GetListAsync(input);
+
+    [HttpGet]
+    [Route("published-lookup")]
+    public Task<ListResultDto<FormDefinitionLookupDto>> GetPublishedLookupAsync(
+        string? filter = null
+    ) => _service.GetPublishedLookupAsync(filter);
+
+    [HttpGet]
+    [Route("{id}")]
+    public Task<FormDefinitionDto> GetAsync(Guid id) => _service.GetAsync(id);
+
+    [HttpGet]
+    [Route("by-code/{code}")]
+    public Task<FormDefinitionDto> GetByCodeAsync(string code) => _service.GetByCodeAsync(code);
+
+    [HttpGet]
+    [Route("published/{code}")]
+    public Task<FormDefinitionDto> GetPublishedByCodeAsync(string code) =>
+        _service.GetPublishedByCodeAsync(code);
+
+    [HttpPost]
+    public Task<FormDefinitionDto> CreateAsync(CreateFormDefinitionDto input) =>
+        _service.CreateAsync(input);
+
+    [HttpPut]
+    [Route("{id}")]
+    public Task<FormDefinitionDto> UpdateAsync(Guid id, UpdateFormDefinitionDto input) =>
+        _service.UpdateAsync(id, input);
+
+    [HttpDelete]
+    [Route("{id}")]
+    public Task DeleteAsync(Guid id) => _service.DeleteAsync(id);
+
+    [HttpPost]
+    [Route("{id}/publish")]
+    public Task<FormDefinitionDto> PublishAsync(Guid id) => _service.PublishAsync(id);
+}
+
+[Area(SaaSRemoteServiceConsts.ModuleName)]
+[RemoteService(Name = SaaSRemoteServiceConsts.RemoteServiceName)]
+[Route("api/orchestration/workflows")]
+public class WorkflowDefinitionController : SaaSController, IWorkflowDefinitionAppService
+{
+    private readonly IWorkflowDefinitionAppService _service;
+
+    public WorkflowDefinitionController(IWorkflowDefinitionAppService service) => _service = service;
+
+    [HttpGet]
+    public Task<PagedResultDto<WorkflowDefinitionDto>> GetListAsync(
+        WorkflowDefinitionGetListInput input
+    ) => _service.GetListAsync(input);
+
+    [HttpGet]
+    [Route("{id}")]
+    public Task<WorkflowDefinitionDto> GetAsync(Guid id) => _service.GetAsync(id);
+
+    [HttpGet]
+    [Route("by-code/{code}")]
+    public Task<WorkflowDefinitionDto> GetByCodeAsync(string code) => _service.GetByCodeAsync(code);
+
+    [HttpPost]
+    public Task<WorkflowDefinitionDto> CreateAsync(CreateWorkflowDefinitionDto input) =>
+        _service.CreateAsync(input);
+
+    [HttpPut]
+    [Route("{id}")]
+    public Task<WorkflowDefinitionDto> UpdateAsync(Guid id, UpdateWorkflowDefinitionDto input) =>
+        _service.UpdateAsync(id, input);
+
+    [HttpDelete]
+    [Route("{id}")]
+    public Task DeleteAsync(Guid id) => _service.DeleteAsync(id);
+
+    [HttpPost]
+    [Route("{id}/publish")]
+    public Task<WorkflowDefinitionDto> PublishAsync(Guid id) => _service.PublishAsync(id);
+}
+
+[Area(SaaSRemoteServiceConsts.ModuleName)]
+[RemoteService(Name = SaaSRemoteServiceConsts.RemoteServiceName)]
+[Route("api/orchestration/workflow-runtime")]
+public class WorkflowRuntimeController : SaaSController, IWorkflowRuntimeAppService
+{
+    private readonly IWorkflowRuntimeAppService _service;
+
+    public WorkflowRuntimeController(IWorkflowRuntimeAppService service) => _service = service;
+
+    [HttpPost]
+    [Route("start")]
+    public Task<WorkflowInstanceDto> StartAsync(StartWorkflowDto input) => _service.StartAsync(input);
+
+    [HttpGet]
+    [Route("my-tasks")]
+    public Task<ListResultDto<WorkflowTaskDto>> GetMyTasksAsync() => _service.GetMyTasksAsync();
+
+    [HttpPost]
+    [Route("tasks/{taskId}/complete")]
+    public Task<WorkflowInstanceDto> CompleteAsync(Guid taskId, CompleteWorkflowTaskDto input) =>
+        _service.CompleteAsync(taskId, input);
 }

@@ -21,18 +21,21 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
 
     private readonly IRepository<ReportDefinition, Guid> _repository;
     private readonly IRepository<AppResource, Guid> _resourceRepository;
+    private readonly IRepository<TableDefinition, Guid> _tableRepository;
     private readonly IRepository<FlowDefinition, Guid> _definitionRepository;
     private readonly IPublishedFlowInvoker _invoker;
 
     public ReportDefinitionAppService(
         IRepository<ReportDefinition, Guid> repository,
         IRepository<AppResource, Guid> resourceRepository,
+        IRepository<TableDefinition, Guid> tableRepository,
         IRepository<FlowDefinition, Guid> definitionRepository,
         IPublishedFlowInvoker invoker
     )
     {
         _repository = repository;
         _resourceRepository = resourceRepository;
+        _tableRepository = tableRepository;
         _definitionRepository = definitionRepository;
         _invoker = invoker;
     }
@@ -90,19 +93,15 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
             throw new UserFriendlyException(L["Orchestration:ReportCodeAlreadyExists", code]);
         }
 
+        var kind = ReportKind.Normalize(input.Kind);
         var entity = new ReportDefinition(
             GuidGenerator.Create(),
             code,
             input.Name.Trim(),
-            input.Kind,
+            kind,
             CurrentTenant.Id
         );
-        if (!string.IsNullOrWhiteSpace(input.ResourceCode))
-        {
-            var resource = await FindResourceAsync(input.ResourceCode);
-            entity.ApplyFromResource(resource);
-        }
-
+        await ApplyCreateSourceAsync(entity, kind, input.ResourceCode, input.DataSourceCode, input.TableName, input.QueryFlowKey);
         await _repository.InsertAsync(entity, autoSave: true);
         return Map(entity);
     }
@@ -130,6 +129,29 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
         return Map(entity);
     }
 
+    [Authorize(OrchestrationPermissions.Reports.Create)]
+    public async Task<ReportDefinitionDto> CreateFromTableAsync(CreateReportFromTableDto input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var code = input.Code.Trim();
+        if (await _repository.AnyAsync(x => x.Code == code))
+        {
+            throw new UserFriendlyException(L["Orchestration:ReportCodeAlreadyExists", code]);
+        }
+
+        var table = await FindTableAsync(input.DataSourceCode, input.TableName);
+        var entity = new ReportDefinition(
+            GuidGenerator.Create(),
+            code,
+            input.Name.Trim(),
+            ReportKind.Table,
+            CurrentTenant.Id
+        );
+        entity.ApplyFromTable(table);
+        await _repository.InsertAsync(entity, autoSave: true);
+        return Map(entity);
+    }
+
     [Authorize(OrchestrationPermissions.Reports.Update)]
     public async Task<ReportDefinitionDto> UpdateAsync(Guid id, UpdateReportDefinitionDto input)
     {
@@ -139,6 +161,8 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
             input.Name.Trim(),
             input.Kind,
             input.ResourceCode,
+            input.DataSourceCode,
+            input.TableName,
             input.QueryFlowKey,
             input.DataScope,
             input.SearchForm,
@@ -147,6 +171,8 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
             input.Kpis,
             input.Columns,
             input.Actions,
+            input.Form,
+            input.Dictionaries,
             input.DefaultSorting,
             input.PageSize,
             input.SelectionEnabled,
@@ -177,6 +203,18 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
                 throw new UserFriendlyException(L["Orchestration:ResourceNotPublished", resource.Code]);
             }
         }
+        else if (entity.Kind == ReportKind.Table)
+        {
+            var table = await FindTableAsync(entity.DataSourceCode, entity.TableName);
+            if (table.SyncState != TableSyncState.InSync)
+            {
+                throw new UserFriendlyException(L["Orchestration:TableNotApplied"]);
+            }
+        }
+        else if (string.IsNullOrWhiteSpace(entity.QueryFlowKey))
+        {
+            throw new UserFriendlyException(L["Orchestration:ReportQueryFlowRequired"]);
+        }
 
         entity.Publish();
         await _repository.UpdateAsync(entity, autoSave: true);
@@ -204,11 +242,28 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
 
             resourceCode = resource.Code;
         }
+        else if (entity.Kind == ReportKind.Table)
+        {
+            await FindTableAsync(entity.DataSourceCode, entity.TableName);
+        }
 
         var body = JsonSerializer.SerializeToNode(input, JsonOptions)?.AsObject() ?? [];
         if (!string.IsNullOrWhiteSpace(resourceCode))
         {
             body["resourceCode"] = resourceCode;
+        }
+
+        if (entity.Kind != ReportKind.Resource)
+        {
+            if (!string.IsNullOrWhiteSpace(entity.DataSourceCode))
+            {
+                body["dataSourceCode"] = entity.DataSourceCode;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entity.TableName))
+            {
+                body["tableName"] = entity.TableName;
+            }
         }
 
         body["reportCode"] = entity.Code;
@@ -285,6 +340,71 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
                ?? throw new UserFriendlyException(L["Orchestration:ResourceNotFound", key]);
     }
 
+    private async Task<TableDefinition> FindTableAsync(string? dataSourceCode, string? tableName)
+    {
+        if (string.IsNullOrWhiteSpace(dataSourceCode) || string.IsNullOrWhiteSpace(tableName))
+        {
+            throw new UserFriendlyException(L["Orchestration:ReportQuerySourceRequired"]);
+        }
+
+        var ds = dataSourceCode.Trim();
+        var name = tableName.Trim();
+        return await _tableRepository.FirstOrDefaultAsync(x => x.DataSourceCode == ds && x.TableName == name)
+               ?? throw new UserFriendlyException(L["Orchestration:TableNotFound", ds, name]);
+    }
+
+    private async Task ApplyCreateSourceAsync(
+        ReportDefinition entity,
+        string kind,
+        string? resourceCode,
+        string? dataSourceCode,
+        string? tableName,
+        string? queryFlowKey
+    )
+    {
+        if (kind == ReportKind.Resource)
+        {
+            if (string.IsNullOrWhiteSpace(resourceCode))
+            {
+                throw new UserFriendlyException(L["Orchestration:ReportQuerySourceRequired"]);
+            }
+
+            entity.ApplyFromResource(await FindResourceAsync(resourceCode));
+            return;
+        }
+
+        if (kind == ReportKind.Table)
+        {
+            entity.ApplyFromTable(await FindTableAsync(dataSourceCode, tableName));
+            entity.SetWriteResource(resourceCode);
+            if (!string.IsNullOrWhiteSpace(queryFlowKey))
+            {
+                entity.SetQueryFlowKey(queryFlowKey);
+            }
+
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(queryFlowKey))
+        {
+            throw new UserFriendlyException(L["Orchestration:ReportQueryFlowRequired"]);
+        }
+
+        await EnsureFlowPublishedAsync(queryFlowKey);
+        entity.SetQueryFlowKey(queryFlowKey);
+        entity.SetWriteResource(resourceCode);
+        entity.SetPhysicalTable(dataSourceCode, tableName);
+    }
+
+    private async Task EnsureFlowPublishedAsync(string queryFlowKey)
+    {
+        var flow = await _definitionRepository.FirstOrDefaultAsync(x => x.Code == queryFlowKey.Trim());
+        if (flow == null || flow.Status != FlowDefinitionStatus.Published)
+        {
+            throw new UserFriendlyException(L["Orchestration:ResourceFlowNotPublished", queryFlowKey]);
+        }
+    }
+
     internal static ReportDefinitionDto Map(ReportDefinition entity)
     {
         return new ReportDefinitionDto
@@ -294,6 +414,8 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
             Name = entity.Name,
             Kind = entity.Kind,
             ResourceCode = entity.ResourceCode,
+            DataSourceCode = entity.DataSourceCode,
+            TableName = entity.TableName,
             QueryFlowKey = entity.QueryFlowKey,
             Status = entity.Status,
             DataScope = entity.DataScope,
@@ -303,6 +425,8 @@ public class ReportDefinitionAppService : SaaSAppService, IReportDefinitionAppSe
             Kpis = entity.Kpis,
             Columns = entity.Columns,
             Actions = entity.Actions,
+            Form = entity.Form,
+            Dictionaries = entity.Dictionaries,
             DefaultSorting = entity.DefaultSorting,
             PageSize = entity.PageSize,
             SelectionEnabled = entity.SelectionEnabled,

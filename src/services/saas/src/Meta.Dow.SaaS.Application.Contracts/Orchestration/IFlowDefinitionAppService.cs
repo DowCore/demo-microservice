@@ -13,6 +13,11 @@ public interface IFlowDefinitionAppService : IApplicationService
 
     Task<FlowDefinitionDto> CreateAsync(CreateFlowDefinitionDto input);
 
+    /// <summary>从系统流或已有流另存为可编辑自定义逻辑（表单×流程升级主路径）</summary>
+    Task<FlowDefinitionDto> CloneAsCustomAsync(CloneFlowDefinitionDto input);
+
+    Task<FlowDefinitionDto> GetByCodeAsync(string code);
+
     Task<FlowDefinitionDto> UpdateAsync(Guid id, UpdateFlowDefinitionDto input);
 
     Task DeleteAsync(Guid id);

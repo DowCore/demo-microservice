@@ -33,7 +33,7 @@ public static class SqlDialect
 
     public static string QuoteIdent(string provider, string name)
     {
-        if (!SqlIdentifier.IsValid(name))
+        if (!SqlIdentifier.IsQuotable(name))
         {
             throw new UserFriendlyException($"Invalid SQL identifier: {name}");
         }

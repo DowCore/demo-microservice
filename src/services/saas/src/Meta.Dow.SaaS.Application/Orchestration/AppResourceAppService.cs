@@ -256,6 +256,10 @@ public class AppResourceAppService : SaaSAppService, IAppResourceAppService
             Name = entity.Name,
             DataSourceCode = entity.DataSourceCode,
             TableName = entity.TableName,
+            SourceKind = string.IsNullOrWhiteSpace(entity.SourceKind)
+                ? AppResourceSourceKind.Table
+                : entity.SourceKind,
+            QueryObjectId = entity.QueryObjectId,
             TitleField = entity.TitleField,
             Status = entity.Status,
             QueryFlowKey = entity.QueryFlowKey,

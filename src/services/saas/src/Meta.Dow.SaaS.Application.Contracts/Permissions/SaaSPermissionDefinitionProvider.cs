@@ -55,6 +55,14 @@ public class SaaSPermissionDefinitionProvider : PermissionDefinitionProvider
         tables.AddChild(OrchestrationPermissions.Tables.Delete, L("Permission:Orchestration:Tables.Delete"));
         tables.AddChild(OrchestrationPermissions.Tables.Ddl, L("Permission:Orchestration:Tables.Ddl"));
 
+        var queryObjects = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.QueryObjects.Default,
+            L("Permission:Orchestration:QueryObjects")
+        );
+        queryObjects.AddChild(OrchestrationPermissions.QueryObjects.Create, L("Permission:Orchestration:QueryObjects.Create"));
+        queryObjects.AddChild(OrchestrationPermissions.QueryObjects.Update, L("Permission:Orchestration:QueryObjects.Update"));
+        queryObjects.AddChild(OrchestrationPermissions.QueryObjects.Delete, L("Permission:Orchestration:QueryObjects.Delete"));
+
         var resources = orchestrationGroup.AddPermission(
             OrchestrationPermissions.Resources.Default,
             L("Permission:Orchestration:Resources")
@@ -74,6 +82,24 @@ public class SaaSPermissionDefinitionProvider : PermissionDefinitionProvider
         reports.AddChild(OrchestrationPermissions.Reports.Delete, L("Permission:Orchestration:Reports.Delete"));
         reports.AddChild(OrchestrationPermissions.Reports.Publish, L("Permission:Orchestration:Reports.Publish"));
         reports.AddChild(OrchestrationPermissions.Reports.Execute, L("Permission:Orchestration:Reports.Execute"));
+
+        var forms = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Forms.Default,
+            L("Permission:Orchestration:Forms")
+        );
+        forms.AddChild(OrchestrationPermissions.Forms.Create, L("Permission:Orchestration:Forms.Create"));
+        forms.AddChild(OrchestrationPermissions.Forms.Update, L("Permission:Orchestration:Forms.Update"));
+        forms.AddChild(OrchestrationPermissions.Forms.Delete, L("Permission:Orchestration:Forms.Delete"));
+        forms.AddChild(OrchestrationPermissions.Forms.Publish, L("Permission:Orchestration:Forms.Publish"));
+
+        var workflows = orchestrationGroup.AddPermission(
+            OrchestrationPermissions.Workflows.Default,
+            L("Permission:Orchestration:Workflows")
+        );
+        workflows.AddChild(OrchestrationPermissions.Workflows.Create, L("Permission:Orchestration:Workflows.Create"));
+        workflows.AddChild(OrchestrationPermissions.Workflows.Update, L("Permission:Orchestration:Workflows.Update"));
+        workflows.AddChild(OrchestrationPermissions.Workflows.Delete, L("Permission:Orchestration:Workflows.Delete"));
+        workflows.AddChild(OrchestrationPermissions.Workflows.Publish, L("Permission:Orchestration:Workflows.Publish"));
 
         var messageSources = orchestrationGroup.AddPermission(
             OrchestrationPermissions.MessageSources.Default,

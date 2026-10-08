@@ -1,7 +1,9 @@
 # Meta.Dow 通用报表管理规划
 
 > **性质**：产品与架构规划。本文在 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) 的资源 CRUD 之上，补齐 **报表页**（查询表单、可视化条件组、列标记/转换/汇总、按钮功能、菜单发布）。  
-> **R1 已落地**：FilterGroup 后端、查询表单 + 可视化条件组、ReportDefinition CRUD、列 format/tag/dict/汇总、基础按钮、菜单种子。R2/R3 仍按分期。  
+> **R1 已落地**：FilterGroup 后端、查询表单 + 可视化条件组、ReportDefinition CRUD、列 format/tag/dict/汇总、基础按钮、菜单种子。  
+> **R1.5 配置器 UX**：查询按类型选范围、列值映射抽屉、行按钮右侧固定、新标签页打开表单设计页。详见 [`lowcode-report-config-ux.md`](./lowcode-report-config-ux.md)。  
+> **R2/R3** 仍按分期。  
 > **前端**：`D:\Project\vue-demo`（web-antd / Ant Design Vue）  
 > **后端**：SaaS 编排运行时（`PublishedFlowInvoker` + `FilterSqlBuilder`）
 
@@ -100,9 +102,10 @@
 | `kind` | 数据从哪来 | 典型 |
 |--------|------------|------|
 | `resource` | `AppResource` + `sys.resource.query`（可换成自定义 query 流） | 订单台账、待审列表 |
+| `table` | 数据源 + 托管物理表 + `sys.resource.query` | 只读台账、尚未做成资源的表 |
 | `flow` | 仅 `queryFlowKey`，须返回报表契约 | 跨表、只读统计、ERP 视图 |
 
-`resource` 报表仍可声明 `queryFlowKey` 覆盖默认查询（例如先关联客户名再分页）。
+三种查询源都经 `PublishedFlowInvoker(queryFlowKey)` 执行，**SQL 写在编排节点**，不贴在报表上。`table` / `flow` 可另绑 `resourceCode` 作为写入资源（行按钮增删改）。`resource` 报表仍可声明 `queryFlowKey` 覆盖默认查询（例如先关联客户名再分页）。
 
 ### 3.3 配置态 / 使用态
 
@@ -392,7 +395,8 @@ P2 再开放受控 `render` 函数，返回描述符，规则与 board 文档 5.
 | 字段 | 说明 |
 |------|------|
 | `key` / `label` / `icon` / `tone` | 展示；`tone`：primary/default/danger |
-| `scene` | `toolbar` / `row` / `batch` / `cell` / `empty` |
+| `scene` | `toolbar` / `row`（列表位置） |
+| `multiSelect` | 是否对勾选行生效；为真时出现在工具栏，未勾选时禁用 |
 | `scope` | 见下表 |
 | `open` | `none` / `modal` / `drawer` / `page` / `link` |
 | `formRef` | 指向报表内 `forms[]` 或资源 FormDef 的 `create\|update\|detail` 或独立 Form 片段 |
@@ -541,8 +545,10 @@ App.Report.{reportCode}.Action.{key}    每个按钮
 ```
 ReportDefinition  (IMultiTenant, 草稿/已发布, schemaVersion)
   code, name, icon, description
-  kind: resource | flow
-  resourceCode?
+  kind: resource | table | flow
+  resourceCode?                资源查询源，或 table/flow 的可选写入资源
+  dataSourceCode?              table 查询源
+  tableName?
   queryFlowKey                 默认 sys.resource.query
   dataScope: FilterGroup       设计器隐藏条件
   searchForm: SearchFormDef    查询表单
@@ -565,6 +571,8 @@ ReportDefinition  (IMultiTenant, 草稿/已发布, schemaVersion)
 ```json
 {
   "resourceCode": "order",
+  "dataSourceCode": "default",
+  "tableName": "BizOrder",
   "reportCode": "order-pending",
   "page": 1,
   "pageSize": 20,
@@ -577,7 +585,7 @@ ReportDefinition  (IMultiTenant, 草稿/已发布, schemaVersion)
 }
 ```
 
-`filter` 为 **已经 AND 好的用户层树**（表单 + 更多条件 + 芯片）。ResourceQuery 再 AND 系统隐式与 `dataScope`。`columns` / `resourceCode` 仍由运行时注入，用户不可改。
+`filter` 为 **已经 AND 好的用户层树**（表单 + 更多条件 + 芯片）。`kind=resource` 只注入 `resourceCode`；`kind=table` 注入 `dataSourceCode` + `tableName`（可另带写入用 `resourceCode`）。`columns` 仍由运行时注入，用户不可改。
 
 出参：`{ items, total, summary? }`。
 

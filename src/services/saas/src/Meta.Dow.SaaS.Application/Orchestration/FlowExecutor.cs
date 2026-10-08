@@ -1906,7 +1906,21 @@ public class FlowExecutor : ITransientDependency
                 }
             }
 
-            if (type is "resourcequery" or "resourceget" or "resourcecreate" or "resourceupdate"
+            if (type == "resourcequery")
+            {
+                var names = node.Inputs?.Select(x => x.Name).ToList() ?? [];
+                var hasResource = names.Any(x => string.Equals(x, "resourceCode", StringComparison.OrdinalIgnoreCase));
+                var hasTable =
+                    names.Any(x => string.Equals(x, "dataSourceCode", StringComparison.OrdinalIgnoreCase)) &&
+                    names.Any(x => string.Equals(x, "tableName", StringComparison.OrdinalIgnoreCase));
+                if (!hasResource && !hasTable)
+                {
+                    throw new UserFriendlyException(
+                        $"ResourceQuery node '{node.Id}' requires resourceCode or dataSourceCode+tableName."
+                    );
+                }
+            }
+            else if (type is "resourceget" or "resourcecreate" or "resourceupdate"
                 or "resourcedelete" or "resourcecrud")
             {
                 if (node.Inputs is not { Count: > 0 } ||

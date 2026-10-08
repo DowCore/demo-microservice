@@ -59,11 +59,13 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             definition.FormRef,
             recordJson,
             user,
-            CurrentTenant.Id
+            CurrentTenant.Id,
+            definition.ProcessJson
         );
+        AppendHistoryRecord(instance, "start", "开始", user, "start", "发起申请");
         await _instances.InsertAsync(instance, autoSave: true);
 
-        var graph = LoadGraph(definition.ProcessJson);
+        var graph = LoadGraph(instance.ProcessSnapshotJson);
         var start = graph.Nodes.Values.FirstOrDefault(n =>
             string.Equals(n.Type, "start", StringComparison.OrdinalIgnoreCase))
             ?? throw new UserFriendlyException("流程里没有开始节点");
@@ -73,7 +75,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             await FinishAsync(instance, definition);
         }
 
-        return await MapInstanceAsync(instance);
+        return await MapInstanceAsync(instance, graph);
     }
 
     [Authorize(OrchestrationPermissions.Workflows.Default)]
@@ -96,7 +98,11 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             .ToDictionary(x => x.Id);
 
         return new ListResultDto<WorkflowTaskDto>(
-            mine.Select(task => MapTask(task, instances.GetValueOrDefault(task.InstanceId))).ToList()
+            mine.Select(task =>
+            {
+                instances.TryGetValue(task.InstanceId, out var instance);
+                return MapTask(task, instance, GraphOf(instance));
+            }).ToList()
         );
     }
 
@@ -118,26 +124,54 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         }
 
         var definition = await FindPublishedAsync(instance.WorkflowCode);
-        var graph = LoadGraph(definition.ProcessJson);
+        var graphJson = !string.IsNullOrWhiteSpace(instance.ProcessSnapshotJson) && instance.ProcessSnapshotJson != "{}"
+            ? instance.ProcessSnapshotJson
+            : definition.ProcessJson;
+        var graph = LoadGraph(graphJson);
         var node = graph.Nodes.GetValueOrDefault(task.NodeId)
             ?? throw new UserFriendlyException("流程定义里已经没有这个节点");
 
-        if (input.Pass && string.Equals(node.Opinion, "required", StringComparison.OrdinalIgnoreCase)
-            && string.IsNullOrWhiteSpace(input.Opinion))
+        var action = (input.Action ?? (input.Pass ? "approve" : "reject_terminate")).Trim().ToLowerInvariant();
+
+        // 1. 如果提交了表单补丁数据，增量合并到流程实例表单中
+        if (input.RecordPatch != null && input.RecordPatch.Count > 0)
         {
-            throw new UserFriendlyException("这个节点必须填写处理意见");
+            var patch = FilterRecordPatch(node.FieldPermissions, input.RecordPatch);
+            if (patch.Count > 0)
+            {
+                instance.UpdateRecordJson(MergeRecordPatch(instance.RecordJson, patch));
+            }
         }
 
-        if (input.Pass)
+        // 2. 转办
+        if (action == "transfer")
         {
-            task.Approve(input.Opinion);
-        }
-        else
-        {
-            task.Reject(input.Opinion);
+            if (string.IsNullOrWhiteSpace(input.TransferUserName))
+            {
+                throw new UserFriendlyException("转办必须指定接手人");
+            }
+
+            task.Transfer(input.TransferUserName.Trim(), input.Opinion);
+            await _tasks.UpdateAsync(task, autoSave: true);
+
+            var newTask = new WorkflowTask(
+                GuidGenerator.Create(),
+                instance.Id,
+                task.NodeId,
+                task.NodeName,
+                "approve",
+                "pending",
+                input.TransferUserName.Trim(),
+                null,
+                task.Sequence,
+                CurrentTenant.Id
+            );
+            await _tasks.InsertAsync(newTask, autoSave: true);
+            AppendHistoryRecord(instance, task.NodeId, task.NodeName, user, "transfer", $"转办给 {input.TransferUserName}: {input.Opinion}");
+            await _instances.UpdateAsync(instance, autoSave: true);
+            return await MapInstanceAsync(instance, graph);
         }
 
-        await _tasks.UpdateAsync(task, autoSave: true);
         var siblings = (await _tasks.GetQueryableAsync())
             .Where(x => x.InstanceId == instance.Id && x.NodeId == task.NodeId && x.Kind == "approve")
             .ToList();
@@ -149,14 +183,100 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             }
         }
 
-        if (!input.Pass && ShouldRejectNode(node, siblings))
+        // 3. 驳回给发起人修改
+        if (action == "reject_to_starter")
         {
+            task.Reject(input.Opinion);
+            await _tasks.UpdateAsync(task, autoSave: true);
             await CancelOpenAsync(siblings);
-            await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, input.Opinion, false);
-            instance.Reject("rejected");
-            await FinishAsync(instance, definition);
-            return await MapInstanceAsync(instance);
+            AppendHistoryRecord(instance, task.NodeId, task.NodeName, user, "reject_to_starter", input.Opinion);
+
+            instance.Reopen("start");
+            var starterTask = new WorkflowTask(
+                GuidGenerator.Create(),
+                instance.Id,
+                "start",
+                "发起人重新提交",
+                "approve",
+                "pending",
+                instance.StarterUserName,
+                null,
+                0,
+                CurrentTenant.Id
+            );
+            await _tasks.InsertAsync(starterTask, autoSave: true);
+            await _instances.UpdateAsync(instance, autoSave: true);
+            return await MapInstanceAsync(instance, graph);
         }
+
+        // 4. 驳回到上一审批节点
+        if (action == "reject_to_prev")
+        {
+            task.Reject(input.Opinion);
+            await _tasks.UpdateAsync(task, autoSave: true);
+            await CancelOpenAsync(siblings);
+
+            var targetNodeId = input.TargetNodeId;
+            if (string.IsNullOrWhiteSpace(targetNodeId))
+            {
+                targetNodeId = FindPreviousNodeFromHistory(instance.HistoryJson, task.NodeId);
+            }
+
+            AppendHistoryRecord(instance, task.NodeId, task.NodeName, user, "reject_to_prev", input.Opinion);
+
+            if (!string.IsNullOrWhiteSpace(targetNodeId) && graph.Nodes.TryGetValue(targetNodeId, out var prevNode))
+            {
+                instance.Reopen(prevNode.NodeId);
+                await CreateTasksAsync(instance, prevNode, notifyOnly: false);
+                await _instances.UpdateAsync(instance, autoSave: true);
+                return await MapInstanceAsync(instance, graph);
+            }
+
+            // 若找不到前置审批节点，兜底退回给发起人
+            instance.Reopen("start");
+            var fallbackStarterTask = new WorkflowTask(
+                GuidGenerator.Create(),
+                instance.Id,
+                "start",
+                "发起人重新提交",
+                "approve",
+                "pending",
+                instance.StarterUserName,
+                null,
+                0,
+                CurrentTenant.Id
+            );
+            await _tasks.InsertAsync(fallbackStarterTask, autoSave: true);
+            await _instances.UpdateAsync(instance, autoSave: true);
+            return await MapInstanceAsync(instance, graph);
+        }
+
+        // 5. 彻底作废终止
+        if (action == "reject_terminate" || !input.Pass)
+        {
+            if (ShouldRejectNode(node, siblings))
+            {
+                task.Reject(input.Opinion);
+                await _tasks.UpdateAsync(task, autoSave: true);
+                await CancelOpenAsync(siblings);
+                await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, input.Opinion, false);
+                AppendHistoryRecord(instance, node.NodeId, node.Name, user, "reject_terminate", input.Opinion);
+                instance.Reject("rejected");
+                await FinishAsync(instance, definition);
+                return await MapInstanceAsync(instance, graph);
+            }
+        }
+
+        // 6. 正常同意审批
+        if (string.Equals(node.Opinion, "required", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(input.Opinion))
+        {
+            throw new UserFriendlyException("这个节点必须填写处理意见");
+        }
+
+        task.Approve(input.Opinion);
+        await _tasks.UpdateAsync(task, autoSave: true);
+        AppendHistoryRecord(instance, node.NodeId, node.Name, user, "approve", input.Opinion);
 
         if (string.Equals(node.Multi, "sequential", StringComparison.OrdinalIgnoreCase))
         {
@@ -164,17 +284,17 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                 .Where(x => x.Status == "waiting")
                 .OrderBy(x => x.Sequence)
                 .FirstOrDefault();
-            if (input.Pass && next != null && !NodePassed(node, siblings))
+            if (next != null && !NodePassed(node, siblings))
             {
                 next.Activate();
                 await _tasks.UpdateAsync(next, autoSave: true);
-                return await MapInstanceAsync(instance);
+                return await MapInstanceAsync(instance, graph);
             }
         }
 
         if (!NodePassed(node, siblings))
         {
-            return await MapInstanceAsync(instance);
+            return await MapInstanceAsync(instance, graph);
         }
 
         await CancelOpenAsync(siblings);
@@ -183,7 +303,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         {
             instance.Complete("condition-rejected");
             await FinishAsync(instance, definition);
-            return await MapInstanceAsync(instance);
+            return await MapInstanceAsync(instance, graph);
         }
 
         var (following, missed) = await ChooseNext(graph, node, instance);
@@ -191,7 +311,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         {
             instance.Complete("condition-rejected");
             await FinishAsync(instance, definition);
-            return await MapInstanceAsync(instance);
+            return await MapInstanceAsync(instance, graph);
         }
 
         await EnterAsync(instance, graph, following);
@@ -200,7 +320,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             await FinishAsync(instance, definition);
         }
 
-        return await MapInstanceAsync(instance);
+        return await MapInstanceAsync(instance, graph);
     }
 
     private async Task FinishAsync(WorkflowInstance instance, WorkflowDefinition definition)
@@ -338,7 +458,20 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         var people = await ResolveAssigneesAsync(node, instance);
         if (people.Count == 0)
         {
-            throw new UserFriendlyException($"节点「{node.Name}」没有办理人");
+            var fallback = (node.EmptyFallback ?? "admin").Trim().ToLowerInvariant();
+            if (fallback == "skip")
+            {
+                return;
+            }
+
+            if (fallback == "admin")
+            {
+                people = [new AssigneePick("admin", null)];
+            }
+            else
+            {
+                throw new UserFriendlyException($"节点「{node.Name}」没有办理人");
+            }
         }
 
         var sequential = !notifyOnly && string.Equals(node.Multi, "sequential", StringComparison.OrdinalIgnoreCase);
@@ -639,8 +772,13 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         ?? CurrentUser.Id?.ToString()
         ?? "anonymous";
 
-    private async Task<WorkflowInstanceDto> MapInstanceAsync(WorkflowInstance instance)
+    private async Task<WorkflowInstanceDto> MapInstanceAsync(WorkflowInstance instance, WfGraph? graph = null)
     {
+        graph ??= LoadGraph(
+            !string.IsNullOrWhiteSpace(instance.ProcessSnapshotJson) && instance.ProcessSnapshotJson != "{}"
+                ? instance.ProcessSnapshotJson
+                : (await _definitions.FirstOrDefaultAsync(x => x.Code == instance.WorkflowCode))?.ProcessJson ?? "{}"
+        );
         var tasks = (await _tasks.GetQueryableAsync())
             .Where(x => x.InstanceId == instance.Id)
             .OrderBy(x => x.Sequence)
@@ -655,12 +793,21 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             CurrentNodeId = instance.CurrentNodeId,
             StarterUserName = instance.StarterUserName,
             RecordJson = instance.RecordJson,
-            Tasks = tasks.Select(task => MapTask(task, instance)).ToList(),
+            ProcessSnapshotJson = instance.ProcessSnapshotJson,
+            HistoryJson = instance.HistoryJson,
+            Tasks = tasks.Select(task => MapTask(task, instance, graph)).ToList(),
         };
     }
 
-    private static WorkflowTaskDto MapTask(WorkflowTask task, WorkflowInstance? instance) =>
-        new()
+    private static WorkflowTaskDto MapTask(WorkflowTask task, WorkflowInstance? instance, WfGraph? graph = null)
+    {
+        var fieldPerms = new Dictionary<string, string>();
+        if (graph != null && graph.Nodes.TryGetValue(task.NodeId, out var node) && node.FieldPermissions != null)
+        {
+            fieldPerms = node.FieldPermissions;
+        }
+
+        return new WorkflowTaskDto
         {
             Id = task.Id,
             InstanceId = task.InstanceId,
@@ -672,7 +819,120 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             AssigneeUserName = task.AssigneeUserName,
             CandidateRole = task.CandidateRole,
             Opinion = task.Opinion,
+            FieldPermissions = fieldPerms,
+            RecordJson = instance?.RecordJson ?? "{}",
+            HistoryJson = instance?.HistoryJson ?? "[]",
         };
+    }
+
+    private static WfGraph? GraphOf(WorkflowInstance? instance)
+    {
+        var snapshot = instance?.ProcessSnapshotJson;
+        if (string.IsNullOrWhiteSpace(snapshot) || snapshot == "{}")
+        {
+            return null;
+        }
+
+        try
+        {
+            return LoadGraph(snapshot);
+        }
+        catch (UserFriendlyException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>只读和隐藏字段不接受办理人补丁。未配置的字段按表单本身的可写性，由前端决定是否提交。</summary>
+    private static Dictionary<string, object?> FilterRecordPatch(
+        Dictionary<string, string>? permissions,
+        Dictionary<string, object?> patch
+    )
+    {
+        var allowed = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in patch)
+        {
+            if (permissions != null &&
+                permissions.TryGetValue(pair.Key, out var permission) &&
+                permission is "read" or "hide")
+            {
+                continue;
+            }
+
+            allowed[pair.Key] = pair.Value;
+        }
+
+        return allowed;
+    }
+
+    private static void AppendHistoryRecord(
+        WorkflowInstance instance,
+        string nodeId,
+        string nodeName,
+        string operatorUserName,
+        string action,
+        string? opinion
+    )
+    {
+        var entry = JsonSerializer.Serialize(new
+        {
+            nodeId,
+            nodeName,
+            operatorUserName,
+            action,
+            opinion,
+            time = DateTime.UtcNow
+        });
+        instance.AppendHistory(entry);
+    }
+
+    private static string? FindPreviousNodeFromHistory(string historyJson, string currentNodeId)
+    {
+        if (string.IsNullOrWhiteSpace(historyJson) || historyJson == "[]") return null;
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<JsonElement>>(historyJson);
+            if (list == null || list.Count == 0) return null;
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                if (list[i].TryGetProperty("nodeId", out var nid))
+                {
+                    var id = nid.GetString();
+                    if (!string.IsNullOrWhiteSpace(id)
+                        && !string.Equals(id, currentNodeId, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(id, "start", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return id;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            /* 忽略解析异常 */
+        }
+        return null;
+    }
+
+    private static string MergeRecordPatch(string recordJson, Dictionary<string, object?> patch)
+    {
+        if (patch == null || patch.Count == 0) return recordJson;
+        try
+        {
+            var dict = JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                string.IsNullOrWhiteSpace(recordJson) ? "{}" : recordJson
+            ) ?? [];
+            foreach (var kvp in patch)
+            {
+                dict[kvp.Key] = kvp.Value;
+            }
+            return JsonSerializer.Serialize(dict);
+        }
+        catch
+        {
+            return recordJson;
+        }
+    }
 
     private static WfGraph LoadGraph(string json)
     {
@@ -992,5 +1252,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         public string? ConditionValue { get; set; }
         public WfConditionBlock? LeaveCondition { get; set; }
         public WfProcessNode? ChildNode { get; set; }
+        public Dictionary<string, string> FieldPermissions { get; set; } = [];
+        public string EmptyFallback { get; set; } = "admin";
     }
 }

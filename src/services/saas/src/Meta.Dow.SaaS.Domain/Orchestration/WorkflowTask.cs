@@ -74,6 +74,12 @@ public class WorkflowTask : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public void Cancel() => Status = "cancelled";
 
+    public void Transfer(string targetUserName, string? opinion)
+    {
+        Status = "transferred";
+        Opinion = opinion;
+    }
+
     public void Activate() => Status = "pending";
 
     public bool Matches(string userName, string[] roles)

@@ -26,6 +26,12 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public string StarterUserName { get; protected set; } = null!;
 
+    /// <summary>启动时的流程定义快照，隔离设计态变更</summary>
+    public string ProcessSnapshotJson { get; protected set; } = "{}";
+
+    /// <summary>审批流转轨迹记录数组 JSON</summary>
+    public string HistoryJson { get; protected set; } = "[]";
+
     protected WorkflowInstance()
     {
     }
@@ -36,7 +42,8 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
         string? formRef,
         string recordJson,
         string starterUserName,
-        Guid? tenantId
+        Guid? tenantId,
+        string? processSnapshotJson = null
     )
         : base(id)
     {
@@ -46,6 +53,32 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
         StarterUserName = starterUserName;
         TenantId = tenantId;
         Status = "running";
+        ProcessSnapshotJson = string.IsNullOrWhiteSpace(processSnapshotJson) ? "{}" : processSnapshotJson;
+        HistoryJson = "[]";
+    }
+
+    public void SetProcessSnapshot(string snapshotJson) =>
+        ProcessSnapshotJson = string.IsNullOrWhiteSpace(snapshotJson) ? "{}" : snapshotJson;
+
+    public void UpdateRecordJson(string recordJson) =>
+        RecordJson = string.IsNullOrWhiteSpace(recordJson) ? "{}" : recordJson;
+
+    public void AppendHistory(string entryJson)
+    {
+        if (string.IsNullOrWhiteSpace(entryJson)) return;
+        var list = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<System.Text.Json.JsonElement>>(
+            string.IsNullOrWhiteSpace(HistoryJson) ? "[]" : HistoryJson
+        ) ?? [];
+        using var doc = System.Text.Json.JsonDocument.Parse(entryJson);
+        list.Add(doc.RootElement.Clone());
+        HistoryJson = System.Text.Json.JsonSerializer.Serialize(list);
+    }
+
+    public void Reopen(string? nodeId)
+    {
+        Status = "running";
+        Result = null;
+        CurrentNodeId = nodeId;
     }
 
     public void MoveTo(string? nodeId) => CurrentNodeId = nodeId;

@@ -670,10 +670,19 @@ public class StartWorkflowDto
 
 public class CompleteWorkflowTaskDto
 {
-    public bool Pass { get; set; }
+    /// <summary>approve | reject_to_prev | reject_to_starter | reject_terminate | transfer</summary>
+    public string Action { get; set; } = "approve";
+
+    public bool Pass { get; set; } = true;
 
     [StringLength(2000)]
     public string? Opinion { get; set; }
+
+    public string? TransferUserName { get; set; }
+
+    public string? TargetNodeId { get; set; }
+
+    public Dictionary<string, object?>? RecordPatch { get; set; }
 }
 
 public class WorkflowTaskDto : EntityDto<Guid>
@@ -695,6 +704,14 @@ public class WorkflowTaskDto : EntityDto<Guid>
     public string? CandidateRole { get; set; }
 
     public string? Opinion { get; set; }
+
+    public Dictionary<string, string> FieldPermissions { get; set; } = [];
+
+    /// <summary>当前单据。办理页据此渲染表单，并用补丁回写。</summary>
+    public string RecordJson { get; set; } = "{}";
+
+    /// <summary>审批轨迹。元素含 nodeId、nodeName、operatorUserName、action、opinion、time。</summary>
+    public string HistoryJson { get; set; } = "[]";
 }
 
 public class WorkflowInstanceDto : EntityDto<Guid>
@@ -712,6 +729,10 @@ public class WorkflowInstanceDto : EntityDto<Guid>
     public string StarterUserName { get; set; } = "";
 
     public string RecordJson { get; set; } = "{}";
+
+    public string ProcessSnapshotJson { get; set; } = "{}";
+
+    public string HistoryJson { get; set; } = "[]";
 
     public List<WorkflowTaskDto> Tasks { get; set; } = [];
 }

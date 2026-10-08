@@ -105,11 +105,13 @@ public class FormDefinitionAppService : SaaSAppService, IFormDefinitionAppServic
     {
         ArgumentNullException.ThrowIfNull(input);
         var entity = await _repository.GetAsync(id);
+        var schema = input.Schema ?? new FormDef();
+        EnsureFlattenedFields(schema);
         entity.UpdateDraft(
             input.Name.Trim(),
             input.Description,
             input.SourceResourceCode,
-            input.Schema ?? new FormDef(),
+            schema,
             input.FieldCatalog ?? []
         );
         await _repository.UpdateAsync(entity, autoSave: true);
@@ -123,6 +125,7 @@ public class FormDefinitionAppService : SaaSAppService, IFormDefinitionAppServic
     public async Task<FormDefinitionDto> PublishAsync(Guid id)
     {
         var entity = await _repository.GetAsync(id);
+        EnsureFlattenedFields(entity.Schema);
         if (entity.Schema.Fields == null || entity.Schema.Fields.Count == 0)
         {
             throw new UserFriendlyException(L["Orchestration:FormFieldsRequired"]);
@@ -131,6 +134,61 @@ public class FormDefinitionAppService : SaaSAppService, IFormDefinitionAppServic
         entity.Publish();
         await _repository.UpdateAsync(entity, autoSave: true);
         return Map(entity);
+    }
+
+    private static void EnsureFlattenedFields(FormDef schema)
+    {
+        if (schema == null) return;
+        schema.Fields ??= [];
+        if (schema.Layout != null && schema.Layout.Count > 0)
+        {
+            var extracted = new System.Collections.Generic.List<FormFieldDef>();
+            ExtractFieldsFromWidgets(schema.Layout, extracted);
+            if (extracted.Count > 0)
+            {
+                var existingMap = schema.Fields.ToDictionary(f => f.Field, StringComparer.OrdinalIgnoreCase);
+                foreach (var field in extracted)
+                {
+                    if (!existingMap.ContainsKey(field.Field))
+                    {
+                        schema.Fields.Add(field);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ExtractFieldsFromWidgets(System.Collections.Generic.List<FormWidgetDef> widgets, System.Collections.Generic.List<FormFieldDef> result)
+    {
+        if (widgets == null) return;
+        foreach (var widget in widgets)
+        {
+            if (string.Equals(widget.Kind, "field", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(widget.Field))
+            {
+                result.Add(new FormFieldDef
+                {
+                    Field = widget.Field,
+                    Title = widget.Title ?? widget.Field,
+                    Control = widget.Control,
+                    Span = widget.Span,
+                    Placeholder = widget.Placeholder,
+                    VisibleOnCreate = widget.VisibleOnCreate,
+                    VisibleOnUpdate = widget.VisibleOnUpdate,
+                    VisibleOnDetail = widget.VisibleOnDetail,
+                    ReadonlyOnCreate = widget.ReadonlyOnCreate,
+                    ReadonlyOnUpdate = widget.ReadonlyOnUpdate,
+                    RequiredOnCreate = widget.RequiredOnCreate,
+                    RequiredOnUpdate = widget.RequiredOnUpdate,
+                    Dependencies = widget.Dependencies ?? [],
+                    ControlProps = widget.ControlProps ?? []
+                });
+            }
+
+            if (widget.Children != null && widget.Children.Count > 0)
+            {
+                ExtractFieldsFromWidgets(widget.Children, result);
+            }
+        }
     }
 
     private async Task SyncCatalogFromResourceAsync(FormDefinition entity, string resourceCode)

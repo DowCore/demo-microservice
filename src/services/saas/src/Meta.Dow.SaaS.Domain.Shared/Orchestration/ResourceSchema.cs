@@ -301,6 +301,19 @@ public class FormFieldRuleDef
     public string? Message { get; set; }
 }
 
+public class FormFieldDependencyDef
+{
+    public string SourceField { get; set; } = null!;
+
+    public string Op { get; set; } = "eq";
+
+    public string? Value { get; set; }
+
+    public string Action { get; set; } = "show";
+
+    public string? SetValue { get; set; }
+}
+
 public class FormFieldDef
 {
     public string Field { get; set; } = null!;
@@ -309,6 +322,7 @@ public class FormFieldDef
 
     /// <summary>
     /// input/textarea/number/date/datetime/switch；
+    /// userPicker/deptPicker/upload/radio/checkbox/select/cascader；
     /// table=明细表格；list=可重复块；tree=树形明细（对标 form-create 表格表单/嵌套/无限级）。
     /// </summary>
     public string Control { get; set; } = "input";
@@ -334,6 +348,12 @@ public class FormFieldDef
 
     /// <summary>前端校验规则（必填外的长度/正则/数值范围）。</summary>
     public FormFieldRuleDef? Rules { get; set; }
+
+    /// <summary>字段动态联动规则（显隐/禁用/必填/自动赋值）。</summary>
+    public List<FormFieldDependencyDef> Dependencies { get; set; } = [];
+
+    /// <summary>控件特有配置（如 userPicker 范围、upload 格式限制等）。</summary>
+    public Dictionary<string, object?> ControlProps { get; set; } = [];
 
     /// <summary>明细列 / 子字段（table、list、tree）。</summary>
     public List<FormFieldDef> Children { get; set; } = [];
@@ -392,6 +412,12 @@ public class FormWidgetDef
     public bool RequiredOnCreate { get; set; }
 
     public bool RequiredOnUpdate { get; set; }
+
+    /// <summary>字段动态联动规则（显隐/禁用/必填/自动赋值）。</summary>
+    public List<FormFieldDependencyDef> Dependencies { get; set; } = [];
+
+    /// <summary>控件特有配置。</summary>
+    public Dictionary<string, object?> ControlProps { get; set; } = [];
 }
 
 public class FormDef

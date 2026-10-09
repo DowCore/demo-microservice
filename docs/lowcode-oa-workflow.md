@@ -107,10 +107,14 @@
 
 角色办理人是一个名额，不是「角色里每个人各一条待办」。多人来自表单字段或选人流程返回的多个人。
 
-未落地：
+未落地（2026-10 核对更新）：
 
-- 同一张表在不同节点上的字段只读/可编辑。仍然是这一张表，定义里不拆表。
-- 画布上的条件节点用来分叉。连线上是一组可组合的条件，不写条件的连线是默认分支。接收节点上的离开条件用同一套规则。
+- ~~同一张表在不同节点上的字段只读/可编辑~~ → ✅ **已落地**：`WfProcessNode.FieldPermissions`（read/write/hide/required 矩阵），办理时 `FilterRecordPatch(node.FieldPermissions, input.RecordPatch)` 按权限过滤补丁。详见 [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) §3.3。仍然是同一张表，定义里不拆表。
+- 直属部门主管 `manager` 解析：当前 `ResolveAssigneesAsync` 的 `case "manager"` 返回 `AssigneePick(null, 角色码)`，**按角色匹配，未接组织树**。需 Identity 组织机构接口落地后改为查 `AbpOrganizationUnits` 找直属主管。
+- `assigneeType=role` 无显式 case 分支：switch 默认值是 `role`，但落到 `default` 把 value 当角色码传 `AssigneePick(null, value)`。语义可用（角色=一个名额，任一人可办），但分支不显式，建议补 `case "role"` 与 `manager` 区分语义。
+- 画布上的条件节点作为独立节点类型的 UI：当前条件挂在连线上（多条出线按条件选择，无条件的线为默认分支），独立 `condition` 节点形态仍在规划。接收节点上的离开条件 `leaveCondition` 已落地，与连线条件同构。
+- 编排引擎节点不全：独立 `Sql` 节点、`Switch`、并行、循环节点未实现，SQL 经 Code 节点 `db.*` 间接实现。见 [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) §11.3。
+- 前端审批时间轴 Timeline：后端 `HistoryJson` 已提供 NodeId/OperatorUserName/Action/Opinion/ExecutionTime 等数据，前端 Timeline 组件未渲染（前端在 `vue-demo`，不在本仓库）。
 
 接口：`POST /api/orchestration/workflow-runtime/start`，`GET .../my-tasks`，`POST .../tasks/{id}/complete`。权限沿用 `Orchestration.Workflows`。前端在 OA 审批流列表，不另开菜单。
 

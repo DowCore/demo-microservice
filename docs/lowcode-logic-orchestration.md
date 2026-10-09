@@ -2495,6 +2495,19 @@ High amount: {{input.amount}}, user={{sys.userName}}, at={{sys.Now}}
 
 刻意不做：UserTask / 会签 / 待办、开放任意脚本沙箱、海量 SaaS 连接器、跨库 XA。
 
+> **实现状态核对（2026-10）**：§11.1 表为"目标态"。代码实际 dispatch 见 [FlowExecutor.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs) `ExecuteAsync` 节点 switch。
+
+| 节点 | §11.1 是否列 | 代码 | 备注 |
+|------|--------------|------|------|
+| Start / End / Condition / Assign / HttpCall / Code / Log / Mask / Throw / RabbitMqPublish | ✅ 已列 | ✅ 已实现 | 与表一致；另含 `setvariable`（Assign 别名）、`httpcall`/`broadcast`（别名） |
+| **SubFlow**（`subflow`/`logiccomponent`/`component`） | ❌ §11.1 漏列，§11.3 P0 已有 | ✅ 已实现 | `case "subflow"` 调用已发布 flowKey，与 §5.4.9 一致；应补入 §11.1 表 |
+| **ResourceCrud**（`resourcequery`/`resourceget`/`resourcecreate`/`resourceupdate`/`resourcedelete`/`resourcecrud`） | ❌ §11 完全未提 | ✅ 已实现 | 资源 CRUD 五节点 + 系统逻辑 `sys.resource.*` 种子流，见 [lowcode-form-workflow-board.md](./lowcode-form-workflow-board.md) §5.10.1；应补入 §11.1 表 |
+| `txMode=sameDataSource` | 标"横切（规划）" | ⚠ **未实现** | §11.3 列为 P1，FlowExecutor 未见跨节点事务边界处理；ResourceCrud 注释提到"可挂"但未落地 |
+| Switch / Loop / ForEach / Sql（独立节点） | §11.3 列为 P1 | ⚠ **未实现** | 仍按 §11.3 路线；SQL 经 Code 节点 `db.*` 间接实现，无独立 `case "sql"` |
+| Outbox / MqttPublish / Parallel / Wait | §11.3 列为 P2 | ⚠ **未实现** | 仍按 §11.3 路线 |
+
+**结论**：设计器"可用节点"实际比 §11.1 表多出 **SubFlow** 与 **ResourceCrud 五节点** 两类（已在代码落地，本表应补入 §11.1）；P1 的 txMode/Switch/Loop/Sql 与 P2 全部未实现，与 §11.3 路线一致。建议把 SubFlow、ResourceCrud 补入 §11.1 表，避免实施时以为这两类节点还需开发。
+
 ### 11.4 产品口径补齐（横切能力）
 
 | 类别 | 能力 |

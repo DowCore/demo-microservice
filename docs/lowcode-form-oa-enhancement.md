@@ -4,6 +4,32 @@
 > **关联文档**：[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)、[`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)、[`lowcode-form-preview.md`](./lowcode-form-preview.md)  
 > **前后端边界**：前端 `D:\Project\vue-demo`（Vben Admin / Ant Design Vue）；后端 `Meta.Dow.SaaS` 编排引擎。
 
+> **实现状态（2026-10 核对）**：本文原为"重构规格书"，下方 §2、§3 所列能力**绝大多数已落地**。仍待补的项标注 ⚠，详见 §0。
+
+---
+
+## 0. 实现状态核对（2026-10）
+
+> 本节由代码核对补入，作为下方原文的"实施真相"。原文 §1–§4 保留作为能力契约参考，实施时以本表为准。
+
+| 章节 | 能力 | 状态 | 代码位置 |
+|------|------|------|----------|
+| §2.1 | 标准控件协议扩展（input/select/cascader/userPicker/deptPicker/upload/grid/card/table/tabs 等） | ✅ 已落地 | [ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) `FormFieldDef.Control` + `ControlProps` |
+| §2.2 | 字段动态联动 `dependencies`（show/hide/enable/disable/require/setValue） | ✅ 已落地 | `FormFieldDependencyDef`（同文件，`SourceField/Op/Value/Action/SetValue`） |
+| §2.3 | 容器树自动拍平 `Fields`，消除发布硬编码阻断 | ✅ 已落地 | [FormDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs) `EnsureFlattenedFields`，`UpdateAsync`/`PublishAsync` 均调用 |
+| §3.1 | 流程实例快照 `ProcessSnapshotJson`，流转基于快照寻址 | ✅ 已落地 | [WorkflowInstance.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/WorkflowInstance.cs) `ProcessSnapshotJson` + [WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs) 全程读快照 |
+| §3.2 | 五动作 `approve`/`reject_to_prev`/`reject_to_starter`/`reject_terminate`/`transfer` | ✅ 已落地 | `WorkflowRuntimeAppService.CompleteAsync` |
+| §3.3 | 节点字段权限矩阵 `FieldPermissions`（read/write/hide/required） | ✅ 已落地 | `WfProcessNode.FieldPermissions` + 办理时 `FilterRecordPatch` 按权限过滤 |
+| §3.3 | `EmptyFallback` 容错（admin/skip/error） | ✅ 已落地 | `WfProcessNode.EmptyFallback`，缺人时按策略处理 |
+| §3.4 | 审批时表单数据回写 `RecordPatch` | ✅ 已落地 | `CompleteAsync` 调 `FilterRecordPatch(node.FieldPermissions, input.RecordPatch)` 后合并到 `instance.RecordJson` |
+| §3.5 | 执行轨迹 `HistoryJson` | ✅ 已落地 | `WorkflowInstance.HistoryJson` 字段 + `CompleteAsync` 写入流转记录 |
+| §3.2 | 部门主管 `manager` 解析为**直属部门主管** | ⚠ **未真正落地** | `ResolveAssigneesAsync` 的 `case "manager"` 仍返回 `AssigneePick(null, 角色码)`，**未接组织树**。需 Identity 组织机构接口落地后改为查 `AbpOrganizationUnits` 直属主管 |
+| §3.2 | `assigneeType=role` 显式分支 | ⚠ **隐式实现** | `ResolveAssigneesAsync` 默认值是 `role`，但 switch 无显式 `case "role"`，落到 `default` 把 value 当角色码传 `AssigneePick(null, value)`。语义可用（角色=一个名额，任一人可办），但分支不显式，建议补 `case "role"` 与 `manager` 区分语义 |
+| §2 / §3 | 编排引擎节点不全：独立 `Sql` 节点、`Switch`、并行、循环 | ⚠ **未落地** | [FlowExecutor.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs) 节点 dispatch 仅覆盖 `start/end/log/assign/mask/throw/assert/condition/http/code/rabbitmqpublish/subflow/resourcecrud*`；SQL 经 Code 节点 `db.*` 间接实现；Switch/并行/循环见 [lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3 仍为规划 |
+| §3.5 | 前端审批时间轴 Timeline 渲染 | ⚠ **前端待补** | 后端 `HistoryJson` 已提供数据，前端 Timeline 组件未在本仓库（前端在 `vue-demo`） |
+
+**结论**：§2 表单侧、§3 流程侧核心能力已落地；剩余缺口集中在①组织树未接入导致 `manager`/`role` 仍按角色码匹配、②编排引擎控制流原语（Switch/并行/循环/独立 Sql）不全、③前端时间轴未渲染。下方原文保留作为能力契约。
+
 ---
 
 ## 1. 现状缺陷诊断与重构目标
@@ -195,3 +221,641 @@ public sealed class WfProcessNode
    - 编写单元/集成测试验证退回、快照、字段合并流转。
 3. **第三阶段（前端对接指引）**：
    - 更新文档为前端 `D:\Project\vue-demo` 团队提供对接字段与规范。
+
+---
+
+## 5. 表单定义能力深化（对照 form-create / VForm3 / Formily / 钉钉）
+
+> §0 已确认 §2 表单侧核心控件、联动 `dependencies`、自动拍平已落地。本节补的是对照成熟方案后**仍缺的能力**，按优先级排列。参考：[form-create](https://www.form-create.com/designer/) 的 `validate`/`control`、[VForm3](https://www.vform666.com/vform3/) 的设计器/渲染器分离、[Formily](https://github.com/alibaba/formily) 的 `x-reactions`/`x-validator`、钉钉审批的字段权限矩阵。
+
+### 5.1 字段校验规则协议（P1，当前缺标准化）
+
+**现状不足**：`FormFieldDef` 有 `requiredOnCreate/Update/Detail` 与 `Dependencies`，但缺统一的 `rules` 协议。文档反复提"复用编排 InputSchema rules"，但表单侧没有与编排一致的规则 DSL，前端校验靠各控件自实现。
+
+**对照**：form-create 每字段挂 `validate: [{ required, message, pattern, min, max }]`；Formily 用 `x-validator` 支持内置规则 + 自定义函数名；Ant Design Vue `rules` 也是这套。
+
+**协议设计**（补入 `FormFieldDef`）：
+
+```csharp
+public class FormFieldRuleDef
+{
+    public string Kind { get; set; } = "required";
+    // required | pattern | min | max | len | enum | custom
+    public string? Pattern { get; set; }       // 正则
+    public decimal? Min { get; set; }
+    public decimal? Max { get; set; }
+    public List<string>? Enum { get; set; }
+    public string? CustomFlowKey { get; set; }  // 跨字段/查库校验走已发布 flowKey
+    public string Message { get; set; } = "";  // 违规文案
+    public string Trigger { get; set; } = "blur"; // change | blur
+}
+public List<FormFieldRuleDef> Rules { get; set; } = [];
+```
+
+**约束（原）**：`custom` 不内联任意 JS，只挂 `flowKey`（入参 `record`，出参 `{ valid: bool, message }`），与编排 Code 沙箱同级；前端先跑 `required/pattern/min/max`，`custom` 提交时调 `/api/logic/{flowKey}`。
+
+> ⚠ **下方 §5.1.1 修订本约束**：经对照 form-create/VForm3/Formily 实践，"前端不内联 JS"过于保守，剥夺了前端灵活度。改为**双层校验**：前端 JS 灵活校验为体验，后端逻辑编排校验为权威。上方 `CustomFlowKey` 字段保留兼容，新增 `Validator`/`Deps`/`Severity`/`ValidateFlowKey`。
+
+### 5.1.1 双层校验模型（2026-10 修订）
+
+**原则：前端灵活 + 后端权威**
+
+| 层 | 目的 | 形态 | 信任度 |
+|----|------|------|--------|
+| **前端层** | 即时反馈、用户体验 | 声明式规则 + JS 函数体（跨字段、异步、联动清空） | 不可信（用户可绕，等于绕自己） |
+| **后端层** | 防绕过、权威 | 提交时走逻辑编排 `create/update` 流的 Code/Condition 节点；可选 `validateFlowKey` 试提交 | 唯一可信 |
+
+> 对照：form-create `validate: [{required}, {validator:(rule,val,cb)=>cb()}]`；Formily `x-validator` 支持函数+字符串函数名；Ant Design Vue `rules.validator: async (rule,val)=>true|string`；VForm3 `onValidate` 配置扩展。**成熟方案都给前端 JS 灵活度，权威校验在后端。** 本协议对齐此分工。
+
+**扩展协议（补入 `FormFieldRuleDef`，与上方原字段共存）**：
+
+```csharp
+public class FormFieldRuleDef
+{
+    /// required | pattern | min | max | len | enum | validator | asyncValidator
+    public string Kind { get; set; } = "required";
+
+    // —— 声明式参数 ——
+    public string? Pattern { get; set; }       // 正则
+    public decimal? Min { get; set; }
+    public decimal? Max { get; set; }
+    public int? Len { get; set; }
+    public List<string>? Enum { get; set; }
+
+    /// 前端 JS 灵活校验函数体（Kind=validator/asyncValidator 时用）
+    /// 签名：(value, row, ctx) => boolean | string | {valid,message} | Promise<同左>
+    /// 返回 true=通过；string=失败文案；{valid,message}=显式；Promise=异步
+    public string? Validator { get; set; }
+
+    /// 该规则依赖的其它字段名；任一变化时自动重校验本字段（跨字段联动校验）
+    public List<string> Deps { get; set; } = [];
+
+    public string Message { get; set; } = "";         // 静态文案（Validator 返回非空时优先）
+    public string Trigger { get; set; } = "blur";    // change | blur | submit
+    public string Severity { get; set; } = "error";  // error | warning
+}
+public List<FormFieldRuleDef> Rules { get; set; } = [];
+
+/// 提交时权威校验流（可选；create/update 流自带校验时可不填）
+/// 入参 record，出参 { valid, errors:[{field,message}] }
+public string? ValidateFlowKey { get; set; }
+```
+
+**前端 `ctx` 校验上下文（只读快照，沙箱隔离）**：
+
+| 字段 | 说明 |
+|------|------|
+| `ctx.fields` | 当前表单所有字段值（跨字段校验用） |
+| `ctx.sys` | `{ userId, tenantId, now, culture }` 只读快照 |
+| `ctx.dict(code)` | 取字典项（与列表 `transform.dict` 同源） |
+| `ctx.t(key)` | i18n 文案 |
+| `ctx.formRef` | 当前表单实例引用（调控件 API，如清空/聚焦） |
+
+**禁止**：直连 DB；`document/window/storage` 沙箱隔离；`eval/new Function` 由运行时统一注入受控（不开放给设计器用户直接写）。
+
+**前端 JS 校验示例**：
+
+```js
+// 1. 简单长度+复杂度
+(value, row, ctx) => {
+  if (!value) return true;                       // 非必填交给 required 规则
+  if (value.length < 8) return "密码至少 8 位";
+  if (!/[A-Z]/.test(value)) return "需含大写字母";
+  return true;
+}
+
+// 2. 跨字段：金额不超过预算
+(value, row, ctx) => value <= ctx.fields.Budget ? true : `不能超过预算 ${ctx.fields.Budget}`
+
+// 3. 严重级 warning：超 1 万提示但允许提交
+(value, row, ctx) => value > 10000 ? "超 1 万，需走审批" : true
+// （rule.Severity = "warning"；前端可拦截 warning 让用户确认后继续提交）
+
+// 4. 异步查重（调 validateFlowKey，不直连 DB）
+async (value, row, ctx) => {
+  const r = await fetch(`/api/logic/user.checkName?name=${encodeURIComponent(value)}`);
+  const { valid, message } = await r.json();
+  return valid ? true : message;
+}
+// 注：user.checkName 须 isReusable + visibleTo 受控 + traceMode=errors
+
+// 5. 调 ctx.formRef 联动清空
+(value, row, ctx) => {
+  if (value === 'reset') { ctx.formRef.setFieldValue('City', null); }
+  return true;
+}
+```
+
+**后端权威校验（提交时必跑）**：
+
+```
+表单提交
+  → 前端 Rules 全过（含 async）        ← 体验层，可被绕过
+  → POST /api/logic/{createFlowKey}     默认 sys.resource.create 或自定义 order.create
+       流内 Code/Condition 节点做权威校验：
+         · 业务规则（订单金额上限、库存是否够）
+         · 查库唯一性（订单号不能重复）
+         · 跨表一致性（客户状态有效）
+         · 权限二次确认（当前用户能否改此单）
+       失败 → throw UserFriendlyException → 前端 toast + 字段定位
+  → 校验通过 → ResourceCreate 写库
+```
+
+- `validateFlowKey`（可选）：独立的"试提交"校验流，前端点"校验"按钮或异步 rule 调用，入参 `record`，出参 `{ valid, errors:[{field,message}] }`；正式 `create/update` 流仍**自带**校验，不依赖前端是否调了 `validateFlowKey`。
+- 后端校验代码在编排 Code 节点，与编排安全同级：参数化、白名单、`sys.*` 注入、`[Authorize]` + flowKey 必跑。
+
+**安全边界（关键）**：
+
+| 关注点 | 前端 | 后端 |
+|--------|------|------|
+| 信任度 | 不可信（浏览器用户可控） | 唯一可信 |
+| 绕过后果 | 用户绕自己，无漏洞 | 漏洞，必须防 |
+| JS 执行 | 自由写函数体，沙箱可选（防意外 DOM 污染，不防恶意） | 不跑用户 JS，只跑编排 Code 节点（白名单+参数化） |
+| 查库 | 只调 `validateFlowKey`（受控流），不直连 DB | 编排节点 `db.*`，白名单 DS |
+| 防滥用 | 异步 rule 限流（同字段 change 内只跑一次） | `traceMode=errors` + `visibleTo` 受控 |
+
+**与联动（§5.2）的关系**：
+
+- §5.2 联动改值后，自动触发 `Deps` 命中字段重校验。
+- `compute` 联动可在前端用 JS 表达式（与校验同沙箱），但**写库值以 `create/update` 流 Code 节点重算为准**——前端 `compute` 结果仅作展示，后端不信任前端算的值，防止篡改计算结果绕过金额计算等关键逻辑。
+
+### 5.2 高级联动：级联取数 / 异步选项 / 表达式计算（P1，当前仅显隐）
+
+**现状不足**：`dependencies` 只做 show/hide/enable/disable/require/setValue，但常见的"改省份自动拉城市""改客户自动带出信用额度""金额=单价×数量"都没有协议。
+
+**对照**：Formily `x-reactions` 用 `fulfill.state` + `fulfill.run`（受控表达式）；VForm3 `eventFunc` 在 onChange 触发；form-create `control` 触发其它字段显隐/赋值。钉钉审批有"公式字段"。
+
+**协议设计**（扩展 `FormFieldDependencyDef.Action` 枚举与 `SetValue` 语义）：
+
+| 新 Action | 含义 | SetValue 形态 |
+|-----------|------|---------------|
+| `loadOptions` | 改 A 后异步拉 B 的选项（如城市） | `flowKey` + 输出映射到 B 的 `options` |
+| `fetchValue` | 改 A 后查库回填 B（如信用额度） | `flowKey`，入参取 A，出参写 B |
+| `compute` | 表达式计算（金额=单价×数量） | 前端 JS 表达式（与 §5.1.1 校验同沙箱），写库以 `create/update` 流重算为准 |
+| `cascade` | 级联清空依赖项（改省时清空市） | 目标字段名数组 |
+
+**约束**：`loadOptions`/`fetchValue` 必须挂已发布 `flowKey`，不在前端跑任意查询；`compute` 可在前端用 JS 表达式（与 §5.1.1 校验同沙箱，支持字段路径与算术），**但写库值以 `create/update` 流 Code 节点重算为准**——前端 `compute` 仅作展示，后端不信任前端算的值；旧"白名单解析器禁止 eval"方案废弃，改为双层信任（前端灵活 + 后端权威）。
+
+### 5.3 子表 / 明细的行级权限与行联动（P2，当前缺）
+
+**现状不足**：`table`/`list` 控件已支持，但缺①行级字段权限（与节点 `FieldPermissions` 类似但按行）、②行级联动（改某行单价时该行金额重算）、③行数量上下限、④行必填校验。
+
+**对照**：钉钉明细表支持行级公式、行级必填、行数量限制；VForm3 子表 `subForm` 支持行级联动。
+
+**协议设计**（`table` 控件的 `ControlProps` 扩展）：
+
+```json
+{
+  "control": "table",
+  "controlProps": {
+    "minRows": 0, "maxRows": 20,
+    "rowRules": [ { "field": "Amount", "kind": "required", "when": "Qty > 0" } ],
+    "rowCompute": [ { "field": "Amount", "expr": "Price * Qty" } ],
+    "addColumnFlowKey": "order.addLine"   // 加行时可调流（如带默认值）
+  }
+}
+```
+
+行级联动复用 §5.2 的 `compute`/`fetchValue`，作用域限当前行。
+
+### 5.4 表单版本与发布快照（P1，当前缺）
+
+**现状不足**：`FormDefinition` 有草稿/已发布 `Status`，但发布是否生成不可变快照未确认（`lowcode-form-preview.md` §4.3 已标注"实现时核对 PublishAsync 是否生成不可变快照"）。在途 OA 实例引用 `formRef`，若发布即改 Schema，审批中的表单结构会漂移。
+
+**对照**：Flowable 表单有 `FormVersion`；飞书审批模板有版本号；Formily Schema 带 `version`。
+
+**协议设计**：
+- `FormDefinition` 增 `PublishedSchemaJson` + `PublishedVersion`（int，每次发布 +1）。
+- `PublishAsync` 把当前草稿 `SchemaJson` 深拷贝到 `PublishedSchemaJson`，`Status=Published`，`PublishedVersion++`。
+- OA `WorkflowInstance` 启动时除 `ProcessSnapshotJson` 外，再固化 `FormSnapshotJson = form.PublishedSchemaJson`（与流程快照同生命周期）。
+- 运行时渲染/校验**只读** `FormSnapshotJson`，草稿编辑不影响在途单。
+- 与 `lowcode-form-workflow-board.md` §5.13"资源发布运行时只读已发布 Schema"对齐。
+
+### 5.5 表单与资源的字段映射契约（P1，当前隐式）
+
+**现状不足**：`FormDef.Fields` 与 `TableDefinition.Columns` 的映射靠字段名同名隐式匹配，缺显式 `columnName` 映射，改名后表单提交会丢字段。
+
+**协议设计**：`FormFieldDef` 增 `ColumnName`（默认等于 `Name`），提交 `record` 时按 `ColumnName` 投影到库；列改名后只需改 `ColumnName`，不用改表单控件 key。
+
+### 5.6 多语言与布局预设（P2）
+
+**现状不足**：标题/占位符是单语言字符串；布局无紧凑/宽松预设。
+
+**协议设计**：`title`/`placeholder`/`description` 支持 `i18n: { "zh-CN": "...", "en-US": "..." }`，运行时按 `sys.culture` 取；`FormDef.layoutPreset: compact | default | spacious`，控制栅格间距与字号。
+
+### 5.7 表单设计细化与动态按钮配置（P1，当前缺操作细项）
+
+> §5.1–5.6 补的是"协议字段"，本节补的是"设计器怎么用 + 按钮怎么动态挂"。对照 form-create/VForm3 设计器三栏交互、钉钉/飞书审批的按钮动态化。
+
+#### 5.7.1 表单设计器交互不足清单
+
+| 不足 | 现状 | 对照参考 | 补法 |
+|------|------|----------|------|
+| 撤销/重做 | 缺 | VForm3/form-create 均支持 | 画布操作栈，Ctrl+Z/Y，存 50 步 |
+| 组件复制/粘贴/批量编辑 | 缺 | VForm3 支持多选+批量改 props | Ctrl+C/V；多选后右键"批量改 required/宽度" |
+| 模板字段库 | 缺 | 钉钉"常用字段"预设 | 左组件库增"常用"分组：手机号/身份证/金额/地址/日期范围，一键插入带预设校验 |
+| 结构大纲树 | 缺 | VForm3 大纲视图 | 左侧增"结构"Tab，树形显示容器/字段，点击定位+拖拽排序 |
+| 真机预览 | 缺 | 钉钉手机预览 | 顶部"预览"按钮，弹窗选 PC/手机宽度，实时渲染已发布 Schema |
+| 撤回发布 | 缺 | — | 草稿可"另存为新版本"，发布后可"回滚到上一版本"（不动在途实例快照） |
+
+#### 5.7.2 字段配置面板协议（右栏，分层）
+
+设计器右栏配置面板分两层：**通用项**（所有控件共享）+ **特有项**（按 `control` 类型）。
+
+**通用项（FormCommonProps，所有控件）**：
+
+| 分组 | 字段 | 说明 |
+|------|------|------|
+| 基本 | `key` | 字段名（提交 key，唯一） |
+| 基本 | `columnName` | 库列映射（§5.5） |
+| 基本 | `label`/`labelI18n` | 标题/多语言 |
+| 基本 | `placeholder`/`help`/`tooltip` | 占位/帮助/提示气泡 |
+| 校验 | `rules` | §5.1.1 规则数组 |
+| 校验 | `requiredOnCreate/Update/Detail` | 节点级必填快捷（与 FieldPermissions 联动） |
+| 布局 | `span` | 栅格占列（1-24），默认 12 |
+| 布局 | `labelWidth`/`labelPosition` | 标签宽/位置（top/left） |
+| 布局 | `offset`/`push`/`pull` | 栅格偏移 |
+| 联动 | `dependencies` | §5.2 显隐/赋值/级联 |
+| 联动 | `defaultValue`/`defaultValueExpr` | 创建默认值（字面量或 JS 表达式，如 `ctx.sys.now`） |
+| 权限 | `fieldPermissions` | 按节点 read/write/hide/required（§3.3） |
+| 高级 | `customClass`/`style` | 自定义类名/样式（白名单） |
+
+**特有项（按 control，示例）**：
+
+| control | 特有项 |
+|---------|--------|
+| `select`/`cascader`/`radio` | `options`(静态) / `dictCode`(字典) / `optionsFlowKey`(远程) / `labelKey`/`valueKey`/`multiple`/`filterable` |
+| `date`/`datetime` | `format`/`valueFormat`/`disabledDate`/`shortcuts`(今天/本周/近30天) |
+| `number` | `min`/`max`/`step`/`precision`/`unit`(元/个/%) |
+| `upload` | `accept`/`maxSize`/`maxCount`/`multiple`/`uploadFlowKey`(自定义上传流) |
+| `userPicker`/`deptPicker` | `multiple`/`range`(本部门/全租户) / `valueType`(id/name) |
+| `table`(子表) | `minRows`/`maxRows`/`rowRules`/`rowCompute`/`addColumnFlowKey`(§5.3) |
+
+#### 5.7.3 布局与容器配置细项
+
+| 容器 | 配置项 |
+|------|--------|
+| `grid` 栅格 | `gutter`(间距) / `columns: [{span,offset}]` |
+| `card` 卡片 | `title`/`bordered`/`collapsible`/`defaultCollapsed` |
+| `tabs` 标签页 | `tabs:[{name,fields}]` / `type`(line/card) / `closable` |
+| `collapse` 折叠面板 | `panels:[{name,fields,defaultActive}]` |
+| `divider` 分割线 | `title`/`dashed`/`position` |
+
+**嵌套规则**：容器可嵌套容器（card→grid→table），最多 3 层防性能问题；`table` 子表内只允许字段不允许容器；设计器拖拽时校验嵌套合法性并提示。
+
+#### 5.7.4 数据源与字典统一管理
+
+**现状不足**：`select`/`cascader` 选项来源零散，有的硬编码、有的调 flowKey、有的查字典，无统一协议。
+
+**协议**：选项来源三选一，优先级 `dictCode` > `optionsFlowKey` > `options`：
+- `dictCode`：挂 `sys_dict` 字典码，前端缓存 5 分钟，后端 `SettingManagement` 维护（与报表 `transform.dict` 同源）。
+- `optionsFlowKey`：挂已发布流，入参 `{ parentValue? }`（级联用），出参 `[{label,value,disabled?}]`，`isReusable`+`visibleTo` 受控，前端按 `parentValue` 缓存。
+- `options`：静态数组，适合性别这类固定枚举。
+
+**字典管理**：管理端增"字典管理"菜单（`sys_dict` + `sys_dict_item`），支持树形字典（省市区）；表单设计器选项面板可"从字典选"下拉。
+
+#### 5.7.5 动态化按钮配置协议（ButtonDef，核心）
+
+**现状不足**：表单底部按钮（提交/保存/暂存）、列表 action 按钮、审批节点按钮各自硬编码，无统一动态配置协议。钉钉/飞书审批的按钮是按节点 + 权限 + 流程状态动态渲染的。
+
+**统一协议**（补入 `FormDef` / `AppResource.ListView` / `WfProcessNode`）：
+
+```csharp
+public class ButtonDef
+{
+    public string Key { get; set; } = "";          // 唯一，如 submit/save/approve/reject
+    public string Label { get; set; } = "";        // 文案（支持 i18n）
+    public string? LabelI18n { get; set; }
+    public string? Icon { get; set; }              // 图标名
+    public string Type { get; set; } = "default";  // primary|default|dashed|danger|link
+    public string Scene { get; set; } = "form";    // form(表单底部)|toolbar(列表工具栏)|row(行内)|node(审批节点)
+    public string? Permission { get; set; }        // 权限码，如 Order.Approve
+    public string? FlowKey { get; set; }           // 点击调用的已发布流（提交/审批/自定义业务）
+    public string? ValidateFlowKey { get; set; }   // 点击前试校验流（可选，§5.1.1）
+    public string? BeforeExpr { get; set; }        // 前端 JS：点击前钩子（二次确认/数据预处理），返回 false 取消
+    public string? AfterExpr { get; set; }         // 前端 JS：成功后（跳转/刷新/发消息）
+    public string? VisibleExpr { get; set; }      // 前端 JS：可见条件（按状态/角色/节点）
+    public string? DisabledExpr { get; set; }      // 前端 JS：禁用条件
+    public string? Confirm { get; set; }           // 二次确认文案（非空则弹确认框）
+    public int? BatchLimit { get; set; }            // 行/选择场景单批上限（与报表 ActionDef.batchLimit 同义）
+    public string? Redirect { get; set; }          // 成功后跳转路由
+    public bool RefreshAfter { get; set; } = true; // 成功后刷新当前列表/详情
+}
+public List<ButtonDef> Buttons { get; set; } = [];
+```
+
+**按钮三类来源的统一**：
+
+| 场景 | 挂载点 | 示例 |
+|------|--------|------|
+| 表单底部 | `FormDef.Buttons` | 提交(save→create流)/暂存(draft)/取消 |
+| 列表工具栏/行内 | `AppResource.ListView.Buttons`（与报表 `ActionDef` 合流） | 新增/导出/批量删除/行内编辑 |
+| 审批节点 | `WfProcessNode.Buttons`（覆盖默认 approve/reject） | 自定义"加签""委办""退回上级" |
+
+**关键：审批按钮也走 ButtonDef**。当前 `approve/reject_*` 是硬编码动作，改为节点配 `Buttons: [{Key:"approve",FlowKey:"order.afterApprove",...},{Key:"reject_to_prev",...}]`，前后端统一渲染；缺省时节点按 `multi`+`assigneeType` 自动生成默认按钮。
+
+#### 5.7.6 按钮事件流（before → flow → after）
+
+```
+用户点按钮
+  → BeforeExpr（前端 JS，可选）
+       · 二次确认（Confirm 非空则弹框）
+       · 数据预处理（如组装 recordPatch）
+       · 调 ValidateFlowKey 试校验（可选）
+       · 返回 false 取消点击
+  → POST /api/logic/{FlowKey}            后端权威，必跑
+       · 入参：表单 record + 按钮 payload + ctx（instanceId/nodeId 若审批）
+       · 流内 Code/Condition 节点：权限二次确认 + 业务校验 + 写库/审批推进
+       · 失败 → throw → 前端 toast
+       · 成功 → 返回 { success, data, redirect? }
+  → AfterExpr（前端 JS，可选）
+       · 跳转 Redirect / 刷新 RefreshAfter / 发消息 / 关闭弹窗
+```
+
+**与 §5.1.1 双层校验对齐**：`BeforeExpr` 是体验层（可绕），`FlowKey` 内 Code 节点是权威层（不可绕）；`ValidateFlowKey` 是按钮级的"试提交"，与字段级 `validateFlowKey` 互补。
+
+#### 5.7.7 按钮与权限/状态/节点的动态联动
+
+| 联动维度 | 实现 |
+|----------|------|
+| 按角色显隐 | `Permission` 权限码 + `VisibleExpr`（`ctx.sys.roles.includes('admin')`） |
+| 按表单状态显隐 | `VisibleExpr` 读 `ctx.record.Status`（草稿显示"提交"，已提交显示"撤回"） |
+| 按审批节点显隐 | 审批按钮挂在 `WfProcessNode.Buttons`，仅当前节点渲染；`VisibleExpr` 读 `ctx.nodeId===current` |
+| 按数据状态禁用 | `DisabledExpr`（库存为 0 时禁用"出库"按钮） |
+| 按选择数动态 | 列表 `BatchLimit` + `DisabledExpr`（未选行时禁用批量按钮） |
+| 按钮顺序 | `Buttons` 数组顺序即渲染顺序；审批节点默认按钮可在数组前补自定义按钮 |
+
+**对照钉钉/飞书**：钉钉审批按钮按节点 + 角色动态渲染（审批人见"同意/拒绝/转办"，发起人见"撤回"，抄送人无按钮）；飞书列表 action 按状态显隐。本协议用 `VisibleExpr`/`DisabledExpr`/`Permission` 三件套覆盖这些场景，且表达式走前端 JS（与 §5.1.1 同沙箱），权威判断在后端 `FlowKey` 内 Code 节点（防前端绕过）。
+
+#### 5.7.8 落地优先级
+
+| 能力 | 优先级 |
+|------|--------|
+| §5.7.2 字段配置面板通用项/特有项分层 | P1（设计器可用性基础） |
+| §5.7.5 ButtonDef 协议 + 表单底部/审批按钮统一 | P1（动态化核心） |
+| §5.7.6 按钮 before→flow→after 事件流 | P1 |
+| §5.7.4 字典统一管理（dictCode/optionsFlowKey/options） | P1 |
+| §5.7.7 按钮权限/状态/节点联动 | P1 |
+| §5.7.1 撤销重做/模板字段库/大纲树 | P2（体验增强） |
+| §5.7.3 布局容器配置细项 | P2 |
+
+### 5.8 报表按钮与表单关联的缺陷与补充（P1，当前 ActionDef 与 ButtonDef 割裂）
+
+> §5.7.5 把 `ButtonDef` 统一到 `FormDef.Buttons` / `ListView.Buttons` / `WfProcessNode.Buttons`，并写"列表 `AppResource.ListView.Buttons` 与报表 `ActionDef` 合流"。但 `lowcode-report-management.md` §6 的 `ActionDef` 字段（scene/scope/open/fieldsMode/payload/after/batchLimit）与 `ButtonDef` 字段（FlowKey/BeforeExpr/AfterExpr/VisibleExpr/DisabledExpr/Permission）**并未真正对齐**，且"按钮打开表单"这条主链路有多处缺陷。本节补全。
+
+#### 5.8.1 缺陷清单（12 项）
+
+| # | 缺陷 | 影响 |
+|---|------|------|
+| 1 | `ActionDef` 无 `formKey`/`formMode`，打开表单只能用资源默认 form | 一个资源多表单（紧凑列表/完整编辑/只读详情）无法按场景选 |
+| 2 | 表单模式（create/edit/view/audit）未协议化 | 非 OA 场景缺"模式级字段权限"，纯 CRUD 无法按模式控制只读/必填 |
+| 3 | 行内"编辑"取了行 record，但如何注入表单 `initialValues` 未定义 | 数据回填靠隐式约定，改名即断 |
+| 4 | `ActionDef.after` 与 `ButtonDef.AfterExpr`/`RefreshAfter` 语义重复且不一致 | 两套"提交后行为"协议，实现易分叉 |
+| 5 | 报表按钮 payload（如"基于当前行新建"继承父值）无法注入表单默认值 | 缺 `payloadToFormFields` 映射 |
+| 6 | 报表 `ActionDef.Permission` 与表单 `ButtonDef.Permission` 权限链未定义顺序 | 打开表单后按钮权限可能与报表按钮冲突 |
+| 7 | 行内编辑（cell scope + 编辑控件）与弹窗表单校验割裂 | 行内编辑是否走表单 `rules` 未定，校验双标 |
+| 8 | 批量编辑（选 N 行弹表单填公共字段批量更新）缺协议 | `batchLimit` 有限流无"批量编辑表单"形态 |
+| 9 | "编辑"前预校验（如已审批不能改）缺 `canOpenExpr`/`beforeExpr` | 不可编辑的行点了才报错，体验差 |
+| 10 | 主从表单（订单+明细）详情打开时子表数据回填未协议化 | 缺 `detailFlowKey` 取完整 record（含子表） |
+| 11 | 报表列 `fieldPermissions` 与表单字段 `fieldPermissions` 继承关系未定 | OA 场景打开表单后字段权限是否继承当前节点不清 |
+| 12 | `ActionDef` 与 `ButtonDef` 字段不对齐，前端两套渲染逻辑 | 维护成本高，行为不一致 |
+
+#### 5.8.2 统一协议：ActionDef ⊂ ButtonDef（合流）
+
+**决策**：`ActionDef` 不再独立，改为 `ButtonDef` 的"列表/报表场景特化"。`ButtonDef` 增报表相关字段，`ActionDef` 保留为别名兼容：
+
+```csharp
+public class ButtonDef
+{
+    // —— §5.7.5 已有字段 ——
+    public string Key; public string Label; public string? Icon;
+    public string Type; public string Scene;     // form|toolbar|row|node
+    public string? Permission; public string? FlowKey; public string? ValidateFlowKey;
+    public string? BeforeExpr; public string? AfterExpr;
+    public string? VisibleExpr; public string? DisabledExpr;
+    public string? Confirm; public int? BatchLimit;
+    public string? Redirect; public bool RefreshAfter;
+
+    // —— 报表/列表场景补充（原 ActionDef 字段合流）——
+    public string? Scope { get; set; }          // none|row|selection|cell|column（报表行/选择/单元格/列）
+    public string? Open { get; set; }            // none|modal|drawer|page|link|inline（打开方式，inline=行内编辑）
+    public string? FormKey { get; set; }         // 打开的表单（缺省=资源默认 form）
+    public string? FormMode { get; set; }        // create|edit|view|audit（缺省按 Key 推断：submit→create, edit→edit）
+    public string? FieldsMode { get; set; }      // full|whitelist|none（表单字段白名单，用于精简行内编辑）
+    public List<string>? FieldsWhitelist { get; set; } // fieldsMode=whitelist 时的字段列表
+    public string? PayloadToFields { get; set; } // payload → 表单 defaultValue 映射（JSON：{formField: "expr|payloadKey"}）
+    public string? DetailFlowKey { get; set; }   // 打开详情时取完整 record（含子表）的流
+    public string? CanOpenExpr { get; set; }     // 打开前预校验（如 Status!='approved'），前端 JS，返回 false 禁用并 tooltip
+    public string? RefreshScene { get; set; }    // list(刷报表)|detail(刷详情)|none（覆盖 RefreshAfter 的细化）
+    public bool CloseAfterSubmit { get; set; } = true; // 表单提交后关弹窗（false=留在表单继续录）
+}
+```
+
+**对应关系**：原 `ActionDef.after` → `ButtonDef.AfterExpr` + `RefreshScene` + `CloseAfterSubmit`；原 `ActionDef.fieldsMode` → `ButtonDef.FieldsMode` + `FieldsWhitelist`；原 `ActionDef.batchLimit` → `ButtonDef.BatchLimit`。废弃 `ActionDef` 独立类，保留别名兼容期。
+
+#### 5.8.3 表单模式与模式级字段权限（补 §5.7.2 通用项）
+
+**协议**：`FormMode: create | edit | view | audit`（audit=OA 审批节点办理）。表单字段权限三层叠加：
+
+```
+最终字段权限 = 模式级 baseline(FieldPermissions by mode) 
+              ∩ OA 节点级(若 audit 模式，WfProcessNode.FieldPermissions)
+              ∪ 显式覆盖(按钮 FieldsWhitelist)
+```
+
+| 模式 | baseline 默认 | 按钮场景 |
+|------|--------------|----------|
+| `create` | 所有字段可写（除系统列） | 表单底部"提交/暂存" |
+| `edit` | 主键+系统列只读，余可写 | 行内/弹窗"编辑" |
+| `view` | 全部只读 | "查看详情"，无提交按钮 |
+| `audit` | 按 OA 节点 `FieldPermissions` | 审批节点按钮（§5.7.5） |
+
+`FormFieldDef` 增 `modePermissions: { create:{read,write,hide,required}, edit:{...}, view:{...} }`，非 OA 场景用此；OA 场景 `audit` 模式读 `WfProcessNode.FieldPermissions` 覆盖。
+
+#### 5.8.4 数据回填与 payload 映射
+
+**行 record → 表单**（`Open=modal/drawer/page` + `FormMode=edit/view`）：
+- 默认：报表当前行 record 整体作为表单 `initialValues`，按 `FormFieldDef.ColumnName` 投影（§5.5）。
+- 子表回填：若表单含 `table` 子表且行 record 不含子表数据，调 `DetailFlowKey` 取完整 record（含子表），入参 `{ id: row.Id }`，出参 `{ record, subTables: {lines:[...]} }`。
+
+**payload → 表单默认值**（`PayloadToFields`，"基于当前行新建"场景）：
+```json
+{
+  "PayloadToFields": {
+    "CustomerId": "row.CustomerId",      // 取报表行的 CustomerId
+    "OrderDate": "ctx.sys.now",            // 取系统时间
+    "Source": "'referral'"                 // 字面量
+  }
+}
+```
+映射值支持：`row.{field}`（报表行字段）、`ctx.sys.*`、`'{literal}'`（字面量字符串）。与 §5.7.2 `defaultValueExpr` 同沙箱，前端 JS 求值后作为 `create` 模式初始值。
+
+#### 5.8.5 提交后刷新策略（统一 after 协议）
+
+废弃 `ActionDef.after`，统一用 `ButtonDef` 三字段：
+
+| 字段 | 取值 | 行为 |
+|------|------|------|
+| `CloseAfterSubmit` | true/false | 提交后关弹窗（false=留在表单继续录，适合连续录入） |
+| `RefreshScene` | list/detail/none | 刷新目标（list=刷报表，detail=刷表单详情，none=不刷） |
+| `AfterExpr` | JS | 自定义（跳转 `Redirect`/发消息/调其它流），最后执行 |
+
+默认：`CloseAfterSubmit=true` + `RefreshScene=list` + `RefreshAfter=true`（与 §5.7.5 默认一致）。
+
+#### 5.8.6 权限解析链（打开表单全链路）
+
+```
+报表按钮点击
+  → ① 报表访问权限：App.Report.{code}（已落地，iam-rbac-menu §7）
+  → ② 按钮权限：ButtonDef.Permission，如 Order.Edit（前端 VisibleExpr 先过滤，后端 flowKey 内 [Authorize] 二次确认）
+  → ③ 打开表单：按 FormMode 取 modePermissions baseline
+  → ④ 若 audit 模式：叠加 WfProcessNode.FieldPermissions
+  → ⑤ 表单内按钮权限：FormDef.Buttons[*].Permission（如 Order.Approve 仅审批节点显示）
+  → ⑥ 提交流 FlowKey 内 Code 节点：权限最终确认（防前端绕过 ① ② ⑤）
+```
+
+关键：前端 `VisibleExpr`/`DisabledExpr`/`Permission` 是体验过滤（可绕），后端 `FlowKey` 内 Code 节点 `[Authorize]` + 权限码校验是权威（不可绕）。
+
+#### 5.8.7 批量编辑表单（补 §6.4 之外的批量场景）
+
+**协议**：`ButtonDef` 增 `BatchEdit: { enabled: true, fields: [...] }`（仅 `Scope=selection` 时生效）。
+- 用户选 N 行 → 点"批量编辑" → 弹精简表单（只含 `BatchEdit.fields` 字段）→ 填公共值 → 提交。
+- 提交流入参 `{ ids: [...], patch: {字段:值} }`，流内 Code 节点循环 `UpdateAsync` 或批量 SQL（参数化），受 `BatchLimit` 上限。
+- 校验：每个字段的 `rules` 跑一次（不按行跑，因为是公共值）；行级业务校验在流内按 id 循环。
+
+#### 5.8.8 行内编辑与表单校验统一
+
+**协议**：`Open=inline`（行内编辑）时：
+- 单元格用对应字段的 `control` + `controlProps` + `rules` 渲染（与表单同协议，不是独立控件）。
+- 失焦时跑该字段 `rules`（含异步），失败标红 + tooltip。
+- 提交时调 `FlowKey`（或资源默认 `updateFlowKey`），入参 `{ id, patch: {field:value} }`，流内 Code 节点做权威校验。
+- `FieldsMode=whitelist` + `FieldsWhitelist` 控制哪些列可行内编辑（与弹窗表单字段白名单同源）。
+
+**关键**：行内编辑与弹窗表单**共用** `FormFieldDef.rules` + `FlowKey` 校验，不再两套校验逻辑。
+
+#### 5.8.9 落地优先级
+
+| 能力 | 优先级 |
+|------|--------|
+| §5.8.2 ActionDef ⊂ ButtonDef 合流（字段对齐） | P1（消除双标基础） |
+| §5.8.3 表单模式 + modePermissions | P1 |
+| §5.8.4 数据回填 + PayloadToFields + DetailFlowKey | P1 |
+| §5.8.5 提交后刷新三字段统一 | P1 |
+| §5.8.6 权限解析链 | P1 |
+| §5.8.8 行内编辑与表单校验统一 | P1 |
+| §5.8.7 批量编辑表单 | P2 |
+| §5.8.1 #10 主从子表回填（DetailFlowKey） | P1（含在 §5.8.4） |
+
+---
+
+## 6. OA 流程能力深化（对照 Workflow-Vue3 / lowflow-design / 钉钉 / 飞书 / BPMN）
+
+> §0 已确认五动作、会签/或签/比例、快照、字段权限、`RecordPatch`、`EmptyFallback` 已落地。本节补的是对照成熟审批产品后**仍缺的能力**。参考：[Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)、钉钉/飞书审批、BPMN 网关语义。
+
+### 6.1 直属部门主管解析（P1，已知缺口）
+
+**现状**：`case "manager"` 返回 `AssigneePick(null, 角色码)`，按角色匹配，未接组织树（[lowcode-oa-workflow.md](./lowcode-oa-workflow.md) §6 自述）。
+
+**协议设计**：
+- `ResolveAssigneesAsync` 增 `case "manager"` 真正分支：取 `instance.StarterUserId` → 查 `AbpOrganizationUnits` 主部门 → 取部门 `manager` 角色 OU 关联用户。
+- 兜底：无主管时按 `EmptyFallback`（admin/skip/error）。
+- 增 `case "role"` 显式分支：与 `manager` 区分——`role` 是"角色内任一人可办"（一个名额），`manager` 是"组织树解析直属主管"。
+- 与 `iam-rbac-menu.md` §5 组织机构 + §8 数据权限复用同一 `DataScopeResolver` 的 OU 解析。
+
+### 6.2 抄送 `cc` 节点的真实通知（P1，当前只记不送）
+
+**现状**：`cc` 节点"只记通知，不挡流程"，但通知如何送达未定义（站内/IM/邮件？）。
+
+**协议设计**：`cc` 节点办理时调 `afterFlowKey` 或直接走 `RabbitMqPublish`，载荷含 `assignee/users` + `instance` 摘要；消费端对接站内消息 / 飞书 IM（`lark-im`）/ 邮件（`SettingManagement.Emailing`）。抄送不生成 `WorkflowTask`，只写 `HistoryJson` 一条 `cc` 记录。
+
+### 6.3 超时与催办（P1，当前缺）
+
+**现状**：文档 §6.1 提"超时提醒"未落地；`WorkflowTask` 无到期字段。
+
+**协议设计**：
+- `WfProcessNode` 增 `TimeoutMinutes` + `RemindMinutes`（提前提醒）+ `TimeoutAction: skip | escalate | notify`。
+- `WorkflowTask` 增 `DueAt`（启动时算）+ `RemindedAt`。
+- 后台 Job（Hangfire/Quartz）扫 `DueAt < now && Status=pending`，按 `TimeoutAction` 处理：`skip` 自动通过、`escalate` 转上级、`notify` 发消息。
+- 前端"我的待办"标红超时项；列表支持"催办"按钮（给办理人发提醒）。
+
+### 6.4 加签 / 减签 / 委办（P2，对照钉钉）
+
+**现状**：仅 `transfer`（转办，整体移交）。缺钉钉常见的加签/减签/委办。
+
+| 动作 | 语义 | 与 transfer 区别 |
+|------|------|------------------|
+| `addsign_before` | 前加签：当前人提交前，先让指定人审 | 不移交，加一关 |
+| `addsign_after` | 后加签：当前人通过后，加指定人再审 | 当前人不算办完 |
+| `countersign` | 会签加签：临时把单人节点变会签 | 改 multi |
+| `delegate` | 委办：委托他人代办，办完记回原人 | 不移交，原人仍可收回 |
+| `remove_sign` | 减签：撤销某候选人的审批权 | 仅多实例节点 |
+
+**协议设计**：`CompleteWorkflowTaskDto.Action` 扩展上述枚举；加签在 `HistoryJson` 记一条 `addsign` 轨迹，原任务不取消，新增 `WorkflowTask` 挂同节点。
+
+### 6.5 流程撤回与自选审批人（P2，对照钉钉/飞书）
+
+**撤回**：发起人对未进入审批的实例主动撤回。`Action: withdraw`，仅当首个 `approver` 节点无任何 `approved` 任务时允许；撤回后实例 `Status=withdrawn`。
+**自选审批人**：`approver` 节点 `assigneeType=starterSelect`，发起人在提交表单时指定该节点的办理人；存入 `record.__approver_{nodeId}`，运行时按 `formField` 读取。
+
+### 6.6 审批人去重（P1，当前缺）
+
+**现状**：同一人在链路多次出现会收到多条待办。
+
+**协议设计**：`ResolveAssigneesAsync` 返回候选后，过滤"该用户在本实例 `HistoryJson` 已 `approved` 的节点"，去重后不生成新任务，直接记 `autoSkip` 轨迹。参考钉钉"审批人去重自动跳过"。
+
+### 6.7 并行网关与汇合（P3，对照 BPMN）
+
+**现状**：当前是纵向链式 + 连线条件分支，缺并行（多分支同时走、全部到齐才向下）。
+
+**协议设计**：`WfProcessNode` 增 `type=parallel`（fork，一进多出全激活）+ `type=join`（汇合，等所有入边任务完成才向下）。与编排引擎的 `Parallel`/`Wait`（[lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3 P2）区分——人审并行在审批引擎，不在编排画布。P3 评估是否引入 bpmn-js 画布。
+
+### 6.8 子流程嵌套（P3）
+
+**现状**：编排有 `SubFlow`，审批无子流程。
+
+**协议设计**：`WfProcessNode` 增 `type=callActivity`，`callActivityDef: { workflowKey, inputMapping, outputMapping }`；父实例创建子实例，子实例结束按 `outputMapping` 回写父 `record`。用于"报销含出差申请"场景。
+
+### 6.9 流程版本迁移（P1，当前靠快照规避）
+
+**现状**：`ProcessSnapshotJson` 保证在途实例不受定义变更影响，但**新版本如何让在途实例迁移**未定义。
+
+**协议设计**：
+- `WorkflowDefinition` 增 `PublishedVersion` + `MigrationPlan`（节点 ID 映射表：旧节点 → 新节点）。
+- 管理员发布新版时可选填 `MigrationPlan`；后台 Job 扫在途实例，按映射把当前节点 ID 改到新版本对应节点，`ProcessSnapshotJson` 替换为新版 DSL。
+- 无映射的实例继续按旧快照跑完，不强制迁移。
+
+### 6.10 流程模板库与导出导入（P2）
+
+**协议设计**：`WorkflowDefinition` 增 `IsTemplate`；管理端"模板库"一键克隆为草稿；`ExportAsync` 输出 `ProcessJson + FormSnapshotJson` 单文件 JSON，`ImportAsync` 校验后入库。参考飞书审批模板中心。
+
+### 6.11 批量审批（P1，对照钉钉）
+
+**现状**：`my-tasks` 一次一条。
+
+**协议设计**：`POST /tasks/batch-complete`，入参 `taskIds[]` + 共同 `Action` + `Opinion`；后端循环 `CompleteAsync`，同 DS 事务；前端列表多选 + 批量通过/驳回。限制单批上限（如 50）。
+
+---
+
+## 7. 优先级总览
+
+| 能力 | 优先级 | 关联代码 |
+|------|--------|----------|
+| §5.1 字段校验 rules 协议 | P1 | `FormFieldDef` |
+| §5.2 级联取数 / 异步选项 / 计算 | P1 | `FormFieldDependencyDef` |
+| §5.4 表单发布快照 | P1 | `FormDefinitionAppService.PublishAsync` + `WorkflowInstance.FormSnapshotJson` |
+| §5.5 字段映射 `ColumnName` | P1 | `FormFieldDef` |
+| §6.1 直属部门主管 + role 显式分支 | P1 | `WorkflowRuntimeAppService.ResolveAssigneesAsync` |
+| §6.2 抄送通知 | P1 | `cc` 节点 + `RabbitMqPublish` |
+| §6.3 超时与催办 | P1 | `WfProcessNode` + `WorkflowTask` + 后台 Job |
+| §6.6 审批人去重 | P1 | `ResolveAssigneesAsync` + `HistoryJson` |
+| §6.9 版本迁移 | P1 | `WorkflowDefinition.MigrationPlan` |
+| §6.11 批量审批 | P1 | `WorkflowRuntimeAppService` + API |
+| §5.3 子表行级权限/联动 | P2 | `table` 控件 `ControlProps` |
+| §5.6 多语言/布局预设 | P2 | `FormFieldDef` + `FormDef` |
+| §6.4 加签/减签/委办 | P2 | `CompleteWorkflowTaskDto.Action` |
+| §6.5 撤回/自选审批人 | P2 | `Action: withdraw` + `assigneeType=starterSelect` |
+| §6.10 模板库/导出导入 | P2 | `WorkflowDefinition.IsTemplate` |
+| §6.7 并行网关/汇合 | P3 | `WfProcessNode` fork/join |
+| §6.8 子流程嵌套 | P3 | `callActivity` 节点 |
+
+**落地顺序建议**：先 P1 表单侧（§5.1/5.2/5.4/5.5）与 P1 流程侧（§6.1/6.2/6.3/6.6/6.9/6.11）同步推进，前者保证表单契约稳定，后者补齐审批闭环；P2 再做加签/撤回/子表行级；P3 评估并行网关与子流程是否必须，否则继续自研轻量引擎不上 bpmn-js。

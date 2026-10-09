@@ -1089,7 +1089,36 @@ Resource
 12. [ ] 与现有「编排 InputSchema 试运行表单」命名如何区分（避免两个「表单」菜单）？  
 13. [ ] 多租户下 Resource / 表模板是否支持 Host 下发？  
 14. [ ] 查询 `traceMode=errors` 是否满足审计？哪些表必须 always？  
-15. [ ] Host 未切租户时，托管表 query 是禁查还是只查 TenantId 为空？  
+15. [ ] Host 未切租户时，托管表 query 是禁查还是只查 TenantId 为空？
+
+---
+
+### 13.1 代码核对总结（2026-10 补入）
+
+> 下方按代码实际状态复核 §13 各项。`[x]` = 已落地，`[ ]` = 仍待决/未实现。
+
+1. [x] P1 表设计器：**新建托管表 + 应用到库** — ✅ 已落地 [TableDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/TableDefinitionAppService.cs) `PreviewAsync`/`ApplyAsync`/`CreateResourceAsync`；导入表仍后置。
+2. [ ] 破坏性 DDL（删列/改类型）P1 是否彻底禁止 — 仍按规划默认禁止，代码未见 `allowDestructiveDdl` 开关。
+3. [x] Resource P1 只绑托管表；query 一律 flowKey — ✅ 已落地 [AppResource.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/AppResource.cs) 五个 `*FlowKey` 字段 + [AppResourceAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/AppResourceAppService.cs) 全走 `InvokeAsync`。
+4. [x] 查询/写入一律走编排；简单 CRUD 用 `sys.resource.*` 兼容 — ✅ 已落地 `sys.resource.*` 种子 + ResourceCrud 五节点（[FlowExecutor.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs) `case "resourcequery"...`）。
+5. [x] 组合查询 P1 即上到前端 — ✅ 后端 [FilterSqlBuilder.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FilterSqlBuilder.cs) + `FilterGroup` 树已落地；前端条件组在 `vue-demo`。
+6. [x] 新建托管表默认 ABP 约定列 — ✅ 已落地 `TableDefinition` 默认带约定列 + 默认索引。
+7. [~] 列 render：P1 仅预设 format — 模型已建（[ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) `Render/FormatFn/RenderFn/StyleRules/SummaryFn/SummaryScope` 字段齐全）；自定义 JS 沙箱执行器覆盖度待核对，原则仍是"沙箱 + 描述符白名单"。
+8. [x] 表单 Schema：自研 / Formily / form-js — ✅ **已选自研**：`FormDef`/`FormFieldDef`/`FormWidgetDef`/`FormFieldDependencyDef` 均在 `ResourceSchema.cs` 自研实现，未引入 Formily/form-js。
+9. [x] 工作流：P3 自研轻量是否够用 — ✅ **已超 W1+W2 落地**：[WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs) 实现 `single/all/any/sequential/ratio` + `approve/reject_to_prev/reject_to_starter/reject_terminate/transfer` + `ProcessSnapshotJson`/`HistoryJson`/`FieldPermissions`/`RecordPatch`/`EmptyFallback`。**仍缺**：`manager` 直属部门主管解析（未接组织树）、`role` 显式 case 分支。Elsa/Flowable 未引入。
+10. [x] 服务落点：SaaS 内 vs 独立服务 — ✅ **已选 α（SaaS 内）**：表单/资源/工作流/报表/编排均落 `Meta.Dow.SaaS`；待模型稳定再拆 β（见 README "演进风险"第 1 条）。
+11. [ ] 看板是否必须与列表同一 FilterDef — KanbanView 未实现，仍待 P3 决策。
+12. [x] 与现有「编排 InputSchema 试运行表单」命名如何区分 — ✅ **已分离**：`FormDefinition`（表单库，WYSIWYG 设计器）与编排 `InputSchema`（Flow 入参）分属不同入口，见 [`lowcode-form-preview.md`](./lowcode-form-preview.md) §2.3。
+13. [ ] 多租户下 Resource / 表模板是否支持 Host 下发 — 仍待核对 `TableDefinition` 是否支持 Host 级模板下发到租户。
+14. [ ] 查询 `traceMode=errors` 是否满足审计 — `FlowInstance` 有 `IsDryRun`/`TriggerSource`，但 `traceMode` 字段未确认落地；仍待核对哪些表必须 `always`。
+15. [ ] Host 未切租户时托管表 query 策略 — 仍待决策；当前 ResourceQuery 注入 `TenantId=sys.tenantId`，Host 行为未文档化。
+
+**新增缺口（代码核对发现，原 §13 未列）**：
+
+- ⚠ `assigneeType=role` 无显式 `case` 分支，落 `default` 隐式支持（语义可用，可读性差）。
+- ⚠ 编排引擎缺独立 `Sql`/`Switch`/`Parallel`/`Loop` 节点（见 [lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3）。
+- ⚠ 前端审批时间轴 Timeline 未渲染（后端 `HistoryJson` 已供数）。
+- ⚠ `lowcode-report-config-ux.md` 的 `renderFn` "返回 HTML" 与本文 §5.11 "禁止返回原始 HTML 字符串，只返回描述符白名单" **策略冲突**，须统一为描述符白名单。  
 
 ---
 

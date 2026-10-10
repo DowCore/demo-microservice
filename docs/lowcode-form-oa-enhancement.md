@@ -4,7 +4,8 @@
 > **关联文档**：[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)、[`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)、[`lowcode-form-preview.md`](./lowcode-form-preview.md)  
 > **前后端边界**：前端 `D:\Project\vue-demo`（Vben Admin / Ant Design Vue）；后端 `Meta.Dow.SaaS` 编排引擎。
 
-> **实现状态（2026-10 核对）**：本文原为"重构规格书"，下方 §2、§3 所列能力**绝大多数已落地**。仍待补的项标注 ⚠，详见 §0。
+> **实现状态（2026-10 核对）**：本文原为"重构规格书"，下方 §2、§3 所列能力**绝大多数已落地**。仍待补的项标注 ⚠，详见 §0。  
+> **定义侧健壮性缺陷**：表单定义链（F1–F7）与 OA 流程定义链（W1–W9）的代码级缺陷汇总见 **§8**——§0 回答"有没有落地"，§8 回答"稳不稳"。
 
 ---
 
@@ -859,3 +860,52 @@ public class ButtonDef
 | §6.8 子流程嵌套 | P3 | `callActivity` 节点 |
 
 **落地顺序建议**：先 P1 表单侧（§5.1/5.2/5.4/5.5）与 P1 流程侧（§6.1/6.2/6.3/6.6/6.9/6.11）同步推进，前者保证表单契约稳定，后者补齐审批闭环；P2 再做加签/撤回/子表行级；P3 评估并行网关与子流程是否必须，否则继续自研轻量引擎不上 bpmn-js。
+
+---
+
+## 8. 定义侧健壮性缺陷（2026-10 代码审计补充）
+
+> **本节定位**：§0 的核对表回答“能力**有没有**落地”，本节回答“定义链**稳不稳**”。两者不冲突——表单/流程定义侧目前**几乎没有约束**，配置错误不会被拦在发布口，而是在运行时以最坏的形态爆发。以下每条均附代码位置与实证。
+>
+> **一句话结论**：两处定义链的共同病根是「把语义存成自由字符串，然后信任调用方」。表单侧有强类型但三套 Schema 各说各话；OA 流程侧连类型都没有（`ProcessJson` 就是 `string`）。更关键的是——**逻辑编排有发布校验（`FlowDefinitionAppService` 调 `FlowExecutor.ValidateDsl`），表单和 OA 流程一条都没有**。
+
+### 8.1 表单定义缺陷（F1–F7）
+
+| 编号 | 缺陷 | 触发条件 / 实证 | 影响 | 代码位置 | 修复方向 |
+|:--:|:---|:---|:---|:---|:---|
+| **F1** | **拍平只增不覆盖，改了等于没改** | 设计器修改一个**已存在**字段（改必填/控件/标题）时，`EnsureFlattenedFields` 用 `if (!existingMap.ContainsKey(field.Field))` 判定，已有同名字段直接跳过，新定义不写入；删除字段时 `Fields` 也不收缩 | `PublishAsync` 仅校验 `Fields.Count > 0`，于是**发布的是一份陈旧字段定义**；长期残留“幽灵字段” | [FormDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs) `EnsureFlattenedFields` L139–159、`PublishAsync` L129–132 | 改为「以 Layout 为准的覆盖式同步」：对同名字段做属性覆盖，并删除 Layout 中已不存在的字段 |
+| **F2** | **拍平与克隆会丢字段（明细子表直接失真）** | ① `ExtractFieldsFromWidgets` 构造 `FormFieldDef` 时**不复制** `Rules` / `Children` / `MinItems` / `MaxItems` / `TreeChildrenField`；② `FormWidgetDef` 本身也缺 `MinItems`/`MaxItems`/`TreeChildrenField`；③ `CloneWidget` 与 `CloneField` **都不复制** `Dependencies` / `ControlProps` | `table`/`list`/`tree` 明细经 Layout→Fields 拍平后**子列结构、行数限制、校验规则全部丢失**；从资源同步表单时**字段联动规则与控件配置被静默清空** | 同文件 `ExtractFieldsFromWidgets` L161–192、`CloneWidget` L237–258、`CloneField` L260–280；[ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) `FormWidgetDef` L375+ | 合并 F3 的重复模型，拷贝时用整体映射而非逐属性手抄 |
+| **F3** | **`FormFieldDef` 与 `FormWidgetDef` 是两个几乎重复的类** | `Field`/`Title`/`Control`/`Span`/`Placeholder`/`VisibleOn*`/`ReadonlyOn*`/`RequiredOn*`/`Dependencies`/`ControlProps` 在两个类里各写一遍，差异只在明细相关字段 | 是 F2 那些漏拷贝 bug 的**根因**——每加一个属性就要改三处拷贝代码，必然漏 | `ResourceSchema.cs` `FormFieldDef` L315–369、`FormWidgetDef` L375–421 | 只保留一个模型，另一处用组合表达 |
+| **F4** | **发布不产生快照，契约随时漂移** | `Publish()` 只是把 `Status` 置为 Published，`Schema` 还是**同一个可变对象**；`GetPublishedByCodeAsync` 返回的就是当前 Schema | **已发布的表单可以被下一版直接改写**；OA 流程冻结了流程快照，却引用着一份**会变的表单**，在途审批单结构随之漂移 | [FormDefinition.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/FormDefinition.cs) `Publish()` L70；`FormDefinitionAppService.GetPublishedByCodeAsync` L58–68 | 发布时生成**不可变 Schema 快照 + `SchemaVersion`**；实例引用快照而非 Code |
+| **F5** | **字段无唯一性与合法性校验** | 字段名不查重（提交两个同名字段不被拒）；**不校验字段是否属于绑定资源/表的真实列**；文档 §5.5/§5.8（第 439、679 行）明确写了“按 `FormFieldDef.ColumnName` 投影”，但**代码里没有 `ColumnName` 这个属性** | 字段名拼错在 Mongo 无 schema 的情况下就是**静默丢数据**；文档描述了一个不存在的契约 | `ResourceSchema.cs` `FormFieldDef`（无 `ColumnName`）；`FormDefinitionAppService.PublishAsync` L129 | 发布校验字段名唯一 + 与资源列对齐；文档与代码二选一对齐 |
+| **F6** | **引用完整性为零** | `DeleteAsync` 不做任何引用检查 | 被 OA `FormRef`、报表 `ActionDef.FormKey` 引用的表单可直接删除，**运行时才报 `FormNotFound`** | `FormDefinitionAppService.DeleteAsync` L121–122 | 删除前检查引用（对标逻辑编排 `FlowUsageIndexer`） |
+| **F7** | **`FieldCatalog` 与 `Schema.Fields` 两套字段库** | `FormDefinition` 同时持有设计器字段库 `FieldCatalog` 与真实字段 `Schema.Fields`；`CreateAsync` 有 `SourceResourceCode` 时会把资源默认表单克隆进 Schema；`SyncCatalogFromResourceAsync` **只在创建时跑一次**，资源列后续变更无法重新同步、也无同步入口 | “新建即复制资源表单”与“空白表单 + 字段库”两种心智混在一起，字段来源不唯一 | `FormDefinition` `FieldCatalog` L30；`FormDefinitionAppService.CreateAsync` L70–101、`SyncCatalogFromResourceAsync` L194–209 | 明确单一事实源，补资源列重新同步入口 |
+
+### 8.2 OA 流程定义缺陷（W1–W9）
+
+| 编号 | 缺陷 | 触发条件 / 实证 | 影响 | 代码位置 | 修复方向 |
+|:--:|:---|:---|:---|:---|:---|
+| **W1** | **定义侧零校验，坏流程能“发布成功”** | `UpdateDraft` 对 `ProcessJson` 只判非空；`PublishAsync` 只校验 `FormRef` 存在且已发布。**不校验** start/end 是否存在、节点 id 是否唯一、是否有环、审批节点是否配了办理人、条件引用的字段是否存在 | 任何字符串都存得进去；配置错误不在发布口拦截 | [WorkflowDefinition.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/WorkflowDefinition.cs) `UpdateDraft` L56–75；[WorkflowDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionAppService.cs) `PublishAsync` L129–142 | 照 `FlowExecutor.ValidateDsl` 模式加结构校验 |
+| **W2** | **指向不存在节点的连线 = 单据被静默通过（最严重）** | `ChooseNext` 用 `graph.Nodes.GetValueOrDefault(edge.TargetId)` 取下一节点，取不到返回 `null`；`EnterAsync` 收到 null 后 `while` 循环退出，直接执行 `instance.Complete("approved")` | **一条打错目标的连线，会让审批单在没有任何人审批的情况下变成“已通过”**——审批场景里的 fail-open 数据事故 | [WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs) `ChooseNext` L406/416/423、`EnterAsync` L385–386 | 目标节点不存在时**显式报错**，不得回落为“通过” |
+| **W3** | **未知节点类型被当作审批节点** | `EnterAsync` 只显式判断 `end`/`start`/`condition`/`cc`，其余**全部落到“创建待办”分支** | 把 `approver` 拼成 `aprpver`，流程照样跑，只是行为不是你要的，且**没有任何告警** | `WorkflowRuntimeAppService.EnterAsync` L339–387 | 未知 `type` 抛异常并记录 |
+| **W4** | **双格式长期分叉，且默认格式是残废的那一个** | `ParseProcess` 同时支持画布 `nodes/edges` 与旧的 `childNode` 链；`FlattenTree` 每个节点只能 `Link` 一个子节点（**结构上无法表达多出边**），生成的边**永远不带条件**；而 `DefaultProcessJson()` 生成的正是这个树格式 | **新建流程默认落在一个既不能分支、也不能带条件的格式上**——而“同一节点多条出线按条件选择”恰是 §6 要求的能力 | `WorkflowRuntimeAppService.ParseProcess` L938–1012、`FlattenTree` L1014–1029；`WorkflowDefinition.DefaultProcessJson` L79–100 | 让 `DefaultProcessJson` 直接产出 `nodes/edges`，或给树格式补多出边支持；不要长期养两套 |
+| **W5** | **解析容错过度，坏数据静默降级** | `graph.Nodes[id] = node` —— 重复节点 id **后者静默覆盖前者**；连线缺 `source`/`target` 直接 `continue`；`FlattenTree` 同样覆盖同名节点 | 一个写坏的流程“解析成功”，但**节点少了一半**，问题被推迟到运行时 | `WorkflowRuntimeAppService.ParseProcess` L974/L983、`FlattenTree` L1020 | 重复 id / 缺关键字段直接报错 |
+| **W6** | **条件分支无语义，靠数组顺序决定** | 多出边时 `foreach (var edge in edges.Where(EdgeHasCondition))` 返回**第一个匹配**；无优先级字段、无互斥性校验、无告警；条件用编号 + `combine` 字符串公式（`"1 and (2 or 3)"`） | 前端设计器里**拖动连线顺序就会静默改变审批走向**；同一系统里“条件”存在三种表达（连线编号公式 / 节点 `leaveCondition` / 报表 `FilterGroup` 树） | `WorkflowRuntimeAppService.ChooseNext` L412–418 | 加优先级/互斥校验；统一迁移到 `FilterGroup` 树 |
+| **W7** | **办理人相关全是魔法字符串，且默认值危险** | `assigneeType=role` 无显式 case（落 `default`）；`manager` 未接组织树，只把角色码 `manager` 丢给匹配；`EmptyFallback` **默认 `"admin"`**；`multi`/`multiRatio`/`opinion` 无枚举校验，`multi=ratio` 但 `MultiRatio` 为空的行为未定义（实现取 `?? 100`） | **一个配置失误会把审批单直接派给管理员账号**（审批场景默认值应为 `error`）；`manager` 名不副实；非法枚举静默走兜底 | `WorkflowRuntimeAppService.ResolveAssigneesAsync` L502–529、`EmptyFallback` 默认值 L1256、`CreateTasksAsync` L459–475 | `EmptyFallback` 默认改 `error`；补显式 `case "role"`；接组织树实现 `manager` |
+| **W8** | **字段权限矩阵服务端只有两个有效值且 fail-open** | `FieldPermissions` 是 `Dictionary<string,string>`（键任意、不校验是否真实字段）；`FilterRecordPatch` **只对 `read`/`hide` 阻止写入，其它任何值（含拼错的 `"reade"`）一律放行** | 服务端 `write` 和 `required` **实际不起作用**；权限写错静默无效；文档 §5.8.3 设计的“模式级 baseline ∩ 节点级 ∪ 按钮白名单”三层叠加，代码里只有节点级一层 | `WorkflowRuntimeAppService.FilterRecordPatch` L846–866、`WfProcessNode.FieldPermissions` L1255 | 未知权限值改为**拒绝**；补模式级 baseline 层 |
+| **W9** | **无版本、无唯一索引** | 流程无版本号/版本表（对比 `FlowDefinition` 有 `FlowVersion`）；实例上 `ProcessSnapshotJson` 只是字符串，**无法回答“这次实例对应第几版定义”**；`Code` 全系统作为引用键却**没有唯一索引**，仅靠 `AnyAsync` 预检；实例只存 `FormRef` 字符串、**不存表单 schema 快照** | 并发创建可产生重复 `Code`；流程冻结了、**表单没冻结** | `WorkflowDefinitionAppService.CreateAsync` L80；`WorkflowRuntimeAppService.WfProcessNode` L1240–1256 | 加 `Version` 字段 + 唯一索引；实例保存表单 schema 快照引用 |
+
+### 8.3 交叉影响与修复优先级
+
+**最坏组合**：在途审批单读取的字段结构随表单编辑漂移（F4 + W9），而流程快照让它看起来“很安全”。
+
+**建议动手顺序**（前两步改动集中、风险可控）：
+
+1. **止血（改动小、收益大）**：W2 的 `null` 目标改为报错；`EnterAsync` 对未知 type 抛异常；`EmptyFallback` 默认改 `error`；`FilterRecordPatch` 未知权限值改为拒绝。
+2. **补发布校验**：照 `FlowExecutor.ValidateDsl` 的模式给 `WorkflowDefinition.PublishAsync` 加结构校验（start/end 唯一、id 唯一、无环、approver 必填办理人、条件字段属于绑定表单）；给 `FormDefinition.PublishAsync` 加字段名唯一 + 与资源列对齐校验。
+3. **修 F1/F2**：把拍平改成“以 Layout 为准的覆盖式同步”；合并 `FormFieldDef`/`FormWidgetDef`，消除漏拷贝的根因。
+4. **补快照与唯一索引**：表单发布生成不可变 Schema 快照 + `SchemaVersion`；给 `FormDefinition.Code`、`WorkflowDefinition.Code` 建唯一索引；实例保存表单快照引用。
+5. **统一条件模型**：把审批连线条件从编号公式迁移到 `FilterGroup` 树，与报表对齐。
+6. **明确双格式去留**：要么让 `DefaultProcessJson` 直接产出 `nodes/edges`，要么给树格式补 `Children` 支持多出边——不要长期养两套。
+
+> **与 §0 的关系**：§0 列的 §2/§3 能力确实“已落地”，但落地质量受本节 F/W 各项约束——例如 §3.3 的 `FieldPermissions` 虽已实现，却因 W8 在服务端 fail-open；§3.1 的流程快照虽已实现，却因 F4/W9 只冻结流程不冻结表单。补本节缺陷前，§0 的“✅”应理解为“已具备该入口，尚未通过健壮性验收”。

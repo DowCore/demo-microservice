@@ -119,3 +119,21 @@
 接口：`POST /api/orchestration/workflow-runtime/start`，`GET .../my-tasks`，`POST .../tasks/{id}/complete`。权限沿用 `Orchestration.Workflows`。前端在 OA 审批流列表，不另开菜单。
 
 代码：设计器 `vue-demo/apps/web-antd/src/views/orchestration/workflows/designer.vue`，列表 `workflows/index.vue`，运行时 `WorkflowRuntimeAppService`。
+
+## 7. 定义侧健壮性缺陷（2026-10 代码审计）
+
+> §6 记录的是“能力有没有落地”，本节记录“定义链稳不稳”。完整实证（代码位置 + 修复方向）见 [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) §8。
+
+| 编号 | 缺陷 | 影响 |
+|:--:|:---|:---|
+| W1 | 定义侧零校验：`UpdateDraft` 只判 `ProcessJson` 非空，`PublishAsync` 只校验 `FormRef` | 坏流程能“发布成功”，错误推迟到运行时 |
+| W2 | 连线指向不存在节点时 `ChooseNext` 返回 `null`，`EnterAsync` 直接 `Complete("approved")` | **打错目标的连线会让审批单无人审批即“已通过”**（fail-open 事故） |
+| W3 | `EnterAsync` 只识别 `end/start/condition/cc`，其余全按审批节点处理 | 节点类型拼错仍照跑，无告警 |
+| W4 | `DefaultProcessJson()` 产出的是旧 `childNode` 树格式，`FlattenTree` 无法表达多出边、边不带条件 | **新建流程默认落在不能分支、不能带条件的格式上** |
+| W5 | 解析时重复节点 id 静默覆盖、缺 `source`/`target` 的边直接跳过 | 写坏的流程“解析成功”但节点少一半 |
+| W6 | 多出边取**第一个匹配**，无优先级/互斥校验；条件用编号公式 `"1 and (2 or 3)"` | 拖动连线顺序会静默改变审批走向；一个系统三种条件表达 |
+| W7 | `role` 无显式 case；`manager` 未接组织树；`EmptyFallback` 默认 `admin` | 配置失误会把审批单派给 `admin`；`manager` 名不副实 |
+| W8 | `FilterRecordPatch` 只拦 `read`/`hide`，其它值（含拼错）一律放行 | 服务端 `write`/`required` 实际不生效；权限写错静默无效 |
+| W9 | 无版本号/版本表；`Code` 无唯一索引；实例只存 `FormRef` 不存表单快照 | 无法回答“实例对应第几版”；流程冻结了、表单没冻结 |
+
+**止血优先项**：W2 目标不存在改为报错 → W3 未知类型抛异常 → W7 `EmptyFallback` 默认改 `error` → W8 未知权限值拒绝。这四项改动集中、风险可控，且正好是当前测试为空时最值得先补的防线。

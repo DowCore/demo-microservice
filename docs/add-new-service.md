@@ -118,7 +118,8 @@ Host 中 `ConfigureMicroservice(MetaDowNames.OrderingApi)` 必须使用该 API �
 1. `ApiScope`、`ApiResource` 都加上 `MetaDowOrdering`（与 `OrderingApi` 常量相同）。
 2. `Clients` 增加 Swagger 客户端，可照抄 `Projects_API`：
    - `ClientId`：`Ordering_API`
-   - `ClientSecret`：`1q2w3e*`
+   - `ClientSecret`：写在 git-ignored 的 `appsettings.secrets.json` 的 `ClientSecrets:{clientId}` 下，
+     自行生成强随机串；不要复用旧示例值，该文件内也**不得出现任何 JSON 数组**
    - `RootUrls` / Redirect：`https://localhost:7005/swagger/oauth2-redirect.html`
    - `Scopes` 至少包含 `MetaDowOrdering`；若调用 Identity / Administration，再补对应 scope
 3. 已有前端客户端（如 `MetaDow_WebApp`）的 `Scopes` 也要加上 `MetaDowOrdering`，浏览器令牌才会带上该 audience。

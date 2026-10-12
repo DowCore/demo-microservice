@@ -26,4 +26,19 @@ public static class OrchestrationConsts
 
     /// <summary>SubFlow 最大嵌套深度（含当前流程）</summary>
     public const int MaxSubFlowDepth = 5;
+
+    /// <summary>ForEach 默认最大迭代次数（未显式配置时生效）</summary>
+    public const int ForEachDefaultMaxIterations = 1000;
+
+    /// <summary>ForEach 硬上限：即便 DSL 要求更多也截断在此，防止失控</summary>
+    public const int ForEachHardMaxIterations = 10_000;
+
+    /// <summary>ForEach 并发度上限</summary>
+    public const int ForEachMaxConcurrency = 16;
+
+    /// <summary>Parallel 最大分支数（出边数）</summary>
+    public const int ParallelMaxBranches = 16;
+
+    /// <summary>Parallel / ForEach 嵌套深度上限（与 SubFlow 共用同一调用栈计数）</summary>
+    public const int MaxControlNestingDepth = 5;
 }

@@ -99,7 +99,7 @@ public class FlowDefinitionDataSeedContributor : IDataSeedContributor, ITransien
         }
     }
 
-    private static string BuildDemoDslJson()
+    public static string BuildDemoDslJson()
     {
         return """
 {

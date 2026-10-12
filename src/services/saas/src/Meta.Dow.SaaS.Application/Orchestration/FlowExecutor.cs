@@ -202,64 +202,39 @@ public class FlowExecutor : ITransientDependency
         result.Context = ctx;
 
         var nodeMap = dsl.Nodes.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
-        var outgoing = dsl.Edges
-            .GroupBy(x => x.Source, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var outgoing = BuildOutgoing(dsl);
 
         var start = dsl.Nodes.First(x => string.Equals(x.Type, "Start", StringComparison.OrdinalIgnoreCase));
-        var currentId = start.Id;
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        const int maxSteps = 200;
 
         try
         {
-            for (var step = 0; step < maxSteps; step++)
+            var outcome = await RunSegmentAsync(
+                nodeMap,
+                outgoing,
+                start.Id,
+                [],
+                ctx,
+                isDryRun,
+                callStack,
+                cancellationToken,
+                result.Nodes
+            );
+
+            if (!outcome.Ok)
             {
-                if (!nodeMap.TryGetValue(currentId, out var node))
-                {
-                    throw new UserFriendlyException($"Node '{currentId}' not found.");
-                }
-
-                if (!visited.Add(currentId) &&
-                    !string.Equals(node.Type, "End", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new UserFriendlyException($"Cycle detected at node '{currentId}'.");
-                }
-
-                var record = await ExecuteNodeAsync(node, ctx, isDryRun, callStack, cancellationToken);
-                result.Nodes.Add(record);
-
-                if (string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Succeeded = false;
-                    result.Error = record.Error;
-                    result.VariablesJson = FlowContextResolver.SerializeContext(ctx);
-                    return;
-                }
-
-                if (string.Equals(node.Type, "End", StringComparison.OrdinalIgnoreCase))
-                {
-                    await FinishOutputsAsync(dsl, node, ctx, result, filterOutputsByRole, currentUser, isDryRun);
-                    result.Succeeded = true;
-                    result.VariablesJson = FlowContextResolver.SerializeContext(ctx);
-                    return;
-                }
-
-                if (!outgoing.TryGetValue(currentId, out var edges) || edges.Count == 0)
-                {
-                    throw new UserFriendlyException($"Node '{currentId}' has no outgoing edge.");
-                }
-
-                var nextId = ResolveNextNode(node, edges, ctx);
-                if (string.IsNullOrWhiteSpace(nextId))
-                {
-                    throw new UserFriendlyException($"No matching branch from node '{currentId}'.");
-                }
-
-                currentId = nextId;
+                result.Succeeded = false;
+                result.Error = outcome.Error;
+                result.VariablesJson = FlowContextResolver.SerializeContext(ctx);
+                return;
             }
 
-            throw new UserFriendlyException("Exceeded maximum execution steps.");
+            if (outcome is { HitEnd: true, EndNode: { } endNode })
+            {
+                await FinishOutputsAsync(dsl, endNode, ctx, result, filterOutputsByRole, currentUser, isDryRun);
+            }
+
+            result.Succeeded = true;
+            result.VariablesJson = FlowContextResolver.SerializeContext(ctx);
         }
         catch (Exception ex)
         {
@@ -268,6 +243,113 @@ public class FlowExecutor : ITransientDependency
             result.Error = ex.Message;
             result.VariablesJson = FlowContextResolver.SerializeContext(ctx);
         }
+    }
+
+    private const int DefaultMaxSteps = 200;
+
+    private static Dictionary<string, List<FlowDslEdge>> BuildOutgoing(FlowDslDocument dsl)
+    {
+        return dsl.Edges
+            .GroupBy(x => x.Source, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>分段执行的终态。Error 非空即失败。</summary>
+    private sealed class SegmentOutcome
+    {
+        public string? Error { get; set; }
+
+        /// <summary>命中的停止节点（未执行）</summary>
+        public string? Reached { get; set; }
+
+        public bool HitEnd { get; set; }
+
+        public FlowDslNode? EndNode { get; set; }
+
+        public bool Ok => Error == null;
+    }
+
+    /// <summary>
+    /// 单游标分段执行 —— **全流程唯一的调度原语**。
+    /// 从 <paramref name="startId"/> 沿边推进，直到：
+    /// 命中 <paramref name="stopIds"/> 中的节点（不执行它，直接返回）、命中 End 节点、或出错。
+    /// 主链（stopIds 为空）、ForEach 循环体、Parallel 分支都复用本方法，避免出现第二套调度器。
+    /// </summary>
+    private async Task<SegmentOutcome> RunSegmentAsync(
+        IReadOnlyDictionary<string, FlowDslNode> nodeMap,
+        IReadOnlyDictionary<string, List<FlowDslEdge>> outgoing,
+        string startId,
+        IReadOnlyCollection<string> stopIds,
+        FlowRuntimeContext ctx,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken,
+        List<NodeExecutionRecord> sink,
+        int maxSteps = DefaultMaxSteps
+    )
+    {
+        var outcome = new SegmentOutcome();
+        var stops = stopIds.Count == 0
+            ? null
+            : new HashSet<string>(stopIds, StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var currentId = startId;
+
+        for (var step = 0; step < maxSteps; step++)
+        {
+            if (stops != null && stops.Contains(currentId))
+            {
+                outcome.Reached = currentId;
+                return outcome;
+            }
+
+            if (!nodeMap.TryGetValue(currentId, out var node))
+            {
+                outcome.Error = $"Node '{currentId}' not found.";
+                return outcome;
+            }
+
+            var isEnd = string.Equals(node.Type, "End", StringComparison.OrdinalIgnoreCase);
+            if (!visited.Add(currentId) && !isEnd)
+            {
+                outcome.Error = $"Cycle detected at node '{currentId}'.";
+                return outcome;
+            }
+
+            var record = await ExecuteNodeAsync(node, ctx, isDryRun, callStack, cancellationToken);
+            sink.Add(record);
+
+            if (string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                outcome.Error = record.Error;
+                return outcome;
+            }
+
+            if (isEnd)
+            {
+                outcome.HitEnd = true;
+                outcome.EndNode = node;
+                return outcome;
+            }
+
+            if (!outgoing.TryGetValue(currentId, out var edges) || edges.Count == 0)
+            {
+                outcome.Error = $"Node '{currentId}' has no outgoing edge.";
+                return outcome;
+            }
+
+            var nextId = ResolveNextNode(node, edges, ctx);
+            if (string.IsNullOrWhiteSpace(nextId))
+            {
+                outcome.Error = $"No matching branch from node '{currentId}'.";
+                return outcome;
+            }
+
+            currentId = nextId;
+        }
+
+        outcome.Error = "Exceeded maximum execution steps.";
+        return outcome;
     }
 
     private FlowRuntimeContext BuildContext(FlowDslDocument dsl, string? requestBodyJson, SystemContextSnapshot snapshot)
@@ -622,6 +704,22 @@ public class FlowExecutor : ITransientDependency
                 case "component":
                 {
                     await ExecuteSubFlowAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
+                case "foreach":
+                case "loop":
+                {
+                    await ExecuteForEachAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
+                case "parallel":
+                case "when":
+                {
+                    await ExecuteParallelAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -1437,6 +1535,421 @@ public class FlowExecutor : ITransientDependency
         record.OutputJson = raw.ToJsonString(JsonOptions);
     }
 
+    /// <summary>控制流体（循环体一次迭代 / 并行一个分支）的执行结果。</summary>
+    private sealed record ControlBodyOutcome(bool Ok, JsonNode? Output, string? Error);
+
+    private sealed record BranchOutcome(
+        string Ref,
+        bool Ok,
+        JsonNode? Output,
+        string? Error,
+        bool Optional
+    );
+
+    /// <summary>
+    /// ForEach（FOR）：对数组逐项执行循环体，支持 failFast / continueOnError 与并发度。
+    /// 产出契约：<c>{ items[], count, succeeded, failed[] }</c>，其中「单项产出」= 循环体 End 的 finalOutputs。
+    /// 循环体两种形态：内联子图（node.body）或已发布流程（node.subFlowKey）。
+    /// </summary>
+    private async Task ExecuteForEachAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        var itemsNode = FlowContextResolver.ResolvePathNode(node.ItemsPath, ctx);
+        if (itemsNode is not JsonArray array)
+        {
+            throw new UserFriendlyException(
+                $"ForEach '{node.Id}' 的 itemsPath「{node.ItemsPath}」未解析为数组。"
+            );
+        }
+
+        var bodyInputs = FlowContextResolver.MapNodeInputs(node.Inputs, ctx);
+        var itemVar = string.IsNullOrWhiteSpace(node.ItemVar) ? "item" : node.ItemVar.Trim();
+        var indexVar = string.IsNullOrWhiteSpace(node.IndexVar) ? "index" : node.IndexVar.Trim();
+        var continueOnError = string.Equals(
+            node.ItemErrorMode ?? "failFast",
+            "continueOnError",
+            StringComparison.OrdinalIgnoreCase
+        );
+        var maxIterations = Math.Clamp(
+            node.MaxIterations ?? OrchestrationConsts.ForEachDefaultMaxIterations,
+            1,
+            OrchestrationConsts.ForEachHardMaxIterations
+        );
+        if (array.Count > maxIterations)
+        {
+            throw new UserFriendlyException(
+                $"ForEach '{node.Id}' 待迭代 {array.Count} 项，超过 maxIterations {maxIterations}。"
+            );
+        }
+
+        var concurrency = Math.Clamp(node.Concurrency ?? 1, 1, OrchestrationConsts.ForEachMaxConcurrency);
+        EnsureControlNesting(node, "ForEach", callStack);
+
+        record.InputJson = JsonSerializer.Serialize(
+            new
+            {
+                bodyKind = node.LoopBody != null ? "inline" : "subflow",
+                bodyKey = (node.SubFlowKey ?? "").Trim(),
+                concurrency,
+                count = array.Count,
+                inputs = bodyInputs,
+                itemErrorMode = continueOnError ? "continueOnError" : "failFast",
+                itemVar,
+                indexVar,
+                itemsPath = node.ItemsPath
+            },
+            JsonOptions
+        );
+
+        var collected = new JsonNode?[array.Count];
+        var failures = new JsonArray();
+        var succeeded = 0;
+
+        for (var offset = 0; offset < array.Count; offset += concurrency)
+        {
+            var take = Math.Min(concurrency, array.Count - offset);
+            var batch = new List<Task<ControlBodyOutcome>>(take);
+            for (var i = 0; i < take; i++)
+            {
+                batch.Add(RunIterationAsync(offset + i));
+            }
+
+            var settled = await Task.WhenAll(batch);
+
+            for (var i = 0; i < settled.Length; i++)
+            {
+                var index = offset + i;
+                var item = settled[i];
+                if (item.Ok)
+                {
+                    collected[index] = item.Output?.DeepClone();
+                    succeeded += 1;
+                    continue;
+                }
+
+                failures.Add(
+                    new JsonObject
+                    {
+                        ["index"] = index,
+                        ["error"] = item.Error
+                    }
+                );
+
+                if (!continueOnError)
+                {
+                    throw new UserFriendlyException(
+                        $"ForEach '{node.Id}' 在第 {index} 项失败：{item.Error}"
+                    );
+                }
+            }
+        }
+
+        var rows = new JsonArray();
+        foreach (var item in collected)
+        {
+            rows.Add(item?.DeepClone());
+        }
+
+        var raw = new JsonObject
+        {
+            ["items"] = rows,
+            ["count"] = array.Count,
+            ["succeeded"] = succeeded,
+            ["failed"] = failures
+        };
+
+        ApplyExecutableOutputs(node, raw, ctx);
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+
+        Task<ControlBodyOutcome> RunIterationAsync(int index)
+        {
+            var bodyJson = (JsonObject)bodyInputs.DeepClone();
+            bodyJson[itemVar] = array[index]?.DeepClone();
+            bodyJson[indexVar] = JsonValue.Create(index);
+            return RunControlBodyAsync(node, node.Id, node.LoopBody, node.SubFlowKey, bodyJson, isDryRun, callStack, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Parallel（WHEN）+ 汇合（ALL / ANY / ALL_SETTLED）：并发执行各分支，按 Ref 汇合产出。
+    /// 产出契约：<c>{ ok, mode, succeeded, failed[], executeMs, {各分支 ref}: 分支出参 }</c>。
+    /// </summary>
+    private async Task ExecuteParallelAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        var branches = node.Branches ?? [];
+        if (branches.Count < 2)
+        {
+            throw new UserFriendlyException($"Parallel '{node.Id}' 至少需要 2 个分支。");
+        }
+
+        if (branches.Count > OrchestrationConsts.ParallelMaxBranches)
+        {
+            throw new UserFriendlyException(
+                $"Parallel '{node.Id}' 分支数 {branches.Count} 超过上限 {OrchestrationConsts.ParallelMaxBranches}。"
+            );
+        }
+
+        var refs = branches.Select(x => (x.Ref ?? "").Trim()).ToList();
+        if (refs.Any(string.IsNullOrWhiteSpace) ||
+            refs.Distinct(StringComparer.OrdinalIgnoreCase).Count() != refs.Count)
+        {
+            throw new UserFriendlyException($"Parallel '{node.Id}' 的分支 ref 必须非空且唯一。");
+        }
+
+        var mode = (node.JoinMode ?? "all").Trim().ToLowerInvariant();
+        var isAny = mode == "any";
+        var isAllSettled = mode is "allsettled" or "all_settled";
+        if (mode is not ("all" or "any" or "allsettled" or "all_settled"))
+        {
+            throw new UserFriendlyException(
+                $"Parallel '{node.Id}' 的 joinMode「{node.JoinMode}」无效，只能是 all / any / allSettled。"
+            );
+        }
+
+        EnsureControlNesting(node, "Parallel", callStack);
+
+        record.InputJson = JsonSerializer.Serialize(
+            new { branchCount = branches.Count, joinMode = mode, refs },
+            JsonOptions
+        );
+
+        var sw = Stopwatch.StartNew();
+        var started = branches.Select(RunBranchAsync).ToList();
+
+        var outputs = new JsonObject();
+        var failures = new JsonArray();
+        var succeeded = 0;
+
+        if (isAny)
+        {
+            var pending = new List<Task<BranchOutcome>>(started);
+            while (pending.Count > 0)
+            {
+                var finished = await Task.WhenAny(pending);
+                pending.Remove(finished);
+
+                var outcome = await finished;
+                if (outcome.Ok)
+                {
+                    outputs[outcome.Ref] = outcome.Output?.DeepClone();
+                    succeeded += 1;
+                    break;
+                }
+
+                failures.Add(new JsonObject { ["ref"] = outcome.Ref, ["error"] = outcome.Error });
+            }
+
+            if (succeeded == 0)
+            {
+                throw new UserFriendlyException(
+                    $"Parallel '{node.Id}'（joinMode=any）全部分支失败，共 {failures.Count} 个。"
+                );
+            }
+        }
+        else
+        {
+            var settled = await Task.WhenAll(started);
+            foreach (var outcome in settled)
+            {
+                if (outcome.Ok)
+                {
+                    outputs[outcome.Ref] = outcome.Output?.DeepClone();
+                    succeeded += 1;
+                    continue;
+                }
+
+                failures.Add(new JsonObject { ["ref"] = outcome.Ref, ["error"] = outcome.Error });
+                if (!isAllSettled && !outcome.Optional)
+                {
+                    throw new UserFriendlyException(
+                        $"Parallel '{node.Id}' 分支「{outcome.Ref}」失败：{outcome.Error}"
+                    );
+                }
+            }
+        }
+
+        sw.Stop();
+
+        var raw = new JsonObject
+        {
+            ["ok"] = failures.Count == 0,
+            ["mode"] = mode,
+            ["succeeded"] = succeeded,
+            ["failed"] = failures,
+            ["executeMs"] = sw.ElapsedMilliseconds
+        };
+        foreach (var (key, value) in outputs)
+        {
+            raw[key] = value?.DeepClone();
+        }
+
+        ApplyExecutableOutputs(node, raw, ctx);
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+
+        async Task<BranchOutcome> RunBranchAsync(FlowDslBranchDsl branch)
+        {
+            var branchRef = (branch.Ref ?? "").Trim();
+            try
+            {
+                var branchInputs = FlowContextResolver.MapNodeInputs(branch.Inputs, ctx);
+                var outcome = await RunControlBodyAsync(
+                    node,
+                    branchRef,
+                    branch.Body,
+                    branch.SubFlowKey,
+                    branchInputs,
+                    isDryRun,
+                    callStack,
+                    cancellationToken
+                );
+                return new BranchOutcome(branchRef, outcome.Ok, outcome.Output, outcome.Error, branch.Optional);
+            }
+            catch (Exception ex)
+            {
+                return new BranchOutcome(branchRef, false, null, ex.Message, branch.Optional);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 执行控制流节点的「体」（循环一次迭代 / 并行一个分支）。
+    /// 走标准 ExecuteAsync 通道，因此体的 End.finalOutputs、map、aggregate、visibleTo 全部生效。
+    /// 并发安全：为每次调用复制一份调用栈，避免并发下共享 HashSet 的 add/remove 竞态与误判成环。
+    /// </summary>
+    private async Task<ControlBodyOutcome> RunControlBodyAsync(
+        FlowDslNode host,
+        string scopeLabel,
+        FlowDslSubGraphDsl? inlineBody,
+        string? subFlowKey,
+        JsonObject bodyInput,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        var bodyJson = bodyInput.ToJsonString(JsonOptions);
+        var scopeStack = new HashSet<string>(callStack, StringComparer.OrdinalIgnoreCase);
+
+        if (inlineBody is { Nodes.Count: > 0 })
+        {
+            var subDsl = BuildInlineBodyDsl(host, scopeLabel, inlineBody);
+            var inline = await ExecuteAsync(
+                JsonSerializer.Serialize(subDsl, JsonOptions),
+                bodyJson,
+                isDryRun,
+                filterOutputsByRole: false,
+                currentUser: null,
+                cancellationToken: cancellationToken,
+                skipValidation: true,
+                callStack: scopeStack
+            );
+            return new ControlBodyOutcome(inline.Succeeded, ParseJsonNode(inline.OutputDataJson), inline.Error);
+        }
+
+        var key = (subFlowKey ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new UserFriendlyException(
+                $"控制流节点 '{host.Id}' 的「{scopeLabel}」必须配置 body（内联子图）或 subFlowKey（已发布流程）。"
+            );
+        }
+
+        if (callStack.Contains(key))
+        {
+            throw new UserFriendlyException($"控制流 '{host.Id}' 的「{scopeLabel}」引用了调用栈中的流程：{key}");
+        }
+
+        var snap = await _publishedFlowCache.GetByKeyAsync(key);
+        var child = await ExecuteAsync(
+            snap.DslJson,
+            bodyJson,
+            isDryRun,
+            filterOutputsByRole: false,
+            currentUser: null,
+            cancellationToken: cancellationToken,
+            skipValidation: true,
+            callStack: scopeStack
+        );
+        return new ControlBodyOutcome(child.Succeeded, ParseJsonNode(child.OutputDataJson), child.Error);
+    }
+
+    private static void EnsureControlNesting(FlowDslNode node, string label, HashSet<string> callStack)
+    {
+        if (callStack.Count >= OrchestrationConsts.MaxControlNestingDepth)
+        {
+            throw new UserFriendlyException(
+                $"{label} '{node.Id}' 嵌套深度超过上限 {OrchestrationConsts.MaxControlNestingDepth}。"
+            );
+        }
+    }
+
+    private static JsonNode? ParseJsonNode(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return JsonValue.Create(json);
+        }
+    }
+
+    /// <summary>
+    /// 把内联子图包装成可执行 DSL。Key 取 host 引用名 + 作用域，纳入统一调用栈防环口径。
+    /// 体必须自带 Start 与 End（End.finalOutputs 即该项产出契约）。
+    /// </summary>
+    private static FlowDslDocument BuildInlineBodyDsl(
+        FlowDslNode host,
+        string scopeLabel,
+        FlowDslSubGraphDsl body
+    )
+    {
+        var hostRef = string.IsNullOrWhiteSpace(host.Ref) ? host.Id : host.Ref.Trim();
+
+        // 经 JSON 往返深拷贝，避免与父图共享 JsonNode 实例（并发执行下会被改写）
+        var nodes = JsonSerializer.Deserialize<List<FlowDslNode>>(
+            JsonSerializer.Serialize(body.Nodes, JsonOptions),
+            JsonOptions
+        ) ?? [];
+        var edges = JsonSerializer.Deserialize<List<FlowDslEdge>>(
+            JsonSerializer.Serialize(body.Edges, JsonOptions),
+            JsonOptions
+        ) ?? [];
+        var inputs = JsonSerializer.Deserialize<List<FlowInputParameterDsl>>(
+            JsonSerializer.Serialize(body.Inputs, JsonOptions),
+            JsonOptions
+        ) ?? [];
+
+        return new FlowDslDocument
+        {
+            Version = OrchestrationConsts.DslVersion,
+            Key = $"{hostRef}#{scopeLabel}",
+            Inputs = inputs,
+            Outputs = [],
+            Nodes = nodes,
+            Edges = edges
+        };
+    }
+
     private async Task ExecuteRabbitMqPublishAsync(
         FlowDslNode node,
         FlowRuntimeContext ctx,
@@ -1845,6 +2358,13 @@ public class FlowExecutor : ITransientDependency
             }
         }
 
+        ValidateOutEdgeCardinality(dsl);
+
+        foreach (var node in dsl.Nodes)
+        {
+            ValidateControlNode(node);
+        }
+
         foreach (var input in dsl.Inputs)
         {
             if (string.IsNullOrWhiteSpace(input.Name))
@@ -1977,6 +2497,252 @@ public class FlowExecutor : ITransientDependency
     private static string Truncate(string text, int max)
     {
         return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    /// <summary>
+    /// 出边基数校验（P0-3）。执行器对非 Condition 节点走 <c>edges.First()</c>，多余出边会被**静默丢弃**。
+    /// 这里把"看起来正常却只跑一条边"的隐性故障提前变成显式错误。
+    /// 只校验从 Start 可达的节点：不可达节点的脏边不影响运行时行为。
+    /// </summary>
+    private static void ValidateOutEdgeCardinality(FlowDslDocument dsl)
+    {
+        var multiOutAllowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Condition",
+            "Switch"
+        };
+
+        var outgoing = dsl.Edges
+            .GroupBy(x => x.Source, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        var reachable = CollectReachable(dsl);
+
+        foreach (var node in dsl.Nodes)
+        {
+            if (!reachable.Contains(node.Id))
+            {
+                continue;
+            }
+
+            var type = ResolveNodeKind(node);
+            var count = outgoing.TryGetValue(node.Id, out var n) ? n : 0;
+
+            if (string.Equals(type, "End", StringComparison.OrdinalIgnoreCase))
+            {
+                if (count > 0)
+                {
+                    throw new UserFriendlyException($"End 节点 '{node.Id}' 不允许有出边。");
+                }
+
+                continue;
+            }
+
+            if (count == 0)
+            {
+                throw new UserFriendlyException($"节点 '{node.Id}'（{type}）没有任何出边。");
+            }
+
+            if (count > 1 && !multiOutAllowed.Contains(type))
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}'（{type}）有 {count} 条出边，但只有第 1 条会生效，其余会被静默忽略。" +
+                    "多路枚举分支请改用 Condition（多出边 + combine / isDefault）；并行请改用 Parallel（branches）。"
+                );
+            }
+        }
+    }
+
+    /// <summary>节点的**有效类型**：Logic 节点折算为其 Kind（与 ExecuteNodeAsync 的 dispatch 口径一致）。</summary>
+    private static string ResolveNodeKind(FlowDslNode node)
+    {
+        var type = (node.Type ?? "").Trim();
+        if (string.Equals(type, "Logic", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(node.Kind) ? "Http" : node.Kind.Trim();
+        }
+
+        return type;
+    }
+
+    /// <summary>从 Start 出发做可达性分析（沿出边 BFS）。</summary>
+    private static HashSet<string> CollectReachable(FlowDslDocument dsl)
+    {
+        var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var start = dsl.Nodes.FirstOrDefault(x =>
+            string.Equals(x.Type, "Start", StringComparison.OrdinalIgnoreCase));
+        if (start == null)
+        {
+            return reachable;
+        }
+
+        var outgoing = dsl.Edges
+            .GroupBy(x => x.Source, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(e => e.Target).ToList(), StringComparer.OrdinalIgnoreCase);
+
+        var queue = new Queue<string>();
+        queue.Enqueue(start.Id);
+        reachable.Add(start.Id);
+
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!outgoing.TryGetValue(id, out var targets))
+            {
+                continue;
+            }
+
+            foreach (var target in targets)
+            {
+                if (reachable.Add(target))
+                {
+                    queue.Enqueue(target);
+                }
+            }
+        }
+
+        return reachable;
+    }
+
+    /// <summary>控制流原语（ForEach / Parallel）的结构校验：必需字段、枚举取值、子图完整性。</summary>
+    private static void ValidateControlNode(FlowDslNode node)
+    {
+        var type = ResolveNodeKind(node);
+
+        if (type.Equals("ForEach", StringComparison.OrdinalIgnoreCase) ||
+            type.Equals("Loop", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(node.ItemsPath))
+            {
+                throw new UserFriendlyException($"ForEach '{node.Id}' 必须配置 itemsPath。");
+            }
+
+            if (node.LoopBody is { } body)
+            {
+                ValidateSubGraph(node, "body", body);
+            }
+            else if (string.IsNullOrWhiteSpace(node.SubFlowKey))
+            {
+                throw new UserFriendlyException(
+                    $"ForEach '{node.Id}' 必须配置 body（内联子图）或 subFlowKey（已发布流程）。"
+                );
+            }
+
+            var maxIterations = node.MaxIterations ?? OrchestrationConsts.ForEachDefaultMaxIterations;
+            if (maxIterations < 1 || maxIterations > OrchestrationConsts.ForEachHardMaxIterations)
+            {
+                throw new UserFriendlyException(
+                    $"ForEach '{node.Id}' 的 maxIterations 必须在 1..{OrchestrationConsts.ForEachHardMaxIterations} 之间。"
+                );
+            }
+
+            if (node.Concurrency is { } concurrency &&
+                (concurrency < 1 || concurrency > OrchestrationConsts.ForEachMaxConcurrency))
+            {
+                throw new UserFriendlyException(
+                    $"ForEach '{node.Id}' 的 concurrency 必须在 1..{OrchestrationConsts.ForEachMaxConcurrency} 之间。"
+                );
+            }
+
+            var itemErrorMode = (node.ItemErrorMode ?? "failFast").Trim();
+            if (!itemErrorMode.Equals("failFast", StringComparison.OrdinalIgnoreCase) &&
+                !itemErrorMode.Equals("continueOnError", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UserFriendlyException(
+                    $"ForEach '{node.Id}' 的 itemErrorMode 只能是 failFast / continueOnError。"
+                );
+            }
+        }
+
+        if (type.Equals("Parallel", StringComparison.OrdinalIgnoreCase))
+        {
+            var branches = node.Branches ?? [];
+            if (branches.Count < 2)
+            {
+                throw new UserFriendlyException($"Parallel '{node.Id}' 至少需要 2 个分支。");
+            }
+
+            if (branches.Count > OrchestrationConsts.ParallelMaxBranches)
+            {
+                throw new UserFriendlyException(
+                    $"Parallel '{node.Id}' 分支数超过上限 {OrchestrationConsts.ParallelMaxBranches}。"
+                );
+            }
+
+            var refs = new List<string>();
+            foreach (var branch in branches)
+            {
+                var branchRef = (branch.Ref ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(branchRef))
+                {
+                    throw new UserFriendlyException($"Parallel '{node.Id}' 的分支 ref 不能为空。");
+                }
+
+                refs.Add(branchRef);
+
+                if (branch.Body is { } branchBody)
+                {
+                    ValidateSubGraph(node, $"branch:{branchRef}", branchBody);
+                }
+                else if (string.IsNullOrWhiteSpace(branch.SubFlowKey))
+                {
+                    throw new UserFriendlyException(
+                        $"Parallel '{node.Id}' 分支「{branchRef}」必须配置 body 或 subFlowKey。"
+                    );
+                }
+            }
+
+            if (refs.Distinct(StringComparer.OrdinalIgnoreCase).Count() != refs.Count)
+            {
+                throw new UserFriendlyException($"Parallel '{node.Id}' 的分支 ref 必须唯一。");
+            }
+
+            var joinMode = (node.JoinMode ?? "all").Trim();
+            if (!joinMode.Equals("all", StringComparison.OrdinalIgnoreCase) &&
+                !joinMode.Equals("any", StringComparison.OrdinalIgnoreCase) &&
+                !joinMode.Equals("allSettled", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UserFriendlyException(
+                    $"Parallel '{node.Id}' 的 joinMode 只能是 all / any / allSettled。"
+                );
+            }
+        }
+    }
+
+    /// <summary>
+    /// 内联子图校验。子图会被包装成独立 DSL 执行，所以必须自带 Start / End，
+    /// 并递归套用与主图完全相同的规则（含出边基数）。
+    /// </summary>
+    private static void ValidateSubGraph(FlowDslNode host, string scope, FlowDslSubGraphDsl body)
+    {
+        if (body.Nodes.Count == 0)
+        {
+            throw new UserFriendlyException($"节点 '{host.Id}' 的「{scope}」子图为空。");
+        }
+
+        if (body.Nodes.Count(x => string.Equals(x.Type, "Start", StringComparison.OrdinalIgnoreCase)) != 1)
+        {
+            throw new UserFriendlyException($"节点 '{host.Id}' 的「{scope}」子图必须包含恰好 1 个 Start 节点。");
+        }
+
+        if (body.Nodes.All(x => !string.Equals(x.Type, "End", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new UserFriendlyException($"节点 '{host.Id}' 的「{scope}」子图必须包含至少 1 个 End 节点。");
+        }
+
+        if (body.Nodes.Select(x => x.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != body.Nodes.Count)
+        {
+            throw new UserFriendlyException($"节点 '{host.Id}' 的「{scope}」子图节点 Id 必须唯一。");
+        }
+
+        ValidateDsl(
+            new FlowDslDocument
+            {
+                Version = OrchestrationConsts.DslVersion,
+                Nodes = body.Nodes,
+                Edges = body.Edges
+            }
+        );
     }
 
     private sealed class NullCurrentUser : Volo.Abp.Users.ICurrentUser

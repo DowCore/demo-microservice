@@ -334,6 +334,50 @@ public class FlowDslNode
     /// <summary>SubFlow：被调用的已发布逻辑编码（flowKey）</summary>
     public string? SubFlowKey { get; set; }
 
+    // ---- 控制流原语：ForEach / Parallel（v1.2）----
+
+    /// <summary>
+    /// ForEach / While：待迭代数组的来源路径（如 input.lines / results.prep.items）。
+    /// 解析结果必须是 array；空数组直接产出 0 次迭代，不算失败。
+    /// </summary>
+    public string? ItemsPath { get; set; }
+
+    /// <summary>ForEach：循环项变量名，默认 item。循环体内以 <c>item</c> / <c>{{item.sku}}</c> 引用。</summary>
+    public string? ItemVar { get; set; }
+
+    /// <summary>ForEach：下标变量名，默认 index（从 0 起）。</summary>
+    public string? IndexVar { get; set; }
+
+    /// <summary>ForEach：最大迭代次数上限，默认 1000（防失控）。超出即失败。</summary>
+    public int? MaxIterations { get; set; }
+
+    /// <summary>
+    /// ForEach：单项失败策略。
+    /// failFast（默认）：任一项失败即终止整轮并向上冒泡；
+    /// continueOnError：跳过失败项继续，末尾汇总 failed[]。
+    /// </summary>
+    public string? ItemErrorMode { get; set; }
+
+    /// <summary>ForEach：并发度，默认 1（串行）。&gt;1 时按窗口并发执行，要求循环体幂等。</summary>
+    public int? Concurrency { get; set; }
+
+    /// <summary>ForEach：内联循环体（与 SubFlowKey 二选一；两者都有时 LoopBody 优先）。</summary>
+    public FlowDslSubGraphDsl? LoopBody { get; set; }
+
+    /// <summary>
+    /// Parallel（WHEN）汇合模式：
+    /// all（默认）：全部成功才继续，任一失败即失败；
+    /// any：首个成功即用，其余分支取消；
+    /// allSettled：等全部结束（含失败），由下游自行判读。
+    /// </summary>
+    public string? JoinMode { get; set; }
+
+    /// <summary>Parallel：单分支执行超时（毫秒），默认继承 TimeoutMs。</summary>
+    public int? BranchTimeoutMs { get; set; }
+
+    /// <summary>Parallel（WHEN）分支列表，至少 2 条。各分支并发执行，产出按 Ref 汇合。</summary>
+    public List<FlowDslBranchDsl>? Branches { get; set; }
+
     public string? ResolveDataSourceId()
     {
         if (!string.IsNullOrWhiteSpace(DataSourceId))
@@ -415,6 +459,43 @@ public class FlowDslEdge
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<FlowConditionItemDsl>? Items { get; set; }
+}
+
+/// <summary>
+/// 内联子图：ForEach 的循环体 / Parallel 的分支体。
+/// 自带 Start/End，运行时作为独立 mini-flow 执行（共享父上下文快照，产出合并回父 results）。
+/// </summary>
+public class FlowDslSubGraphDsl
+{
+    public List<FlowInputParameterDsl> Inputs { get; set; } = [];
+
+    public List<FlowDslNode> Nodes { get; set; } = [];
+
+    public List<FlowDslEdge> Edges { get; set; } = [];
+}
+
+/// <summary>Parallel 的单个分支。SubFlowKey 与 Body 二选一（Body 优先）。</summary>
+public class FlowDslBranchDsl
+{
+    /// <summary>结果键。汇合后写入 results.{parallelRef}.{Ref}</summary>
+    public string Ref { get; set; } = null!;
+
+    /// <summary>分支调用的已发布流程编码</summary>
+    public string? SubFlowKey { get; set; }
+
+    /// <summary>分支内联子图</summary>
+    public FlowDslSubGraphDsl? Body { get; set; }
+
+    public List<FlowNodeBindingDsl>? Inputs { get; set; }
+
+    /// <summary>分支级超时（毫秒）</summary>
+    public int? TimeoutMs { get; set; }
+
+    /// <summary>
+    /// joinMode=all 时该分支是否允许失败。true = 失败不影响整体，仅记录到 failed[]。
+    /// joinMode=any 时忽略。joinMode=allSettled 时全部视为 optional。
+    /// </summary>
+    public bool Optional { get; set; }
 }
 
 /// <summary>

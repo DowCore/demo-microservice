@@ -6,27 +6,27 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Seq" Version="13.5.3" />
-    <PackageReference Include="Aspire.StackExchange.Redis" Version="13.5.3" />
-    <PackageReference Include="Aspire.StackExchange.Redis.DistributedCaching" Version="13.5.3" />
-    <PackageReference Include="DistributedLock.Redis" Version="1.1.1" />
+    <PackageReference Include="Aspire.Seq" />
+    <PackageReference Include="Aspire.StackExchange.Redis" />
+    <PackageReference Include="Aspire.StackExchange.Redis.DistributedCaching" />
+    <PackageReference Include="DistributedLock.Redis" />
     <!-- Override Aspire's dependencies with compatible versions for .NET 10 -->
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.12" />
-    <PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
-    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
-    <PackageReference Include="Volo.Abp.AspNetCore.Mvc.UI.MultiTenancy" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.AspNetCore.Serilog" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Autofac" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.BackgroundJobs.RabbitMq" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Caching.StackExchangeRedis" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.DistributedLocking" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.EventBus.RabbitMQ" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.FeatureManagement.Domain" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.MultiTenancy" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.PermissionManagement.Domain" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.SettingManagement.Domain" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Swashbuckle" Version="10.6.0" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
+    <PackageReference Include="Serilog.Sinks.Async" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Mvc.UI.MultiTenancy" />
+    <PackageReference Include="Volo.Abp.AspNetCore.Serilog" />
+    <PackageReference Include="Volo.Abp.Autofac" />
+    <PackageReference Include="Volo.Abp.BackgroundJobs.RabbitMq" />
+    <PackageReference Include="Volo.Abp.Caching.StackExchangeRedis" />
+    <PackageReference Include="Volo.Abp.DistributedLocking" />
+    <PackageReference Include="Volo.Abp.EventBus.RabbitMQ" />
+    <PackageReference Include="Volo.Abp.FeatureManagement.Domain" />
+    <PackageReference Include="Volo.Abp.MultiTenancy" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.Domain" />
+    <PackageReference Include="Volo.Abp.SettingManagement.Domain" />
+    <PackageReference Include="Volo.Abp.Swashbuckle" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Meta.Dow.Shared\Meta.Dow.Shared.csproj" />

@@ -531,6 +531,9 @@ public class FormDefinitionDto : EntityDto<Guid>
 
     public int Status { get; set; }
 
+    /// <summary>已发布版本号（0 = 从未发布）。</summary>
+    public int SchemaVersion { get; set; }
+
     public string? SourceResourceCode { get; set; }
 
     public FormDef Schema { get; set; } = new();
@@ -601,6 +604,9 @@ public class WorkflowDefinitionDto : EntityDto<Guid>
     public string? Description { get; set; }
 
     public int Status { get; set; }
+
+    /// <summary>已发布版本号（0 = 从未发布）。</summary>
+    public int Version { get; set; }
 
     public string? FormRef { get; set; }
 
@@ -729,6 +735,12 @@ public class WorkflowInstanceDto : EntityDto<Guid>
     public string StarterUserName { get; set; } = "";
 
     public string RecordJson { get; set; } = "{}";
+
+    /// <summary>启动时对应的流程定义版本（0 = 定义早已发布之前的历史单据）。</summary>
+    public int DefinitionVersion { get; set; }
+
+    /// <summary>启动时绑定的表单版本。</summary>
+    public int FormSchemaVersion { get; set; }
 
     public string ProcessSnapshotJson { get; set; } = "{}";
 

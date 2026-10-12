@@ -10,6 +10,7 @@ using Meta.Dow.MultiTenancy;
 using Meta.Dow.SaaS.MongoDB;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc.UI.MultiTenancy;
+using Volo.Abp.DistributedLocking;
 using Volo.Abp.Modularity;
 using Volo.Abp.VirtualFileSystem;
 
@@ -23,6 +24,7 @@ namespace Meta.Dow.SaaS;
 [DependsOn(typeof(SaaSHttpApiModule))]
 [DependsOn(typeof(MetaDowMicroserviceModule))]
 [DependsOn(typeof(MetaDowServiceDefaultsModule))]
+[DependsOn(typeof(AbpDistributedLockingModule))]
 public class SaaSHttpApiHostModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
@@ -31,6 +33,9 @@ public class SaaSHttpApiHostModule : AbpModule
         var hostingEnvironment = context.Services.GetHostingEnvironment();
 
         context.ConfigureMicroservice(MetaDowNames.SaaSApi);
+
+        // 低代码调度器需要跨实例互斥：复用 Hosting.Shared 的 Redis 锁提供者（未配置 Redis 时回退进程内锁）。
+        context.ConfigureDistributedLocking(context.Services.GetConfiguration());
 
         if (hostingEnvironment.IsDevelopment())
         {

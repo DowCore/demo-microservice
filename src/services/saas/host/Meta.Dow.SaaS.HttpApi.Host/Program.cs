@@ -29,6 +29,7 @@ public static class Program
             await builder.AddApplicationAsync<SaaSHttpApiHostModule>().ConfigureAwait(false);
 
             var app = builder.Build();
+            app.MapDefaultEndpoints();
 
             await app.InitializeApplicationAsync().ConfigureAwait(false);
 

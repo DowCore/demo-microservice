@@ -22,19 +22,28 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
     private readonly IRepository<WorkflowDefinition, Guid> _definitions;
     private readonly IRepository<WorkflowInstance, Guid> _instances;
     private readonly IRepository<WorkflowTask, Guid> _tasks;
+    private readonly IRepository<FormDefinition, Guid> _forms;
     private readonly IPublishedFlowInvoker _flows;
+    private readonly IWorkflowOrgResolver _orgResolver;
+    private readonly IWorkflowNotifier _notifier;
 
     public WorkflowRuntimeAppService(
         IRepository<WorkflowDefinition, Guid> definitions,
         IRepository<WorkflowInstance, Guid> instances,
         IRepository<WorkflowTask, Guid> tasks,
-        IPublishedFlowInvoker flows
+        IRepository<FormDefinition, Guid> forms,
+        IPublishedFlowInvoker flows,
+        IWorkflowOrgResolver orgResolver,
+        IWorkflowNotifier notifier
     )
     {
         _definitions = definitions;
         _instances = instances;
         _tasks = tasks;
+        _forms = forms;
         _flows = flows;
+        _orgResolver = orgResolver;
+        _notifier = notifier;
     }
 
     [Authorize(OrchestrationPermissions.Workflows.Default)]
@@ -53,6 +62,14 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             true
         );
 
+        // W9/F4：记录启动时对应的定义版本与表单版本，使「这一单跑的是第几版」可回答。
+        var formSchemaVersion = 0;
+        if (!string.IsNullOrWhiteSpace(definition.FormRef))
+        {
+            var form = await _forms.FirstOrDefaultAsync(x => x.Code == definition.FormRef);
+            formSchemaVersion = form?.SchemaVersion ?? 0;
+        }
+
         var instance = new WorkflowInstance(
             GuidGenerator.Create(),
             definition.Code,
@@ -60,7 +77,9 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             recordJson,
             user,
             CurrentTenant.Id,
-            definition.ProcessJson
+            definition.ProcessJson,
+            definition.Version,
+            formSchemaVersion
         );
         AppendHistoryRecord(instance, "start", "开始", user, "start", "发起申请");
         await _instances.InsertAsync(instance, autoSave: true);
@@ -274,6 +293,9 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             throw new UserFriendlyException("这个节点必须填写处理意见");
         }
 
+        // W8：本节点标记为 required 的字段，在通过前必须已有值。
+        EnforceRequiredFields(node.FieldPermissions, instance.RecordJson);
+
         task.Approve(input.Opinion);
         await _tasks.UpdateAsync(task, autoSave: true);
         AppendHistoryRecord(instance, node.NodeId, node.Name, user, "approve", input.Opinion);
@@ -348,20 +370,10 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             }
 
             if (string.Equals(node.Type, "start", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(node.Type, "condition", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(node.Type, "cc", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(node.Type, "condition", StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(node.Type, "cc", StringComparison.OrdinalIgnoreCase))
-                {
-                    await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
-                    await CreateTasksAsync(instance, node, notifyOnly: true);
-                    await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
-                }
-                else
-                {
-                    await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
-                    await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
-                }
+                await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
+                await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
 
                 var (next, missed) = await ChooseNext(graph, node, instance);
                 if (missed)
@@ -375,11 +387,47 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                 continue;
             }
 
-            await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
-            await CreateTasksAsync(instance, node, notifyOnly: false);
-            instance.MoveTo(node.NodeId);
-            await _instances.UpdateAsync(instance, autoSave: true);
-            return;
+            if (string.Equals(node.Type, "cc", StringComparison.OrdinalIgnoreCase))
+            {
+                await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
+                var recipients = await CreateTasksAsync(instance, node, notifyOnly: true);
+                // 抄送不再是"只记不送"：经消息通道广播通知，失败只告警、不阻断流程。
+                await _notifier.NotifyCcAsync(
+                    instance.Id,
+                    instance.WorkflowCode,
+                    instance.FormRef,
+                    node.NodeId,
+                    string.IsNullOrWhiteSpace(node.Name) ? node.NodeId : node.Name,
+                    instance.RecordJson,
+                    recipients.Where(p => !string.IsNullOrWhiteSpace(p.UserName)).Select(p => p.UserName!).ToList(),
+                    recipients.Where(p => !string.IsNullOrWhiteSpace(p.Role)).Select(p => p.Role!).ToList(),
+                    CurrentTenant.Id
+                );
+                await InvokeFlowAsync(node.AfterFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
+
+                var (ccNext, ccMissed) = await ChooseNext(graph, node, instance);
+                if (ccMissed)
+                {
+                    instance.Complete("condition-rejected");
+                    await _instances.UpdateAsync(instance, autoSave: true);
+                    return;
+                }
+
+                node = ccNext;
+                continue;
+            }
+
+            if (string.Equals(node.Type, "approver", StringComparison.OrdinalIgnoreCase))
+            {
+                await InvokeFlowAsync(node.BeforeFlowKey, instance.FormRef, instance.RecordJson, node.NodeId, null, true);
+                await CreateTasksAsync(instance, node, notifyOnly: false);
+                instance.MoveTo(node.NodeId);
+                await _instances.UpdateAsync(instance, autoSave: true);
+                return;
+            }
+
+            // 未知节点类型：不再按审批节点兜底执行，显式报错，避免配置错误被静默吞掉。
+            throw new UserFriendlyException($"流程节点「{node.NodeId}」的类型「{node.Type}」不支持");
         }
 
         instance.Complete("approved");
@@ -403,27 +451,44 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             var only = edges[0];
             if (!EdgeHasCondition(only) || await EdgeMatchesAsync(only, instance, node.NodeId, cache))
             {
-                return (graph.Nodes.GetValueOrDefault(only.TargetId), false);
+                return (RequireTargetNode(graph, node, only.TargetId), false);
             }
 
             return (null, true);
         }
 
-        foreach (var edge in edges.Where(EdgeHasCondition))
+        // W6：多条件出边时按显式优先级（数字小者优先）取第一个命中；同优先级按画布连线顺序兜底。
+        // 不再靠「数组顺序」这一隐式规则——拖动连线顺序会静默改变审批走向。
+        foreach (var edge in edges.Where(EdgeHasCondition).OrderBy(e => e.Priority))
         {
             if (await EdgeMatchesAsync(edge, instance, node.NodeId, cache))
             {
-                return (graph.Nodes.GetValueOrDefault(edge.TargetId), false);
+                return (RequireTargetNode(graph, node, edge.TargetId), false);
             }
         }
 
-        var fallback = edges.FirstOrDefault(edge => !EdgeHasCondition(edge));
+        var fallback = edges.FirstOrDefault(edge => edge.IsDefault)
+            ?? edges.FirstOrDefault(edge => !EdgeHasCondition(edge));
         if (fallback != null)
         {
-            return (graph.Nodes.GetValueOrDefault(fallback.TargetId), false);
+            return (RequireTargetNode(graph, node, fallback.TargetId), false);
         }
 
         return (null, true);
+    }
+
+    /// <summary>
+    /// 取连线目标节点；目标不存在时显式报错（失败关闭）。
+    /// 早前实现返回 null，会让 EnterAsync 直接 Complete("approved")——即打错目标的连线导致单据被静默通过。
+    /// </summary>
+    private static WfProcessNode RequireTargetNode(WfGraph graph, WfProcessNode node, string targetId)
+    {
+        if (graph.Nodes.TryGetValue(targetId, out var target) && target != null)
+        {
+            return target;
+        }
+
+        throw new UserFriendlyException($"节点「{node.NodeId}」的连线指向不存在的节点「{targetId}」");
     }
 
     private static bool EdgeHasCondition(WfEdge edge) =>
@@ -453,15 +518,28 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         );
     }
 
-    private async Task CreateTasksAsync(WorkflowInstance instance, WfProcessNode node, bool notifyOnly)
+    private async Task<List<AssigneePick>> CreateTasksAsync(WorkflowInstance instance, WfProcessNode node, bool notifyOnly)
     {
         var people = await ResolveAssigneesAsync(node, instance);
+
+        // §6.6 审批人去重：同一节点同一人（或同一角色）只保留一条待办。
+        people = people
+            .DistinctBy(p => (p.UserName?.ToLowerInvariant(), p.Role?.ToLowerInvariant()))
+            .ToList();
+
         if (people.Count == 0)
         {
-            var fallback = (node.EmptyFallback ?? "admin").Trim().ToLowerInvariant();
+            // 抄送不挡流程：没有抄送对象就直接跳过，不套用 EmptyFallback。
+            if (notifyOnly)
+            {
+                return [];
+            }
+
+            // W7 失败关闭：默认不再静默派给 admin，宁可阻断并要求配置者修流程。
+            var fallback = (node.EmptyFallback ?? "error").Trim().ToLowerInvariant();
             if (fallback == "skip")
             {
-                return;
+                return [];
             }
 
             if (fallback == "admin")
@@ -470,7 +548,25 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             }
             else
             {
-                throw new UserFriendlyException($"节点「{node.Name}」没有办理人");
+                throw new UserFriendlyException($"节点「{(string.IsNullOrWhiteSpace(node.Name) ? node.NodeId : node.Name)}」没有办理人");
+            }
+        }
+
+        if (!notifyOnly)
+        {
+            // 驳回重办等场景：同一节点上已有「未办结」待办的人不再重复建单（已办结的允许重新建）。
+            var existingUsers = (await _tasks.GetQueryableAsync())
+                .Where(x => x.InstanceId == instance.Id && x.NodeId == node.NodeId && x.Kind == "approve" && (x.Status == "pending" || x.Status == "waiting"))
+                .ToList()
+                .Select(x => x.AssigneeUserName ?? "")
+                .Where(x => x.Length > 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            people = people
+                .Where(p => string.IsNullOrWhiteSpace(p.UserName) || !existingUsers.Contains(p.UserName!))
+                .ToList();
+            if (people.Count == 0)
+            {
+                return [];
             }
         }
 
@@ -497,6 +593,8 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             );
             await _tasks.InsertAsync(task, autoSave: true);
         }
+
+        return people;
     }
 
     private async Task<List<AssigneePick>> ResolveAssigneesAsync(WfProcessNode node, WorkflowInstance instance)
@@ -521,10 +619,15 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                     true
                 );
                 return ReadUsersFromFlow(data).Select(name => new AssigneePick(name, null)).ToList();
-            case "manager":
-                return [new AssigneePick(null, string.IsNullOrWhiteSpace(value) ? "manager" : value)];
-            default:
+            case "role":
+                // 一个名额：角色内任一人可办。角色码由 Matches(user, roles) 在取待办时判定。
                 return string.IsNullOrWhiteSpace(value) ? [] : [new AssigneePick(null, value)];
+            case "manager":
+                // §6.1 接组织树：解析发起人直属部门主管（角色码可留空，默认 manager）。
+                var manager = await _orgResolver.ResolveDirectManagerAsync(instance.StarterUserName, value);
+                return string.IsNullOrWhiteSpace(manager) ? [] : [new AssigneePick(manager, null)];
+            default:
+                throw new UserFriendlyException($"节点「{(string.IsNullOrWhiteSpace(node.Name) ? node.NodeId : node.Name)}」的办理人规则「{type}」不支持");
         }
     }
 
@@ -777,7 +880,8 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         graph ??= LoadGraph(
             !string.IsNullOrWhiteSpace(instance.ProcessSnapshotJson) && instance.ProcessSnapshotJson != "{}"
                 ? instance.ProcessSnapshotJson
-                : (await _definitions.FirstOrDefaultAsync(x => x.Code == instance.WorkflowCode))?.ProcessJson ?? "{}"
+                : (await _definitions.FirstOrDefaultAsync(x => x.Code == instance.WorkflowCode))?.ProcessJson ?? "{}",
+            strict: false
         );
         var tasks = (await _tasks.GetQueryableAsync())
             .Where(x => x.InstanceId == instance.Id)
@@ -793,6 +897,8 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             CurrentNodeId = instance.CurrentNodeId,
             StarterUserName = instance.StarterUserName,
             RecordJson = instance.RecordJson,
+            DefinitionVersion = instance.DefinitionVersion,
+            FormSchemaVersion = instance.FormSchemaVersion,
             ProcessSnapshotJson = instance.ProcessSnapshotJson,
             HistoryJson = instance.HistoryJson,
             Tasks = tasks.Select(task => MapTask(task, instance, graph)).ToList(),
@@ -835,7 +941,7 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
 
         try
         {
-            return LoadGraph(snapshot);
+            return LoadGraph(snapshot, strict: false);
         }
         catch (UserFriendlyException)
         {
@@ -843,8 +949,12 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         }
     }
 
-    /// <summary>只读和隐藏字段不接受办理人补丁。未配置的字段按表单本身的可写性，由前端决定是否提交。</summary>
-    private static Dictionary<string, object?> FilterRecordPatch(
+    /// <summary>
+    /// 按节点字段权限过滤办理人提交的补丁。
+    /// read/hide 拒绝写入；write/required 放行；未知权限值显式报错（失败关闭，而不是静默放行）。
+    /// 未配置权限的字段按表单本身的可写性，由前端决定是否提交。
+    /// </summary>
+    internal static Dictionary<string, object?> FilterRecordPatch(
         Dictionary<string, string>? permissions,
         Dictionary<string, object?> patch
     )
@@ -852,17 +962,53 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         var allowed = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in patch)
         {
-            if (permissions != null &&
-                permissions.TryGetValue(pair.Key, out var permission) &&
-                permission is "read" or "hide")
+            if (permissions != null && permissions.TryGetValue(pair.Key, out var raw))
+            {
+                var permission = (raw ?? string.Empty).Trim().ToLowerInvariant();
+                switch (permission)
+                {
+                    case "":
+                    case "write":
+                    case "required":
+                        allowed[pair.Key] = pair.Value;
+                        break;
+                    case "read":
+                    case "hide":
+                        // 只读 / 隐藏：忽略该字段的补丁。
+                        break;
+                    default:
+                        throw new UserFriendlyException($"表单字段「{pair.Key}」的权限值「{raw}」无效（仅支持 read/write/hide/required）");
+                }
+            }
+            else
+            {
+                allowed[pair.Key] = pair.Value;
+            }
+        }
+
+        return allowed;
+    }
+
+    /// <summary>本节点标记为 required 的字段，提交时必须已有非空值。</summary>
+    private static void EnforceRequiredFields(Dictionary<string, string>? permissions, string recordJson)
+    {
+        if (permissions is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var pair in permissions)
+        {
+            if (!string.Equals(pair.Value?.Trim(), "required", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            allowed[pair.Key] = pair.Value;
+            if (string.IsNullOrWhiteSpace(ReadPath(recordJson, pair.Key)))
+            {
+                throw new UserFriendlyException($"表单字段「{pair.Key}」在本节点必填，请填写后再提交");
+            }
         }
-
-        return allowed;
     }
 
     private static void AppendHistoryRecord(
@@ -934,7 +1080,12 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         }
     }
 
-    private static WfGraph LoadGraph(string json)
+    /// <summary>
+    /// 解析流程图。strict=true 时对坏数据（空 id / 重复 id / 端点缺失 / 环）显式报错（W5），
+    /// 而不是静默覆盖或跳过——否则一个写坏的流程会「解析成功」但节点少了一半。
+    /// 仅用于历史快照的展示场景才传 strict:false。
+    /// </summary>
+    private static WfGraph LoadGraph(string json, bool strict = true)
     {
         var graph = new WfGraph();
         JsonElement root;
@@ -954,7 +1105,16 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             foreach (var item in nodesEl.EnumerateArray())
             {
                 var id = ReadJsonString(item, "id");
-                if (string.IsNullOrWhiteSpace(id)) continue;
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    if (strict)
+                    {
+                        throw new UserFriendlyException("流程定义里存在缺少 id 的节点");
+                    }
+
+                    continue;
+                }
+
                 WfProcessNode node;
                 if (item.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
                 {
@@ -971,6 +1131,17 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                     node.Type = ReadJsonString(item, "type");
                 }
 
+                if (graph.Nodes.ContainsKey(id))
+                {
+                    if (strict)
+                    {
+                        throw new UserFriendlyException($"流程定义里存在重复的节点 id「{id}」");
+                    }
+
+                    graph.Nodes[id] = node;
+                    continue;
+                }
+
                 graph.Nodes[id] = node;
             }
 
@@ -980,25 +1151,38 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                 {
                     var source = ReadJsonString(edge, "source");
                     var target = ReadJsonString(edge, "target");
-                    if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target)) continue;
+                    if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+                    {
+                        if (strict)
+                        {
+                            throw new UserFriendlyException("流程定义里存在缺少起点或终点的连线");
+                        }
+
+                        continue;
+                    }
+
                     string? field = null;
                     string? op = null;
                     string? value = null;
                     List<WfConditionItem>? items = null;
                     string? combine = null;
+                    var priority = 0;
+                    var isDefault = false;
                     if (edge.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
                     {
                         field = ReadJsonString(data, "conditionField");
                         op = ReadJsonString(data, "conditionOp");
                         value = ReadJsonString(data, "conditionValue");
                         combine = ReadJsonString(data, "combine");
+                        priority = ReadJsonInt(data, "priority");
+                        isDefault = ReadJsonBool(data, "isDefault");
                         if (data.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
                         {
                             items = JsonSerializer.Deserialize<List<WfConditionItem>>(itemsEl.GetRawText(), JsonOpts);
                         }
                     }
 
-                    graph.Link(source, target, field, op, value, items, combine);
+                    graph.Link(source, target, field, op, value, items, combine, priority, isDefault);
                 }
             }
 
@@ -1007,21 +1191,39 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
 
         var tree = JsonSerializer.Deserialize<WfProcessNode>(json, JsonOpts)
             ?? throw new UserFriendlyException("流程定义无法解析");
-        FlattenTree(graph, tree);
+        FlattenTree(graph, tree, strict);
         return graph;
     }
 
-    private static void FlattenTree(WfGraph graph, WfProcessNode? node)
+    private static void FlattenTree(WfGraph graph, WfProcessNode? node, bool strict = true)
     {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         while (node != null)
         {
-            if (!string.IsNullOrWhiteSpace(node.NodeId))
+            if (string.IsNullOrWhiteSpace(node.NodeId))
             {
-                graph.Nodes[node.NodeId] = node;
-                if (node.ChildNode != null && !string.IsNullOrWhiteSpace(node.ChildNode.NodeId))
+                if (strict)
                 {
-                    graph.Link(node.NodeId, node.ChildNode.NodeId, null, null, null);
+                    throw new UserFriendlyException("流程定义里存在缺少 nodeId 的节点");
                 }
+
+                break;
+            }
+
+            if (!visited.Add(node.NodeId))
+            {
+                if (strict)
+                {
+                    throw new UserFriendlyException($"流程定义里存在环：节点「{node.NodeId}」被重复经过");
+                }
+
+                break;
+            }
+
+            graph.Nodes[node.NodeId] = node;
+            if (node.ChildNode != null && !string.IsNullOrWhiteSpace(node.ChildNode.NodeId))
+            {
+                graph.Link(node.NodeId, node.ChildNode.NodeId, null, null, null);
             }
 
             node = node.ChildNode;
@@ -1036,6 +1238,37 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         }
 
         return value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
+    }
+
+    private static int ReadJsonInt(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+        {
+            return 0;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var n) => n,
+            JsonValueKind.String when int.TryParse(value.GetString(), out var s) => s,
+            _ => 0,
+        };
+    }
+
+    private static bool ReadJsonBool(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+        {
+            return false;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(value.GetString(), out var b) && b,
+            _ => false,
+        };
     }
 
     private static string ReadField(string recordJson, string field) => ReadPath(recordJson, field);
@@ -1198,6 +1431,12 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         public string? ConditionValue { get; set; }
         public List<WfConditionItem> Items { get; set; } = [];
         public string? Combine { get; set; }
+
+        /// <summary>W6：条件分支优先级，数字小者优先。同一出节点的条件边应配置互不相同的优先级。</summary>
+        public int Priority { get; set; }
+
+        /// <summary>W6：显式默认分支（无条件兜底）。</summary>
+        public bool IsDefault { get; set; }
     }
 
     private sealed class WfGraph
@@ -1213,7 +1452,9 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
             string? op,
             string? value,
             List<WfConditionItem>? items = null,
-            string? combine = null
+            string? combine = null,
+            int priority = 0,
+            bool isDefault = false
         )
         {
             if (!Outgoing.TryGetValue(source, out var list))
@@ -1230,6 +1471,8 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
                 ConditionValue = value,
                 Items = items ?? [],
                 Combine = combine,
+                Priority = priority,
+                IsDefault = isDefault,
             });
         }
     }
@@ -1253,6 +1496,8 @@ public class WorkflowRuntimeAppService : SaaSAppService, IWorkflowRuntimeAppServ
         public WfConditionBlock? LeaveCondition { get; set; }
         public WfProcessNode? ChildNode { get; set; }
         public Dictionary<string, string> FieldPermissions { get; set; } = [];
-        public string EmptyFallback { get; set; } = "admin";
+
+        /// <summary>候选人为空时的策略：admin（转管理员）/ skip（跳过）/ error（报错阻断）。默认 error，失败关闭。</summary>
+        public string EmptyFallback { get; set; } = "error";
     }
 }

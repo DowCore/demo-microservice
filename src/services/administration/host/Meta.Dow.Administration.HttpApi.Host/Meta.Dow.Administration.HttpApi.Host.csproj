@@ -19,6 +19,6 @@
     <ProjectReference Include="..\..\src\Meta.Dow.Administration.MongoDB\Meta.Dow.Administration.MongoDB.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" />
   </ItemGroup>
 </Project>

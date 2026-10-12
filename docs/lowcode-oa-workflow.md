@@ -101,7 +101,7 @@
 | `user` | `assigneeValue` 是用户名 |
 | `starter` | 发起人用户名 |
 | `role` | 一个名额，角色内任一人可办。角色码为空则报「没有办理人」 |
-| `manager` | 当前没有部门树，按角色码匹配。`assigneeValue` 为空时用角色 `manager` |
+| `manager` | 按发起人所在组织单元解析**直属主管**：优先本级 OU，找不到沿父级向上，取持有指定角色（默认 `manager`）的成员；`assigneeValue` 为空时用角色 `manager` |
 | `formField` | `record` 里该字段的字符串，或字符串数组 |
 | `flow` | 调用 `assigneeFlowKey`，解析用户名数组或 `{ users: [] }` |
 
@@ -110,11 +110,14 @@
 未落地（2026-10 核对更新）：
 
 - ~~同一张表在不同节点上的字段只读/可编辑~~ → ✅ **已落地**：`WfProcessNode.FieldPermissions`（read/write/hide/required 矩阵），办理时 `FilterRecordPatch(node.FieldPermissions, input.RecordPatch)` 按权限过滤补丁。详见 [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) §3.3。仍然是同一张表，定义里不拆表。
-- 直属部门主管 `manager` 解析：当前 `ResolveAssigneesAsync` 的 `case "manager"` 返回 `AssigneePick(null, 角色码)`，**按角色匹配，未接组织树**。需 Identity 组织机构接口落地后改为查 `AbpOrganizationUnits` 找直属主管。
-- `assigneeType=role` 无显式 case 分支：switch 默认值是 `role`，但落到 `default` 把 value 当角色码传 `AssigneePick(null, value)`。语义可用（角色=一个名额，任一人可办），但分支不显式，建议补 `case "role"` 与 `manager` 区分语义。
-- 画布上的条件节点作为独立节点类型的 UI：当前条件挂在连线上（多条出线按条件选择，无条件的线为默认分支），独立 `condition` 节点形态仍在规划。接收节点上的离开条件 `leaveCondition` 已落地，与连线条件同构。
+- ~~直属部门主管 `manager` 解析~~ → ✅ **已落地（2026-10 补充）**：新增 `WorkflowOrgResolver`，按发起人直属组织单元（优先本级、沿父级向上）解析持有指定角色（默认 `manager`）的主管，`ResolveAssigneesAsync` 的 `case "manager"` 已调用它。
+- ~~`assigneeType=role` 无显式 case 分支~~ → ✅ **已落地（2026-10 补充）**：补显式 `case "role"`；未知办理人类型改为显式报错。
+- ~~候选人为空默认派给 admin~~ → ✅ **已落地（2026-10 补充）**：`EmptyFallback` 默认改 `error`（失败关闭），设计器同步。
+- ~~审批人去重~~ → ✅ **已落地（2026-10 补充）**：同一节点同一人（或同一角色）只建一条待办；驳回重办时已有未取消待办的人不再重复建单。
+- ~~抄送只记不送~~ → ✅ **已落地（2026-10 补充）**：cc 节点经 fanout 广播交换机派发 `workflow.cc` 通知消息，失败仅告警不阻断流程。
+- 画布上的条件节点作为独立节点类型的 UI：当前条件挂在连线上（多条出线按**优先级**选择，无优先级者排后，`IsDefault` 或无条件的线为默认分支），独立 `condition` 节点形态仍在规划。接收节点上的离开条件 `leaveCondition` 已落地，与连线条件同构。
 - 编排引擎节点不全：独立 `Sql` 节点、`Switch`、并行、循环节点未实现，SQL 经 Code 节点 `db.*` 间接实现。见 [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) §11.3。
-- 前端审批时间轴 Timeline：后端 `HistoryJson` 已提供 NodeId/OperatorUserName/Action/Opinion/ExecutionTime 等数据，前端 Timeline 组件未渲染（前端在 `vue-demo`，不在本仓库）。
+- 前端审批时间轴 Timeline：✅ **已落地**，前端 `workflows/index.vue` 已按 `task.historyJson` 渲染流转记录。
 
 接口：`POST /api/orchestration/workflow-runtime/start`，`GET .../my-tasks`，`POST .../tasks/{id}/complete`。权限沿用 `Orchestration.Workflows`。前端在 OA 审批流列表，不另开菜单。
 
@@ -137,3 +140,13 @@
 | W9 | 无版本号/版本表；`Code` 无唯一索引；实例只存 `FormRef` 不存表单快照 | 无法回答“实例对应第几版”；流程冻结了、表单没冻结 |
 
 **止血优先项**：W2 目标不存在改为报错 → W3 未知类型抛异常 → W7 `EmptyFallback` 默认改 `error` → W8 未知权限值拒绝。这四项改动集中、风险可控，且正好是当前测试为空时最值得先补的防线。
+
+> **状态更新（2026-10「OA 审批闭环 P1」）**：W1/W2/W3/W7/W8 已修复，并顺带落地 §6.1 组织树主管、§6.2 抄送通知、§6.6 审批人去重。详见 [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) §8.4。
+
+> **状态更新（2026-10「全量缺陷清缴」）**：**W1–W9 已全部修复**，§8.2 无遗留。
+> - **W4**：`DefaultProcessJson()` 改为直接产出 `nodes/edges`，新建流程不再落在残废的 `childNode` 树格式。
+> - **W5**：新增 `LoadGraph(json, strict)` 失败关闭（重复 id / 缺端点 / 缺 `nodeId` 直接报错），`FlattenTree` 增加环检测。
+> - **W6**：连线新增 `Priority`（数字小者优先）与 `IsDefault`；`ChooseNext` 按优先级取首个命中，兜底取默认分支；发布校验新增同源条件边优先级去重。
+> - **W9**：`WorkflowDefinition.Version` + 发布递增；实例新增 `DefinitionVersion` / `FormSchemaVersion` 固化版本；`SaaSMongoDbModule` 建唯一索引 `TenantId + Code`（表单/流程/逻辑定义）。
+>
+> 详见 [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) §8.5。前端设计器连线属性面板已同步「分支优先级」「默认分支」。

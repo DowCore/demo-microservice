@@ -21,6 +21,9 @@ public class WorkflowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public int Status { get; protected set; } = AppResourceStatus.Draft;
 
+    /// <summary>已发布版本号。0 = 从未发布；每次发布 +1，用于回答「在途实例跑的是第几版」。</summary>
+    public int Version { get; protected set; }
+
     /// <summary>绑定的独立表单编码（FormDefinition.Code）</summary>
     public string? FormRef { get; protected set; }
 
@@ -74,28 +77,30 @@ public class WorkflowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
             : afterEndFlowKey.Trim();
     }
 
-    public void Publish() => Status = AppResourceStatus.Published;
+    /// <summary>发布：状态置为已发布并递增版本号（版本用于冻结「在途实例对应的定义版本」）。</summary>
+    public void Publish()
+    {
+        Status = AppResourceStatus.Published;
+        Version++;
+    }
 
+    /// <summary>
+    /// 默认流程（W4）：直接产出画布所用的 nodes/edges 格式。
+    /// 旧实现产出 childNode 链，该格式结构上无法表达多条带条件的出边，新建流程会落在一个「不能分支」的残废格式上。
+    /// 运行时仍兼容解析旧格式（向后兼容），但新建一律使用本格式。
+    /// </summary>
     public static string DefaultProcessJson() =>
         """
         {
-          "nodeId": "start",
-          "type": "start",
-          "name": "开始",
-          "childNode": {
-            "nodeId": "approver_1",
-            "type": "approver",
-            "name": "接收",
-            "assigneeType": "role",
-            "assigneeValue": "",
-            "opinion": "optional",
-            "multi": "single",
-            "childNode": {
-              "nodeId": "end",
-              "type": "end",
-              "name": "结束"
-            }
-          }
+          "nodes": [
+            { "id": "start", "type": "start", "data": { "nodeId": "start", "type": "start", "name": "开始" } },
+            { "id": "approver_1", "type": "approver", "data": { "nodeId": "approver_1", "type": "approver", "name": "接收", "assigneeType": "role", "assigneeValue": "", "opinion": "optional", "multi": "single" } },
+            { "id": "end", "type": "end", "data": { "nodeId": "end", "type": "end", "name": "结束" } }
+          ],
+          "edges": [
+            { "source": "start", "target": "approver_1", "data": { "priority": 0 } },
+            { "source": "approver_1", "target": "end", "data": { "priority": 0 } }
+          ]
         }
         """;
 }

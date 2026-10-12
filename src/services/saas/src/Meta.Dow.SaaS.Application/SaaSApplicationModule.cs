@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Meta.Dow.Administration;
 using Meta.Dow.SaaS.Orchestration;
 using Volo.Abp.Application;
 using Volo.Abp.AutoMapper;
@@ -11,7 +10,6 @@ namespace Meta.Dow.SaaS;
 [DependsOn(typeof(AbpAutoMapperModule))]
 [DependsOn(typeof(AbpDddApplicationModule))]
 [DependsOn(typeof(AbpTenantManagementApplicationModule))]
-[DependsOn(typeof(AdministrationApplicationModule))]
 [DependsOn(typeof(SaaSApplicationContractsModule))]
 [DependsOn(typeof(SaaSDomainModule))]
 public class SaaSApplicationModule : AbpModule

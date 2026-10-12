@@ -24,12 +24,12 @@
 | §3.3 | `EmptyFallback` 容错（admin/skip/error） | ✅ 已落地 | `WfProcessNode.EmptyFallback`，缺人时按策略处理 |
 | §3.4 | 审批时表单数据回写 `RecordPatch` | ✅ 已落地 | `CompleteAsync` 调 `FilterRecordPatch(node.FieldPermissions, input.RecordPatch)` 后合并到 `instance.RecordJson` |
 | §3.5 | 执行轨迹 `HistoryJson` | ✅ 已落地 | `WorkflowInstance.HistoryJson` 字段 + `CompleteAsync` 写入流转记录 |
-| §3.2 | 部门主管 `manager` 解析为**直属部门主管** | ⚠ **未真正落地** | `ResolveAssigneesAsync` 的 `case "manager"` 仍返回 `AssigneePick(null, 角色码)`，**未接组织树**。需 Identity 组织机构接口落地后改为查 `AbpOrganizationUnits` 直属主管 |
-| §3.2 | `assigneeType=role` 显式分支 | ⚠ **隐式实现** | `ResolveAssigneesAsync` 默认值是 `role`，但 switch 无显式 `case "role"`，落到 `default` 把 value 当角色码传 `AssigneePick(null, value)`。语义可用（角色=一个名额，任一人可办），但分支不显式，建议补 `case "role"` 与 `manager` 区分语义 |
+| §3.2 | 部门主管 `manager` 解析为**直属部门主管** | ✅ **已落地（2026-10 补充）** | 新增 `IWorkflowOrgResolver` / `WorkflowOrgResolver`，依托 ABP Identity 组织架构（`AbpOrganizationUnits`）解析发起人直属部门主管：优先本级 OU，找不到沿父级向上，取持有指定角色（默认 `manager`）的成员。`ResolveAssigneesAsync` 的 `case "manager"` 已改为调用它 |
+| §3.2 | `assigneeType=role` 显式分支 | ✅ **已落地（2026-10 补充）** | `ResolveAssigneesAsync` 补显式 `case "role"`；未知办理人类型改为显式报错，不再默默当角色码处理 |
 | §2 / §3 | 编排引擎节点不全：独立 `Sql` 节点、`Switch`、并行、循环 | ⚠ **未落地** | [FlowExecutor.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs) 节点 dispatch 仅覆盖 `start/end/log/assign/mask/throw/assert/condition/http/code/rabbitmqpublish/subflow/resourcecrud*`；SQL 经 Code 节点 `db.*` 间接实现；Switch/并行/循环见 [lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3 仍为规划 |
-| §3.5 | 前端审批时间轴 Timeline 渲染 | ⚠ **前端待补** | 后端 `HistoryJson` 已提供数据，前端 Timeline 组件未在本仓库（前端在 `vue-demo`） |
+| §3.5 | 前端审批时间轴 Timeline 渲染 | ✅ **已落地** | 前端 `vue-demo/apps/web-antd/src/views/orchestration/workflows/index.vue` 已按 `task.historyJson` 渲染流转记录（`actionLabel` 映射各动作），后端 `HistoryJson` 供数 |
 
-**结论**：§2 表单侧、§3 流程侧核心能力已落地；剩余缺口集中在①组织树未接入导致 `manager`/`role` 仍按角色码匹配、②编排引擎控制流原语（Switch/并行/循环/独立 Sql）不全、③前端时间轴未渲染。下方原文保留作为能力契约。
+**结论**：§2 表单侧、§3 流程侧核心能力已落地；§3.2 的 `manager` 组织树解析、`role` 显式分支、§3.5 前端时间轴均已补齐（见上方 ✅）。**§8.1/§8.2 所列 F1–F7、W1–W9 定义侧健壮性缺陷已全部修复**（分批见 §8.4、§8.5）。剩余真实缺口集中在编排引擎控制流原语（Switch/并行/循环/独立 Sql），见 §8.5.4。下方原文保留作为能力契约。
 
 ---
 
@@ -909,3 +909,335 @@ public class ButtonDef
 6. **明确双格式去留**：要么让 `DefaultProcessJson` 直接产出 `nodes/edges`，要么给树格式补 `Children` 支持多出边——不要长期养两套。
 
 > **与 §0 的关系**：§0 列的 §2/§3 能力确实“已落地”，但落地质量受本节 F/W 各项约束——例如 §3.3 的 `FieldPermissions` 虽已实现，却因 W8 在服务端 fail-open；§3.1 的流程快照虽已实现，却因 F4/W9 只冻结流程不冻结表单。补本节缺陷前，§0 的“✅”应理解为“已具备该入口，尚未通过健壮性验收”。
+
+### 8.4 本批次已修复项（2026-10「OA 审批闭环 P1」）
+
+以下缺陷本批次已改代码并编译通过（后端 `Meta.Dow.SaaS`，前端 `vue-demo`）。未列出的 W4/W5/W6/W9 与表单侧 F1–F7 已由后续批次补齐，见 **§8.5**。
+
+| 编号 | 修复内容 | 代码位置 |
+|:--:|:---|:---|
+| **W1** | 新增发布前结构校验器：节点 id 唯一且类型合法、start/end 唯一、非结束节点必须有出线、连线端点存在、无环、审批/抄送节点办理人完整、条件字段属于绑定表单。`PublishAsync` 调用它 | 新增 [WorkflowDefinitionValidator.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionValidator.cs)；[WorkflowDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionAppService.cs) `PublishAsync` |
+| **W2** | 连线目标节点不存在时**显式报错**，不再回落为 `Complete("approved")` | `WorkflowRuntimeAppService.RequireTargetNode`（`ChooseNext` 三处调用点） |
+| **W3** | `EnterAsync` 对 `approver` 显式处理，未知节点类型**抛异常**，不再按审批节点兜底执行 | `WorkflowRuntimeAppService.EnterAsync` |
+| **W7** | `EmptyFallback` 默认由 `admin` 改 `error`（失败关闭）；补显式 `case "role"`；未知办理人类型抛异常；发布校验同时校验 `multi` 枚举 | `WorkflowRuntimeAppService`（`WfProcessNode.EmptyFallback`、`CreateTasksAsync`、`ResolveAssigneesAsync`） |
+| **W8** | `FilterRecordPatch` 对未知权限值**显式报错**（不再静默放行）；新增 `EnforceRequiredFields` 在通过前校验 `required` 字段非空；`write`/`required` 正常放行 | `WorkflowRuntimeAppService.FilterRecordPatch` / `EnforceRequiredFields` |
+| **§6.1** | `manager` 接组织树：新增 `IWorkflowOrgResolver`，按发起人直属 OU（优先本级、沿父级向上）解析持有指定角色（默认 `manager`）的主管 | 新增 [WorkflowOrgResolver.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowOrgResolver.cs) |
+| **§6.2** | 抄送由“只记不送”改为**真实通知**：经 fanout 广播交换机派发 `workflow.cc` 消息（含收件人/角色/单据），失败仅告警不阻断流程 | 新增 [WorkflowNotifier.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowNotifier.cs)；`EnterAsync` cc 分支 |
+| **§6.6** | 审批人去重：同一节点同一人（或同一角色）只建一条待办；驳回重办时已有未取消待办的人不再重复建单 | `WorkflowRuntimeAppService.CreateTasksAsync` |
+| 前端 | 设计器 `emptyFallback` 默认改 `error` 并与后端对齐；`manager` 提示补充组织树解析说明；候选人为空选项改以“报错阻断”为推荐 | `vue-demo/.../workflows/designer.vue` |
+
+### 8.5 本批次已修复项（2026-10「全量缺陷清缴」）
+
+> 承接 §8.4，本批次把 §8.1（F1–F7）与 §8.2 剩余项（W4/W5/W6/W9）全部落地，并附带工程化加固。后端 `Meta.Dow.slnx` 全量编译 0 错误，前端 `web-antd` 类型检查 0 错误。
+
+#### 8.5.1 表单定义（F1–F7）
+
+| 编号 | 修复内容 | 代码位置 |
+|:--:|:---|:---|
+| **F1** | `EnsureFlattenedFields` 改为**以 Layout 为准的覆盖式同步**：同名字段按 Layout 覆盖属性，Layout 中已删除的字段从 `Fields` 中移除。不再“只增不覆盖” | `FormDefinitionAppService.EnsureFlattenedFields` |
+| **F2** | `FormWidgetDef` 补齐 `Rules` / `MinItems` / `MaxItems` / `TreeChildrenField` / `Dependencies` / `ControlProps` / `ColumnName`；`ExtractFieldsFromWidgets` 处理明细容器并整树提取；`CloneWidget` / `CloneField` 改为整体属性拷贝，明细子列/行数限制/校验规则/控件配置不再丢失 | `ResourceSchema.cs` `FormWidgetDef`；`FormDefinitionAppService` 三处 |
+| **F4** | 表单发布生成**不可变快照** `PublishedSchema` + `SchemaVersion`（每次发布 +1）；新增 `GetEffectiveSchema()`，运行时优先读快照 | `FormDefinition.Publish(FormDef)` / `GetEffectiveSchema()`；`FormDefinitionDto.SchemaVersion` |
+| **F5** | 新增 `FormFieldDef.ColumnName`（与 `Field` 解耦的落库列映射，文档 §5.5/§5.8.4 早已描述但代码缺失）；发布校验 `ValidateFieldNames`（字段名唯一）+ `ValidateAgainstResourceAsync`（与绑定资源列对齐） | `ResourceSchema.cs`；`FormDefinitionAppService` 两个校验方法 |
+| **F6** | `DeleteAsync` 增加**引用完整性检查**：被 OA 流程 `FormRef`、报表 `ActionDef.FormKey`、资源表单引用时拒绝删除并给出引用方 | `FormDefinitionAppService.DeleteAsync` |
+| **F7** | 新增**资源列重新同步入口** `ResyncCatalogFromResourceAsync`（`POST /api/orchestration/forms/{id}/resync-catalog`），资源表结构变更后可重新对齐字段目录与拍平字段，布局树不受影响 | `FormDefinitionAppService`；`AppBuilderControllers` 新端点；前端 `resyncCatalogFromResourceApi` |
+| **F3** | 保留双模型但**消除漏拷贝根因**：两类的字段集按 F2 对齐为同一超集语义，克隆/拍平统一走整树映射，新增属性只需改一处 | `ResourceSchema.cs` |
+
+#### 8.5.2 OA 流程定义（W4/W5/W6/W9）
+
+| 编号 | 修复内容 | 代码位置 |
+|:--:|:---|:---|
+| **W4** | `DefaultProcessJson()` 重写为直接产出 **`nodes/edges`** 画布格式，不再默认落到“不能分支、不能带条件”的 `childNode` 链；旧树格式仍可读入（`FlattenTree` 保留），但新建流程不再产生 | `WorkflowDefinition.DefaultProcessJson` |
+| **W5** | 解析**失败关闭**：新增 `LoadGraph(json, strict = true)`，重复节点 id / 缺 `source`/`target` / 缺 `nodeId` 直接抛 `UserFriendlyException`；`FlattenTree` 增加**环检测**（`visited` 集合），不再静默覆盖或死循环 | `WorkflowRuntimeAppService.LoadGraph` / `FlattenTree` |
+| **W6** | 连线新增 `Priority`（数字小者优先）与 `IsDefault`（显式默认分支）；`ChooseNext` 多条件出边时按 `Priority` 排序取首个命中，兜底取 `IsDefault` → 无条件边（不再依赖数组顺序，拖动连线不再静默改走向）；发布校验器新增 `CheckEdgePriorities`（同源条件边优先级重复即报错） | `WorkflowRuntimeAppService.WfEdge` / `ChooseNext`；`WorkflowDefinitionValidator.CheckEdgePriorities` |
+| **W9** | `WorkflowDefinition` 新增 `Version`，`Publish()` 递增；实例新增 `DefinitionVersion` / `FormSchemaVersion`，启动时固化当次定义版本与表单结构版本，可回答“这次实例对应第几版”；`SaaSMongoDbModule` 在启动时创建 **唯一索引 `TenantId + Code`**（`FormDefinition` / `WorkflowDefinition` / `FlowDefinition`）与常用查询索引，杜绝并发重复 Code | `WorkflowDefinition.Version`；`WorkflowInstance`；`SaaSMongoDbModule.EnsureIndexesAsync`；DTO `Version` / `DefinitionVersion` / `FormSchemaVersion` |
+
+#### 8.5.3 工程化加固与守卫
+
+| 方向 | 内容 |
+|:---|:---|
+| **密钥治理** | 各 Host `appsettings.json` 移除明文 `SwaggerClientSecret` / `DefaultPassPhrase`，改由 git-ignored 的 `appsettings.secrets.json` 提供；提交 `*.example` 模板；`.gitignore` 覆盖 `**/appsettings.secrets.json`、`tempkey.jwk`、`tempkey.rsa`，并将历史误提交文件 `git rm --cached` |
+| **证书** | AuthServer 从 `OpenIddict:Certificate:Path` 加载 OpenIddict **签名与加密证书**，不再依赖开发默认证书 |
+| **健康检查** | `MapDefaultEndpoints()` 在所有环境映射 `/health` 与 `/alive`（JSON 输出）；5 个 Host 的 `Program.cs` 均调用 |
+| **网关加固** | JWT Bearer 校验（Authority/Audience）+ 默认“已认证”策略；**限流** ~300 req/min（按客户端分区）；统一 401/429 错误体；路由修正——`administration` 由 `{**catch-all}` 收窄为 `/api/administration/{*any}`，新增 `/api/abp/*`、`administration-fallback`（`{**catch-all}` 且**要求认证**）；集群超时 30s |
+| **服务边界** | 移除 SaaS `Application` / `Application.Contracts` 对 Administration 的**编译期 `ProjectReference`**，改用 `Volo.Abp.Identity.Domain` 包，服务可独立构建 |
+| **分布式锁** | `ConfigureDistributedLocking` 提为公共扩展方法（无 Redis 时跳过）；`FlowScheduleHostedService` 触发前获取 `IAbpDistributedLock`，多实例不再重复触发 |
+| **构建基建** | 新增 `global.json`（SDK 10.0.401）、`.editorconfig`、`Directory.Packages.props`（CPM，119 个包）、`.dockerignore`；重写 7 个 Dockerfile 到 net10.0 与正确路径；删除 9 个失效 docker-compose 与 `scratch/`；`Meta.Dow.slnx` 纳入 tests 目录 |
+| **包源治理** | 删除 4 个模板残留的服务级 `NuGet.Config`（指向已无用的第三方 `BlazoriseMyGet` feed，且使 CPM 报 `NU1507`）；根 `NuGet.config` 补 **`<packageSourceMapping>`**，把所有包固定到 `nuget.org`，同时防依赖混淆 |
+| **CI** | 新增 `.github/workflows/ci.yml`：restore → build（Release）→ test，上传 trx |
+| **测试** | 新增 `tests/Meta.Dow.Orchestration.Tests`（xUnit，23 个用例）：`WorkflowDefinitionValidatorTests`(11) / `FormSchemaFlatteningTests`(7) / `WorkflowRecordPatchTests`(4) / `SecretsConfigSafetyTests`(1)；相关应用服务成员由 `private` 改 `internal` + `InternalsVisibleTo` 以便直测 |
+| **前端对齐** | `orchestration.ts` 类型补齐 `schemaVersion` / `version` / `definitionVersion` / `formSchemaVersion` / `columnName` / `rules` / `minItems` / `maxItems` / `treeChildrenField`；新增 `resyncCatalogFromResourceApi`；表单库列表增加版本列与「同步字段」操作；OA 列表增加版本列；流程设计器连线属性增加**分支优先级**与**默认分支**开关；`form-schema.ts` 的 `normalizeWidget`/`flattenLayout` 补齐属性透传（前端侧 F2 同等修复）；`vform-props.ts` 新增「落库列名」属性项 |
+| **文档** | 重写 `src/CLAUDE.md`（原文严重失真：Aspire 9.5.2 / Blazor WASM / EF Core / PostgreSQL / `Meta.Dow.sln` / Makefile 均为错误信息），改为与代码一致的 Aspire 13.5.3 / MongoDB / `Meta.Dow.slnx` / CPM / CI 等 |
+
+#### 8.5.4 仍未落地（明确记录）
+
+| 项 | 说明 |
+|:---|:---|
+| §2 / §3 编排引擎控制流原语 | 独立 `Sql` 节点、`Switch`、**并行网关/汇合**、**循环** 仍为规划（见 `lowcode-logic-orchestration.md` §11.3）；当前 SQL 走 Code 节点 `db.*` 间接实现 |
+| §6.7 / §6.8 | 并行网关（fork/join）、子流程嵌套（`callActivity`）未实现，维持 P3 |
+| §8.3 第 5 项 | 审批连线条件**尚未**从编号公式迁移到统一的 `FilterGroup` 树模型（W6 只补了优先级与默认分支，未统一表达） |
+
+---
+
+### 8.6 登录回归事故：OpenIddict 客户端被"数组按索引合并"抹除（2026-10-10）
+
+**现象**：前端跳到 AuthServer 后不再出现登录页，直接返回 OpenIddict 错误响应：
+
+```
+error: invalid_request
+error_description: The specified 'client_id' is invalid.
+error_uri: https://documentation.openiddict.com/errors/ID2052
+```
+
+**根因（配置合并语义 × 破坏性清理）**
+
+`.NET` 配置对 **JSON 数组是按索引合并**的，而不是整段替换、也不是拼接。8.5.3 的密钥治理把 `ClientSecret`
+从 `appsettings.json` 抽到 `appsettings.secrets.json` 时，secrets 文件里用**同一个 `"Clients"` 键**再写了一份
+数组，于是两份配置按索引逐字段"混血"：
+
+| 索引 | `appsettings.json` 原值 | `secrets.json` 覆盖 | 合并结果 |
+|:--|:--|:--|:--|
+| 0 | `MetaDow_Vue` + Vue 的 GrantTypes/Scopes/RedirectUris | `{ClientId: Administration_API, ClientSecret}` | **`Administration_API`**，但带着 Vue 的授权码/密码/刷新令牌、Vue 的 scope 与回调地址 |
+| 1 | `Administration_API` | `IdentityService_API` | `IdentityService_API` 带着 Administration_API 的重定向 |
+| 2 | `IdentityService_API` | `Projects_API` | `Projects_API` 带着 IdentityService_API 的重定向 |
+| 3 | `Projects_API` | `SaaS_API` | `SaaS_API` 带着 Projects_API 的重定向 |
+| 4 | `SaaS_API` | —（secrets 只有 4 项） | `SaaS_API` 保持原值 |
+
+结果：**`MetaDow_Vue` 不再是任何一个条目的 `ClientId`**，随后 `RemoveObsoleteClientsAsync`（"删掉配置里没登记的客户端"）
+把它**软删除**（MongoDB 实测 `IsDeleted: true`，`DeletionTime: 2026-10-10T13:33:09.713Z`），前端再带
+`client_id=MetaDow_Vue` 请求 `/connect/authorize` 即被拒。
+
+**修复**
+
+| 层 | 措施 | 位置 |
+|:--|:--|:--|
+| 配置 | 密钥改放**独立的 `ClientSecrets` 对象键**（`{clientId: secret}`）。对象是**按 key** 合并的，不会错位；`Clients` 数组只保留在 `appsettings.json` 一处，成为唯一事实来源 | `DbMigrator/appsettings.secrets.json`(+`.example`) |
+| 种子器 | 新增 `LoadClients()` 把 `ClientSecrets:{clientId}` 合并进客户端定义 | `OpenIddictDataSeeder.cs` |
+| 种子器 | 新增 `ValidateClients()`：**先在内存校验完再碰数据库**（ClientId 非空/不重复、GrantTypes/Scopes 非空），不合法直接抛错中止 | 同上 |
+| 种子器 | 破坏性清理**显式开关** `PruneObsoleteClients`（默认 `false`），并逐个 ClientId 打 **Warning** 日志，杜绝"客户端静默消失" | 同上 |
+| 种子器 | `ApplyClientSettings` 改为**配置即事实**：先 `Clear()` 掉 `Permissions`/`Requirements`/`RedirectUris`/`PostLogoutRedirectUris` 再按配置重建。原实现在旧值上累加，混血数据一旦写入就永远清不掉；改后重跑迁移可**自愈收敛** | 同上 |
+| 数据 | 一次性修复脚本：恢复被软删的 `MetaDow_Vue`，并把 4 个被污染 API 客户端的 `ClientUri`/`RedirectUris`/`PostLogoutRedirectUris`/`Permissions` 收敛回配置。修复后 5 个客户端全部 `IsDeleted:false` 且无串味 | MongoDB `MetaDowIdentityServiceDb.OpenIddictApplications`（OpenIddict 数据落在 Identity 库，因 `AbpDbConnectionOptions` 把 `AbpOpenIddict` 映射到 `MetaDowIdentityServiceDb`） |
+| 护栏 | 新增 `SecretsConfigSafetyTests`：扫描全仓 `appsettings*.secrets.json`（含 `.example` 模板），**拒绝任何 JSON 数组**，并打印具体 JSON 路径。已用探针文件验证该用例确实会失败而非空跑 | `tests/Meta.Dow.Orchestration.Tests/` |
+
+**验证**：`curl -k https://localhost:7600/connect/authorize?client_id=MetaDow_Vue&...` 由错误响应恢复为
+`302 → /Account/Login`（正常登录跳转），**无需重启 AuthServer**；后端 `dotnet build -c Release` 0 错误；
+单元测试 23/23 通过。
+
+**长期规则**：secrets 覆盖文件里**永远不要出现 JSON 数组**。需要覆盖数组语义时改用对象键。
+
+---
+
+### 8.7 登录后全线 401：网关把 JWT 受众写死成解决方案名（2026-10-10）
+
+**现象**：登录页能打开，登录也能成功取到令牌（库中可见），但随后控制台刷屏 401；
+页面弹出 `未认证或令牌无效` 与 `页面加载失败：Request failed with status code 401`。
+
+**定位（先证来源，再谈原因）**
+
+`未认证或令牌无效` 这个文案**全仓只出现在一个地方**——网关 `Meta.Dow.Gateway/Program.cs`
+的 `JwtBearerEvents.OnChallenge`。所以这组 401 必然由**网关**产生，而不是被代理的服务。
+
+**根因：受众（audience）写死错误**
+
+上一批"网关加固"里写了：
+
+```csharp
+options.Audience = configuration["AuthServer:Audience"] ?? "Meta.Dow";
+options.TokenValidationParameters.ValidateAudience = true;
+```
+
+但 OpenIddict 是把**「作用域所关联的资源名」**写进令牌的 `aud`。本仓库的
+`DbMigrator/appsettings.json` 与库中 `OpenIddictScopes` 一致地声明：
+
+| 作用域 | `Resources` |
+|:--|:--|
+| `MetaDowAdministration` | `["MetaDowAdministration"]` |
+| `MetaDowAuthServer` | `["MetaDowAuthServer"]` |
+| `MetaDowIdentityService` | `["MetaDowIdentityService"]` |
+| `MetaDowSaaS` | `["MetaDowSaaS"]` |
+
+而前端（`MetaDow_Vue`）实际申请的 scope 是
+`openid profile email offline_access MetaDowIdentityService MetaDowAdministration MetaDowSaaS`
+（见 `vue-demo/apps/web-antd/.env` 与库中 `OpenIddictAuthorizations.Scopes`）。
+
+⇒ 令牌的 `aud` **只可能**是上述服务名，**永远不含解决方案名 `Meta.Dow`**。
+开启 `ValidateAudience` 且要求 `Meta.Dow` ⇒ **每一个有效令牌都被判无效** ⇒ 所有需要认证的请求 401。
+
+> 注意：`MetaDowAuthServerModule` 里的 `options.AddAudiences("Meta.Dow")` 是给 **AuthServer 自身做
+> 令牌校验**用的"可接受受众"声明，它**不会**把 `Meta.Dow` 塞进签发的令牌里——两者极易混淆。
+
+**为什么现在才暴露**：前端 `/api/menu/*`、`/api/permission-management/*` 原先**没有显式路由**，
+会落进上一批新增的 `administration-fallback`（`{**catch-all}` + `AuthorizationPolicy: Default`）。
+登录成功后前端第一件事就是拉 `/api/menu/all`，于是必然撞上这条兜底路由，缺陷立刻显形。
+
+**修复**
+
+| 层 | 措施 | 位置 |
+|:--|:--|:--|
+| 网关 | **不再写死单一受众**。默认 `ValidateAudience = false`（仍校验签名/签发者/有效期），受众由下游各服务按自身受众把关；如需在网关强校验，用 `AuthServer:ValidAudiences` 显式列出允许值 | `Meta.Dow.Gateway/Program.cs` |
+| 网关配置 | `AuthServer.Audience` → `AuthServer.ValidAudiences: []`；补齐前端实际在用却缺路由的 `menu`、`permission-management` 两条路由（→ administration 集群） | `Meta.Dow.Gateway/appsettings.json` |
+
+**验证**：见 §8.7.1。
+
+**长期规则**：**同时前置多个 API 的网关，不要在网关写死单一 JWT 受众。** 受众是"每个 API 自己的事"，
+网关只负责签名/签发者/有效期的边缘把关。若要校验，必须列出**全部**允许受众。
+
+#### 8.7.1 验证记录（真机，2026-10-10 14:1x）
+
+`AppHost` 全栈重启后，用**真实令牌**经网关实测（只读探测，未改任何数据）：
+
+**令牌事实**（`POST https://localhost:7600/connect/token`，`client_id=MetaDow_Vue`，密码模式）：
+
+```
+aud = ['MetaDowAdministration', 'MetaDowIdentityService', 'MetaDowSaaS']
+iss = https://localhost:7600/
+```
+
+**网关实测**（`https://localhost:7500`，即前端 Vite `/api` 代理目标）：
+
+| 请求 | 无令牌 | 带令牌 |
+|:--|:--|:--|
+| `GET /api/menu/all` | 401 | **200** |
+| `GET /api/abp/application-configuration` | — | **200** |
+| `GET /api/permission-management/permissions?...` | — | **200** |
+| `GET /api/account/my-profile` | — | **200** |
+
+即：有效令牌放行、无令牌仍拦截 401，符合预期；上一版「有效令牌一律 401」已消除。
+
+**另：控制台 `[Vben Form] BREAKING CHANGE ... slotProps.componentProps` 提示不是缺陷**
+
+该提示来自上游模板自带的 Vite 插件 `internal/vite-config/src/plugins/form-field-slot-migration-warning.ts`，
+它在 `apply: 'serve'` 下**无条件**执行：启动时 `logger.warn` 一次，并向 `index.html` 注入一段
+`console.warn` 脚本（`transformIndexHtml`）。它**不扫描代码**，任何 app 都会看到。
+
+本仓 `apps/web-antd/src` 下 **零** `v-bind="slotProps"` 使用；且框架侧
+`form-field.vue` 的 `createFieldSlotScope()` 已同时提供顶层旧绑定与 `componentProps`（新 API），
+`form.vue` 具名插槽转发时把整个 scope 透出。=> **无需整改**，属上游模板的开发期提醒。
+若嫌噪音，可在 `internal/vite-config/src/plugins/index.ts:150` 移除该插件注册。
+
+#### 8.7.2 全站路由渲染巡检（真机 29 路由，2026-10-10 14:2x）
+
+用 `playwright-core`（复用 vue-demo 的 pnpm 仓库，不下载 Chromium）驱动本机 Chrome，
+登录后对**全部 29 个菜单路由**做逐页渲染巡检（含 3 个带真实 id 的设计器、资源编辑器、报表编辑器、资源运行时）。
+
+**结论：0 个功能错误。** 逐页判定维度：`console.error` / `pageerror` / `requestfailed` / HTTP ≥ 400，全部为 0；
+唯一被标记的 `/dashboard/workspace` 也 issues=0，只是 dev 首次硬刷新的启动遮罩超过巡检阈值（页面正常渲染）。
+
+**唯一的控制台输出是两类警告，均与本批次改动无关：**
+
+| 警告 | 出处 | 性质 |
+|:--|:--|:--|
+| `[Vben Form] BREAKING CHANGE ... slotProps.componentProps` | 上游模板自带 Vite 插件 `internal/vite-config/src/plugins/form-field-slot-migration-warning.ts`（`apply:'serve'` 无条件注入脚本 + 启动 `logger.warn`） | 提示，**不扫代码**；本仓 app 零 `v-bind="slotProps"` |
+| `Runtime directive used on component with non-element root node`<br>`Component inside <Transition> renders non-element root node that cannot be animated` | 本项目**路由错误边界包装器** `packages/effects/layouts/src/hooks/index.ts:115`：render 返回 `slots.default?.()`（vnode 数组 ⇒ **Fragment 根**），且 `Wrapper.name` 被设为路由组件名（故栈里显示 `at <OrchestrationForms>`） | 真实（轻微）缺陷，**每个路由页都触发**（未改动的 `/dashboard/workspace`、`/abp/*`、`/iam/*` 同样有） |
+
+**Fragment 根的实际影响**：`content.vue:57` 的 `v-show="!route.meta.iframeSrc"` 作用在该包装组件上，
+因根不是单一元素而**静默失效**（iframe 路由不会被隐藏）；`<Transition>` 的进出场动画对该页也不生效。功能不受影响。
+
+**修复方向（未实施，待确认）**：让包装器返回单一元素根，例如
+`return h('div', { class: 'h-full contents' }, slots.default?.());`
+—— 会为每个路由页增加一层包裹元素，需回归布局样式，故先记录不动。
+
+---
+
+### 8.8 Aspire Dashboard 启动告警：浏览器 UI 状态解密失败（非缺陷，2026-10-10）
+
+**现象**（仅启动 AppHost 时出现，业务服务日志里没有）：
+
+```
+warn: Aspire.Hosting.Dashboard.Model.BrowserStorage.LocalBrowserStorage[0]
+Error when reading 'Aspire_Resources_CollapsedResourceNames_MetaDow' as List`1.
+System.Security.Cryptography.CryptographicException: The payload was invalid.
+   at ...ProtectedBrowserStorage.GetAsync[TValue](String purpose, String key)
+   at Aspire.Dashboard.Model.BrowserStorage.BrowserStorageBase.GetAsync[TValue](String key)
+```
+
+**来源**：`Aspire.Hosting.Dashboard` —— 即**内嵌在 AppHost 进程里的 Aspire 控制台**，不是任何一个业务 Host。
+`LocalBrowserStorage` 读写的是**浏览器 localStorage**（用途仅为记住"资源列表里哪些分组被折叠"这类 UI 偏好）。
+
+**机制（.NET Data Protection 语义，确定性）**
+
+`ProtectedBrowserStorage` 走的是 ASP.NET Core **Data Protection**：写入 localStorage 前
+`Protect(purpose, json)`，读取时 `Unprotect`。而 Data Protection 的密文是 **AES-CBC + HMAC** 的
+**认证加密**——HMAC 校验不过就直接抛 `CryptographicException: The payload was invalid`（这正是栈里的
+`CbcAuthenticatedEncryptor.DecryptImpl`）。
+
+验证失败只可能来自两件事：
+
+1. **密钥材料不同**——加密时的那个 DP 密钥已不在当前密钥环里；
+2. **ApplicationDiscriminator 不同**——官方文档原文：
+
+   > *"An identifier that uniquely discriminates this application from all other applications on the machine.
+   > **The discriminator value is implicitly included in all protected payloads** ... to isolate multiple logical
+   > applications that all happen to be using the same key material."*
+
+   即 discriminator 会被隐式混入**每一个**受保护负载。它一变，旧负载一律解不开。
+   默认 discriminator = 应用的 **ContentRootPath**；本项目业务侧则显式设为 `"Meta.Dow"`
+   （`MetaDowHostingModule.ConfigureDataProtection` 的 `SetApplicationName(MetaDowNames.MetaDow)`）。
+
+**本机实测取证**
+
+| 项 | 实测 |
+|:--|:--|
+| 密钥环目录 | `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`（**默认文件密钥环**，7 个 key） |
+| 最新 key | `key-a71cba2b…` 创建于 **2026-09-09**，有效至 2026-12-08（90 天周期内，**尚未过期、不会被轮换**） |
+| 历史 key | 2024-03 / 2024-06 / 2024-11 / 2025-08 / 2026-01 / 2026-04 —— 连 2 年前的都**仍在**，说明密钥环**未被清理** |
+| 结果 | 密钥环稳定 ⇒ 失败原因**不是**"密钥被删"，而是**加密时的 discriminator/用途与当前实例不同**（典型：升级 Aspire 前后、仓库路径变更、浏览器数据来自其它环境） |
+
+**影响**：**零功能影响**。它只是控制台自己的一条 UI 偏好读不出来，Aspire 会 catch 掉并回落到默认值；
+业务服务的 DP 是**独立**的（同一文件环但 discriminator = `Meta.Dow`，与 Dashboard 的互不干扰）。
+**与本次"全量缺陷清缴"无关**：AppHost 相对 HEAD 的唯一改动是 CPM 把 `Version` 属性挪进
+`Directory.Packages.props`，`Aspire.AppHost.Sdk/13.5.3` 与四个 `Aspire.Hosting.* 13.5.3` 版本**完全未变**。
+
+**处理**
+
+| 层 | 措施 |
+|:--|:--|
+| 真正修复（浏览器侧，一次性） | 打开控制台页面 → F12 Console 执行 `Object.keys(localStorage).filter(k=>k.startsWith('Aspire_')).forEach(k=>localStorage.removeItem(k))`，或"清除站点数据"。旧密文被清掉后，下次写入即用当前密钥，告警消失 |
+| 噪声抑制（仓库侧，已实施） | AppHost 两个 `appsettings*.json` 的 `Logging:LogLevel` 增加 `"Aspire.Hosting.Dashboard.Model.BrowserStorage": "Error"`：只压掉这一类**已在 Aspire 内部被 catch、仅剩日志输出**的 warning，**Error 级仍会打**，不影响真实故障可见性 |
+
+**注意**：不要为了"消除告警"去动 Data Protection 配置或删除 `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`——
+该密钥环是**机器级共享**的（业务服务的开发态 DP 也用它），删掉会让所有服务在开发态重新生成密钥并丢失既有保护负载。
+
+---
+
+### 8.9 表单设计器「容器删不掉」（2026-10-10）
+
+**现象**：在表单设计器（`vue-demo` 的 VForm 设计器，即表单设计页中部画布）里，选中一个容器
+（如「栅格列」）后，**找不到任何删除入口**；想删掉误拖进来的栅格/表格/标签页也做不到，
+最后只能用「清空」把整张表单一起清掉。
+
+**根因（四处，均在 `vue-demo`）**
+
+| # | 缺陷 | 位置 |
+|:--|:--|:--|
+| 1 | 操作条（上移/下移/复制/删除）条件为 `selected && !widget.internal`。而 `grid-col`/`table-cell`/`tab-pane` 在模型里都标了 `internal: true` ⇒ 这三类容器**永远没有操作条** | `shared/vform-node.vue` |
+| 2 | 右侧属性面板的「移除组件」同样被 `v-if="!selected.internal"` 挡掉 | `shared/vform-designer.vue` |
+| 3 | **容器本身选不中**（更根本）：`.vf-col` / `.vf-cell` / `.vf-pane` 的 `@click` 都 `stopPropagation()` 后选中自己；`<Tabs>` 更是整块 `@click.stop` ⇒ 栅格/表格/标签页的**父容器**几乎没有可点区域，选不中自然删不掉 | `shared/vform-node.vue` |
+| 4 | 结构隐患：`removeWidget` 是纯递归删除，直接删内部单元格会留下 **0 列栅格 / 0 页签标签页 / 缺格表格** —— 这些空壳渲染不出任何可点面，画布上再也选不中 | `shared/vform-model.ts` |
+
+**修复**
+
+| 层 | 措施 | 位置 |
+|:--|:--|:--|
+| 容器抓手 | 容器节点左上角渲染「栅格 / 表格 / 标签页 / 卡片 / 子表单 / 树形」角标，点它即选中容器本身（不受子元素吞点击影响） | `shared/vform-node.vue` |
+| 内部单元格删除 | 选中的栅格列 / 表格单元格 / 标签页内联显示红色「删除」按钮 | `shared/vform-node.vue` |
+| 属性面板 | 去掉 `v-if="!selected.internal"`，容器也能从右侧一键移除 | `shared/vform-designer.vue` |
+| 安全删除 | 新增 `findParentWidget()` 与 `removeWidgetSafe()`：删栅格最后一列 / 标签页最后一个页签 / 表格最后一列时，**连整个容器一并删**，杜绝空壳 | `shared/vform-model.ts`（`removeSelected` 改用它） |
+
+**验证（真机，Chrome + `playwright-core`，只读交互、未点「保存」）**
+
+| 用例 | 结果 |
+|:--|:--|
+| A1 拖入「双列栅格」 | 栅格数 1 → 2 ✅ |
+| A2 新栅格列数 | 2 ✅ |
+| A3 选中栅格列 | 「删除」按钮可见 = true ✅ |
+| A4 删除一列 | 该栅格列数 2 → 1 ✅ |
+| A5 再删最后一列 | 栅格数回到 1（**整个栅格被一并移除**）✅ |
+| B1 拖入「三列栅格」 | 栅格数 1 → 2 ✅ |
+| B2 容器抓手文案 | 「栅格」✅ |
+| B3 点抓手 | 容器操作条（含「删除」）可见 = true ✅ |
+| B4 删除容器 | 栅格数回到 1 ✅ |
+| C1 选中栅格列 | 属性面板「移除组件」可见 = true ✅ |
+| C2 面板移除 | 栅格数回到 1（单列栅格整体移除）✅ |
+| 控制台 | **0 错误** ✅ |
+
+前端类型检查：`pnpm -F @vben/web-antd run typecheck` → **exit 0**。

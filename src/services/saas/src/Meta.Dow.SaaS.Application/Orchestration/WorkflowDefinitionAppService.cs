@@ -13,14 +13,17 @@ public class WorkflowDefinitionAppService : SaaSAppService, IWorkflowDefinitionA
 {
     private readonly IRepository<WorkflowDefinition, Guid> _repository;
     private readonly IRepository<FormDefinition, Guid> _formRepository;
+    private readonly IRepository<WorkflowInstance, Guid> _instanceRepository;
 
     public WorkflowDefinitionAppService(
         IRepository<WorkflowDefinition, Guid> repository,
-        IRepository<FormDefinition, Guid> formRepository
+        IRepository<FormDefinition, Guid> formRepository,
+        IRepository<WorkflowInstance, Guid> instanceRepository
     )
     {
         _repository = repository;
         _formRepository = formRepository;
+        _instanceRepository = instanceRepository;
     }
 
     [Authorize(OrchestrationPermissions.Workflows.Default)]
@@ -123,8 +126,18 @@ public class WorkflowDefinitionAppService : SaaSAppService, IWorkflowDefinitionA
         return Map(entity);
     }
 
+    /// <summary>删除（F6）：有在途实例（running）时拒绝删除，避免在途单据失去定义。</summary>
     [Authorize(OrchestrationPermissions.Workflows.Delete)]
-    public async Task DeleteAsync(Guid id) => await _repository.DeleteAsync(id, autoSave: true);
+    public async Task DeleteAsync(Guid id)
+    {
+        var entity = await _repository.GetAsync(id);
+        if (await _instanceRepository.AnyAsync(x => x.WorkflowCode == entity.Code && x.Status == "running"))
+        {
+            throw new UserFriendlyException($"审批流「{entity.Code}」仍有在途实例，无法删除");
+        }
+
+        await _repository.DeleteAsync(id, autoSave: true);
+    }
 
     [Authorize(OrchestrationPermissions.Workflows.Publish)]
     public async Task<WorkflowDefinitionDto> PublishAsync(Guid id)
@@ -135,17 +148,21 @@ public class WorkflowDefinitionAppService : SaaSAppService, IWorkflowDefinitionA
             throw new UserFriendlyException(L["Orchestration:WorkflowFormRefRequired"]);
         }
 
-        await EnsureFormRefAsync(entity.FormRef, publishedOnly: true);
+        var form = await EnsureFormRefAsync(entity.FormRef, publishedOnly: true);
+
+        // 发布前做结构校验：把配置错误拦在发布口，而不是运行时爆发。
+        WorkflowDefinitionValidator.Validate(entity.ProcessJson, CollectFormFields(form));
+
         entity.Publish();
         await _repository.UpdateAsync(entity, autoSave: true);
         return Map(entity);
     }
 
-    private async Task EnsureFormRefAsync(string? formRef, bool publishedOnly = false)
+    private async Task<FormDefinition?> EnsureFormRefAsync(string? formRef, bool publishedOnly = false)
     {
         if (string.IsNullOrWhiteSpace(formRef))
         {
-            return;
+            return null;
         }
 
         var key = formRef.Trim();
@@ -159,6 +176,37 @@ public class WorkflowDefinitionAppService : SaaSAppService, IWorkflowDefinitionA
         {
             throw new UserFriendlyException(L["Orchestration:FormNotPublished", key]);
         }
+
+        return form;
+    }
+
+    /// <summary>收集绑定表单的字段名（含明细子字段），用于条件字段引用校验。</summary>
+    private static List<string> CollectFormFields(FormDefinition? form)
+    {
+        var result = new List<string>();
+        if (form?.Schema?.Fields is not { Count: > 0 } fields)
+        {
+            return result;
+        }
+
+        void Walk(IEnumerable<FormFieldDef> items)
+        {
+            foreach (var field in items)
+            {
+                if (!string.IsNullOrWhiteSpace(field.Field))
+                {
+                    result.Add(field.Field);
+                }
+
+                if (field.Children is { Count: > 0 } children)
+                {
+                    Walk(children);
+                }
+            }
+        }
+
+        Walk(fields);
+        return result;
     }
 
     private static WorkflowDefinitionDto Map(WorkflowDefinition e) =>
@@ -169,6 +217,7 @@ public class WorkflowDefinitionAppService : SaaSAppService, IWorkflowDefinitionA
             Name = e.Name,
             Description = e.Description,
             Status = e.Status,
+            Version = e.Version,
             FormRef = e.FormRef,
             ProcessJson = e.ProcessJson,
             BeforeStartFlowKey = e.BeforeStartFlowKey,

@@ -264,6 +264,11 @@ public class FormDefinitionController : SaaSController, IFormDefinitionAppServic
     [HttpPost]
     [Route("{id}/publish")]
     public Task<FormDefinitionDto> PublishAsync(Guid id) => _service.PublishAsync(id);
+
+    [HttpPost]
+    [Route("{id}/resync-catalog")]
+    public Task<FormDefinitionDto> ResyncCatalogFromResourceAsync(Guid id) =>
+        _service.ResyncCatalogFromResourceAsync(id);
 }
 
 [Area(SaaSRemoteServiceConsts.ModuleName)]

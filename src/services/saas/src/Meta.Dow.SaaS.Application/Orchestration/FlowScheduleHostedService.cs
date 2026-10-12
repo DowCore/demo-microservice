@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Volo.Abp.Data;
+using Volo.Abp.DistributedLocking;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.MultiTenancy;
 using Volo.Abp.Uow;
@@ -10,19 +11,23 @@ namespace Meta.Dow.SaaS.Orchestration;
 
 /// <summary>
 /// 轮询已启用 FlowSchedule，按 Cron 调用已发布 flowKey（轻量调度，产品表自建）。
+/// 多实例部署时通过分布式锁保证同一计划同一时刻只触发一次。
 /// </summary>
 public class FlowScheduleHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<FlowScheduleHostedService> _logger;
+    private readonly IAbpDistributedLock _distributedLock;
 
     public FlowScheduleHostedService(
         IServiceScopeFactory scopeFactory,
-        ILogger<FlowScheduleHostedService> logger
+        ILogger<FlowScheduleHostedService> logger,
+        IAbpDistributedLock distributedLock
     )
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _distributedLock = distributedLock;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -108,6 +113,18 @@ public class FlowScheduleHostedService : BackgroundService
 
     private async Task FireAsync(FlowSchedule schedule, DateTime utcNow, CancellationToken cancellationToken)
     {
+        // 多实例防重：同一计划同一时刻只允许一个实例触发（Redis 锁；未配置 Redis 时退化为进程内锁）。
+        await using var handle = await _distributedLock.TryAcquireAsync(
+            $"meta-dow:flow-schedule:{schedule.Code}",
+            TimeSpan.FromSeconds(30),
+            cancellationToken
+        );
+        if (handle == null)
+        {
+            _logger.LogDebug("Schedule {Code} 已被其它实例接管，跳过本次触发。", schedule.Code);
+            return;
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var invoker = scope.ServiceProvider.GetRequiredService<IPublishedFlowInvoker>();
         var repo = scope.ServiceProvider.GetRequiredService<IRepository<FlowSchedule, Guid>>();

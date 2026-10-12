@@ -26,6 +26,12 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public string StarterUserName { get; protected set; } = null!;
 
+    /// <summary>启动时对应的流程定义发布版本（W9）。0 = 定义从未发布（历史数据）。</summary>
+    public int DefinitionVersion { get; protected set; }
+
+    /// <summary>启动时绑定的表单发布版本（W9/F4），用于回答「这一单用的是第几版表单」。</summary>
+    public int FormSchemaVersion { get; protected set; }
+
     /// <summary>启动时的流程定义快照，隔离设计态变更</summary>
     public string ProcessSnapshotJson { get; protected set; } = "{}";
 
@@ -43,7 +49,9 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
         string recordJson,
         string starterUserName,
         Guid? tenantId,
-        string? processSnapshotJson = null
+        string? processSnapshotJson = null,
+        int definitionVersion = 0,
+        int formSchemaVersion = 0
     )
         : base(id)
     {
@@ -54,6 +62,8 @@ public class WorkflowInstance : FullAuditedAggregateRoot<Guid>, IMultiTenant
         TenantId = tenantId;
         Status = "running";
         ProcessSnapshotJson = string.IsNullOrWhiteSpace(processSnapshotJson) ? "{}" : processSnapshotJson;
+        DefinitionVersion = definitionVersion;
+        FormSchemaVersion = formSchemaVersion;
         HistoryJson = "[]";
     }
 

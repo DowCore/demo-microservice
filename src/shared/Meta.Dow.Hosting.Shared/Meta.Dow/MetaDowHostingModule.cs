@@ -45,7 +45,7 @@ public class MetaDowHostingModule : AbpModule
 
         var configuration = context.Services.GetConfiguration();
 
-        ConfigureDistributedLocking(context, configuration);
+        context.ConfigureDistributedLocking(configuration);
 
         Configure<AbpMultiTenancyOptions>(options => options.IsEnabled = MultiTenancyConsts.IsEnabled);
 
@@ -92,19 +92,39 @@ public class MetaDowHostingModule : AbpModule
         });
     }
 
-    private static void ConfigureDistributedLocking(ServiceConfigurationContext context, IConfiguration configuration)
-    {
-        context.Services.AddSingleton<IDistributedLockProvider>(sp =>
-        {
-            var connection = ConnectionMultiplexer.Connect(configuration.GetConnectionString(MetaDowNames.Redis)!);
-
-            return new RedisDistributedSynchronizationProvider(connection.GetDatabase());
-        });
-    }
 }
 
 public static class HostingExtensions
 {
+    /// <summary>
+    /// 注册分布式锁提供者（Redis/Medallion）。未配置 Redis 连接串时直接跳过，
+    /// 由 ABP 回退到进程内锁，避免在无 Redis 的环境下启动失败。
+    /// 复用入口：各服务 Host 模块可单独调用本扩展方法获得跨实例锁（如低代码调度器）。
+    /// </summary>
+    public static ServiceConfigurationContext ConfigureDistributedLocking(
+        this ServiceConfigurationContext context,
+        IConfiguration configuration
+    )
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var connectionString = configuration.GetConnectionString(MetaDowNames.Redis);
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return context;
+        }
+
+        context.Services.AddSingleton<IDistributedLockProvider>(sp =>
+        {
+            var connection = ConnectionMultiplexer.Connect(connectionString);
+
+            return new RedisDistributedSynchronizationProvider(connection.GetDatabase());
+        });
+
+        return context;
+    }
+
     public static ServiceConfigurationContext ConfigureDataProtection(
         this ServiceConfigurationContext context,
         IWebHostEnvironment hostingEnvironment,

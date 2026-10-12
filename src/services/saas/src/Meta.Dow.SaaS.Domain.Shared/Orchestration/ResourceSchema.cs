@@ -318,6 +318,12 @@ public class FormFieldDef
 {
     public string Field { get; set; } = null!;
 
+    /// <summary>
+    /// 落库列名（F5）。绑定资源/表时，字段名与真实列名的映射契约；为空时按 <see cref="Field"/> 处理。
+    /// 早期文档 §5.8.4 已按此属性描述投影逻辑，但代码里原先并不存在该属性——此处补齐。
+    /// </summary>
+    public string? ColumnName { get; set; }
+
     public string Title { get; set; } = null!;
 
     /// <summary>
@@ -393,6 +399,9 @@ public class FormWidgetDef
 
     public string? Field { get; set; }
 
+    /// <summary>落库列名（F5）：与 <see cref="Field"/> 解耦的物理列映射，为空则按 Field 处理。</summary>
+    public string? ColumnName { get; set; }
+
     public string Control { get; set; } = "input";
 
     public int Span { get; set; } = 24;
@@ -412,6 +421,18 @@ public class FormWidgetDef
     public bool RequiredOnCreate { get; set; }
 
     public bool RequiredOnUpdate { get; set; }
+
+    /// <summary>字段校验规则（F2 补齐：原先 FormWidgetDef 缺失，导致 Layout→Fields 拍平时规则丢失）。</summary>
+    public FormFieldRuleDef? Rules { get; set; }
+
+    /// <summary>明细最少行数（F2 补齐）。</summary>
+    public int? MinItems { get; set; }
+
+    /// <summary>明细最多行数（F2 补齐）。</summary>
+    public int? MaxItems { get; set; }
+
+    /// <summary>tree 子节点数组字段名，默认 children（F2 补齐）。</summary>
+    public string? TreeChildrenField { get; set; }
 
     /// <summary>字段动态联动规则（显隐/禁用/必填/自动赋值）。</summary>
     public List<FormFieldDependencyDef> Dependencies { get; set; } = [];

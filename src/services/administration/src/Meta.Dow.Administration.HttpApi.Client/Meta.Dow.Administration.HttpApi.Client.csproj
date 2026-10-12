@@ -4,10 +4,10 @@
     <RootNamespace>Meta.Dow.Administration</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Volo.Abp.FeatureManagement.HttpApi.Client" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Http.Client" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.PermissionManagement.HttpApi.Client" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.SettingManagement.HttpApi.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.FeatureManagement.HttpApi.Client" />
+    <PackageReference Include="Volo.Abp.Http.Client" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.HttpApi.Client" />
+    <PackageReference Include="Volo.Abp.SettingManagement.HttpApi.Client" />
     <ProjectReference Include="..\Meta.Dow.Administration.Application.Contracts\Meta.Dow.Administration.Application.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>

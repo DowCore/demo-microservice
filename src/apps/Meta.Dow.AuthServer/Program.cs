@@ -30,6 +30,7 @@ public static class Program
             await builder.AddApplicationAsync<MetaDowAuthServerModule>().ConfigureAwait(false);
 
             var app = builder.Build();
+            app.MapDefaultEndpoints();
 
             await app.InitializeApplicationAsync().ConfigureAwait(false);
 

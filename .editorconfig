@@ -1,0 +1,40 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,xml,csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.cs]
+indent_size = 4
+
+# using 指令排序
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# 命名与 this.
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+
+# 语言特性偏好（与现有代码风格一致）
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_namespace_declarations = file_scoped:warning
+
+# 代码质量：未使用 using / 简化
+dotnet_diagnostic.IDE0005.severity = suggestion
+csharp_style_prefer_primary_constructors = true:suggestion
+
+# 空引用检查
+dotnet_style_coalesce_expression = true:suggestion
+csharp_style_throw_expression = true:suggestion
+
+[*.md]
+trim_trailing_whitespace = false

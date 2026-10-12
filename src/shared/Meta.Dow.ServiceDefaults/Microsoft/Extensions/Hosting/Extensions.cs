@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -7,6 +8,9 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace Microsoft.Extensions.Hosting;
 
@@ -125,21 +129,58 @@ public static class Extensions
         return builder;
     }
 
+    /// <summary>
+    /// 映射健康检查端点。原先只在 Development 且从未被调用，导致 Aspire / 容器编排的就绪探针拿不到信号。
+    /// 现在无论环境都映射：/health（全部检查）、/alive（liveness）。仅在开发环境返回逐项明细，
+    /// 生产只返回聚合状态，避免泄露内部依赖信息。
+    /// </summary>
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/dotnet/aspire/healthchecks for details before enabling these endpoints in non-development environments.
-        if (app.Environment.IsDevelopment())
-        {
-            // All health checks must pass for app to be considered ready to accept traffic after starting
-            app.MapHealthChecks("/health");
+        var detailed = app.Environment.IsDevelopment();
 
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
-            app.MapHealthChecks("/alive", new HealthCheckOptions { Predicate = r => r.Tags.Contains("live") });
-        }
+        // All health checks must pass for app to be considered ready to accept traffic after starting
+        app.MapHealthChecks(
+            "/health",
+            new HealthCheckOptions { ResponseWriter = (context, report) => WriteReportAsync(context, report, detailed) }
+        );
+
+        // Only health checks tagged with the "live" tag must pass for app to be considered alive
+        app.MapHealthChecks(
+            "/alive",
+            new HealthCheckOptions
+            {
+                Predicate = r => r.Tags.Contains("live"),
+                ResponseWriter = (context, report) => WriteReportAsync(context, report, detailed),
+            }
+        );
 
         return app;
+    }
+
+    private static Task WriteReportAsync(HttpContext context, HealthReport report, bool detailed)
+    {
+        context.Response.ContentType = "application/json; charset=utf-8";
+        if (!detailed)
+        {
+            return context.Response.WriteAsync(report.Status.ToString());
+        }
+
+        var payload = new
+        {
+            status = report.Status.ToString(),
+            totalDurationMs = report.TotalDuration.TotalMilliseconds,
+            checks = report.Entries.Select(entry => new
+            {
+                name = entry.Key,
+                status = entry.Value.Status.ToString(),
+                durationMs = entry.Value.Duration.TotalMilliseconds,
+                description = entry.Value.Description,
+                error = entry.Value.Exception?.Message,
+            }),
+        };
+
+        return context.Response.WriteAsync(JsonSerializer.Serialize(payload));
     }
 }

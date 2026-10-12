@@ -8,11 +8,11 @@
     <UserSecretsId>0aae16e2-bc34-40f6-b9c4-10379cc46b10</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.MongoDB" Version="13.5.3" />
-    <PackageReference Include="Aspire.Hosting.RabbitMQ" Version="13.5.3" />
-    <PackageReference Include="Aspire.Hosting.Redis" Version="13.5.3" />
-    <PackageReference Include="Aspire.Hosting.Seq" Version="13.5.3" />
-    <PackageReference Include="IdentityModel" Version="7.0.0" />
+    <PackageReference Include="Aspire.Hosting.MongoDB" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" />
+    <PackageReference Include="Aspire.Hosting.Redis" />
+    <PackageReference Include="Aspire.Hosting.Seq" />
+    <PackageReference Include="IdentityModel" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\apps\Meta.Dow.AuthServer\Meta.Dow.AuthServer.csproj" />

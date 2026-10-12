@@ -4,9 +4,9 @@
     <RootNamespace>Meta.Dow.IdentityService</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Volo.Abp.Account.HttpApi.Client" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Http.Client" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Identity.HttpApi.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Account.HttpApi.Client" />
+    <PackageReference Include="Volo.Abp.Http.Client" />
+    <PackageReference Include="Volo.Abp.Identity.HttpApi.Client" />
     <ProjectReference Include="..\Meta.Dow.IdentityService.Application.Contracts\Meta.Dow.IdentityService.Application.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>

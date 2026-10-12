@@ -4,7 +4,7 @@
     <RootNamespace>Meta.Dow.Projects</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Volo.Abp.Http.Client" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.Http.Client" />
     <ProjectReference Include="..\Meta.Dow.Projects.Application.Contracts\Meta.Dow.Projects.Application.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>

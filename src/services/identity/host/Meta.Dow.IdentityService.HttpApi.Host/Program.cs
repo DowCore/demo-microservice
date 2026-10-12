@@ -28,6 +28,7 @@ public static class Program
             builder.Host.AddAppSettingsSecretsJson().UseAutofac().UseSerilog();
             await builder.AddApplicationAsync<IdentityServiceHttpApiHostModule>().ConfigureAwait(false);
             var app = builder.Build();
+            app.MapDefaultEndpoints();
             await app.InitializeApplicationAsync().ConfigureAwait(false);
             await app.RunAsync().ConfigureAwait(false);
             return 0;

@@ -67,4 +67,7 @@
     <Project Path="src/shared/Meta.Dow.ServiceDefaults/Meta.Dow.ServiceDefaults.csproj" />
     <Project Path="src/shared/Meta.Dow.Shared/Meta.Dow.Shared.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Meta.Dow.Orchestration.Tests/Meta.Dow.Orchestration.Tests.csproj" />
+  </Folder>
 </Solution>

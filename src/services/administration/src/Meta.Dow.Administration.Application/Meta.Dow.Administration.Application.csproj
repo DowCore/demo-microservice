@@ -6,11 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Volo.Abp.AutoMapper" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.FeatureManagement.Application" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.Identity.Domain" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.PermissionManagement.Application" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.SettingManagement.Application" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.AutoMapper" />
+    <PackageReference Include="Volo.Abp.FeatureManagement.Application" />
+    <PackageReference Include="Volo.Abp.Identity.Domain" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.Application" />
+    <PackageReference Include="Volo.Abp.SettingManagement.Application" />
     <ProjectReference Include="..\Meta.Dow.Administration.Application.Contracts\Meta.Dow.Administration.Application.Contracts.csproj" />
     <ProjectReference Include="..\Meta.Dow.Administration.Domain\Meta.Dow.Administration.Domain.csproj" />
   </ItemGroup>

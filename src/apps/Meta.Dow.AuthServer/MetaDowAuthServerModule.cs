@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
@@ -10,6 +12,7 @@ using Meta.Dow.Administration.MongoDB;
 using Meta.Dow.IdentityService.MongoDB;
 using Meta.Dow.MultiTenancy;
 using Meta.Dow.SaaS.MongoDB;
+using OpenIddict.Server;
 using Volo.Abp;
 using Volo.Abp.Account;
 using Volo.Abp.Account.Web;
@@ -52,6 +55,22 @@ public class MetaDowAuthServerModule : AbpModule
 {
     public override void PreConfigureServices(ServiceConfigurationContext context)
     {
+        // 生产可用配置提供签名/加密证书（OpenIddict:Certificate:Path + Password）。
+        // 未配置时回退到 ABP 的开发证书（tempkey.jwk，仅限本地开发，且已加入 .gitignore）。
+        var configuration = context.Services.GetConfiguration();
+        var certificatePath = configuration["OpenIddict:Certificate:Path"];
+        var certificatePassword = configuration["OpenIddict:Certificate:Password"];
+
+        if (!string.IsNullOrWhiteSpace(certificatePath) && File.Exists(certificatePath))
+        {
+            PreConfigure<OpenIddictServerBuilder>(builder =>
+            {
+                var certificate = X509CertificateLoader.LoadPkcs12FromFile(certificatePath, certificatePassword);
+                builder.AddSigningCertificate(certificate);
+                builder.AddEncryptionCertificate(certificate);
+            });
+        }
+
         // https://www.npgsql.org/efcore/release-notes/6.0.html#opting-out-of-the-new-timestamp-mapping-logic
         PreConfigure<OpenIddictBuilder>(builder =>
         {

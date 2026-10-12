@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Volo.Abp.MongoDB" Version="10.6.0" />
-    <PackageReference Include="Volo.Abp.TenantManagement.MongoDB" Version="10.6.0" />
+    <PackageReference Include="Volo.Abp.MongoDB" />
+    <PackageReference Include="Volo.Abp.TenantManagement.MongoDB" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\shared\Meta.Dow.Shared\Meta.Dow.Shared.csproj" />

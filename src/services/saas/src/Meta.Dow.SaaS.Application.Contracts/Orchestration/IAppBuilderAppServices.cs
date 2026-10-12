@@ -111,6 +111,9 @@ public interface IFormDefinitionAppService : IApplicationService
 
     Task<FormDefinitionDto> PublishAsync(Guid id);
 
+    /// <summary>从绑定资源重新同步字段库（资源列变更后的同步入口）。</summary>
+    Task<FormDefinitionDto> ResyncCatalogFromResourceAsync(Guid id);
+
     /// <summary>已发布表单下拉（报表/OA 绑定 formRef）</summary>
     Task<ListResultDto<FormDefinitionLookupDto>> GetPublishedLookupAsync(string? filter = null);
 }

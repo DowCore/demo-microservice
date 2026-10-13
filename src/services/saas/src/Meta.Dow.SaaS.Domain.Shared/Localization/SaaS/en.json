@@ -115,6 +115,7 @@
     "Orchestration:ResourceNotFound": "Resource was not found: {0}",
     "Orchestration:ResourceNotPublished": "Resource is not published: {0}",
     "Orchestration:ResourceFlowNotPublished": "Bound flow is not published: {0}",
+    "Orchestration:BatchTooManyRows": "Batch operation exceeds the limit: at most {0} rows per call, received {1}.",
     "Orchestration:ReportCodeAlreadyExists": "Report code already exists: {0}",
     "Orchestration:ReportNotFound": "Report was not found: {0}",
     "Orchestration:ReportNotPublished": "Report is not published: {0}",

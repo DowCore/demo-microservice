@@ -115,6 +115,7 @@
     "Orchestration:ResourceNotFound": "未找到资源：{0}",
     "Orchestration:ResourceNotPublished": "资源尚未发布：{0}",
     "Orchestration:ResourceFlowNotPublished": "资源绑定的逻辑尚未发布：{0}",
+    "Orchestration:BatchTooManyRows": "批量操作超出上限：单次最多 {0} 条，本次提交 {1} 条。",
     "Orchestration:ReportCodeAlreadyExists": "报表编码已存在：{0}",
     "Orchestration:ReportNotFound": "未找到报表：{0}",
     "Orchestration:ReportNotPublished": "报表尚未发布：{0}",

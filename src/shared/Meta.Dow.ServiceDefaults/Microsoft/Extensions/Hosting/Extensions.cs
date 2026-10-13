@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
@@ -32,8 +33,24 @@ public static class Extensions
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
-            // Turn on resilience by default
-            http.AddStandardResilienceHandler();
+            // Turn on resilience by default.
+            // 安全默认值：标准处理器默认会重试所有 HTTP 方法（含 POST/PUT/DELETE），
+            // 这会让**非幂等写操作被静默重放**（编排的 HTTP 节点会发 POST）。
+            // 因此显式禁止对非安全方法重试 —— 与 Temporal/n8n 的一致立场：
+            // 写操作的重试必须由使用方显式声明，不能由基础设施默认开启。
+            http.AddStandardResilienceHandler(options =>
+            {
+                options.Retry.DisableForUnsafeHttpMethods();
+
+                // 与编排的节点级超时（OrchestrationConsts.NodeDefaultTimeoutMs = 30s）对齐：
+                // 单次尝试 10s、总预算 60s（含重试），避免外层 HttpClient.Timeout 截断重试空间。
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(60);
+
+                options.Retry.MaxRetryAttempts = 2;
+                options.Retry.Delay = TimeSpan.FromMilliseconds(500);
+                options.Retry.UseJitter = true; // 防重试风暴
+            });
 
             // Turn on service discovery by default
             http.AddServiceDiscovery();

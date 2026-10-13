@@ -155,6 +155,11 @@ public class AppResourceController : SaaSController, IAppResourceAppService
     [Route("{code}/delete")]
     public Task<ResourceInvokeResultDto> DeleteRecordAsync(string code, ResourceRuntimeGetInput input) =>
         _service.DeleteRecordAsync(code, input);
+
+    [HttpPost]
+    [Route("{code}/batch-delete")]
+    public Task<ResourceBatchInvokeResultDto> BatchDeleteRecordsAsync(string code, ResourceRuntimeBatchInput input) =>
+        _service.BatchDeleteRecordsAsync(code, input);
 }
 
 [Area(SaaSRemoteServiceConsts.ModuleName)]

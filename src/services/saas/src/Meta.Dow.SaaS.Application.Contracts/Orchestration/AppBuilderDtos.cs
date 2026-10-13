@@ -238,6 +238,37 @@ public class ResourceRuntimeSaveInput
     public Dictionary<string, object?> Record { get; set; } = [];
 }
 
+public class ResourceRuntimeBatchInput
+{
+    /// <summary>待处理记录的 Id 列表（批量删除时即待删记录 Id）。</summary>
+    public List<string> Ids { get; set; } = [];
+}
+
+public class ResourceBatchItemErrorDto
+{
+    public string Id { get; set; } = null!;
+
+    public string Error { get; set; } = null!;
+}
+
+public class ResourceBatchInvokeResultDto
+{
+    /// <summary>全部条目均成功时为 true；有任意一条失败即为 false。</summary>
+    public bool Success { get; set; }
+
+    /// <summary>提交的总条数。</summary>
+    public int Requested { get; set; }
+
+    /// <summary>实际生效（删除/写入）的条数。</summary>
+    public int Affected { get; set; }
+
+    /// <summary>被流程拒绝或跳过的条数。</summary>
+    public int Skipped { get; set; }
+
+    /// <summary>每条的失败原因（仅部分失败时返回）。</summary>
+    public List<ResourceBatchItemErrorDto> Errors { get; set; } = [];
+}
+
 public class ResourceInvokeResultDto
 {
     public bool Success { get; set; }

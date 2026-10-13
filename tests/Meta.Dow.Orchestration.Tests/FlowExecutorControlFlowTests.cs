@@ -474,6 +474,137 @@ public class FlowExecutorControlFlowTests
     }
 
     // ------------------------------------------------------------------
+    // 校验：批量资源节点（R4）与写重试开关（R3）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Batch_resource_node_without_items_input_is_rejected()
+    {
+        const string dsl =
+            """
+            {
+              "nodes": [
+                { "id": "start", "type": "Start" },
+                {
+                  "id": "b", "type": "ResourceBatchDelete",
+                  "inputs": [{ "name": "resourceCode", "from": { "literal": "customer" } }]
+                },
+                { "id": "end", "type": "End" }
+              ],
+              "edges": [
+                { "source": "start", "target": "b" },
+                { "source": "b", "target": "end" }
+              ]
+            }
+            """;
+
+        var ex = Assert.Throws<Volo.Abp.UserFriendlyException>(() => FlowExecutor.ValidateDsl(ParseDsl(dsl)));
+        Assert.Contains("items", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Batch_resource_node_with_items_input_passes_validation()
+    {
+        const string dsl =
+            """
+            {
+              "nodes": [
+                { "id": "start", "type": "Start" },
+                {
+                  "id": "b", "type": "ResourceBatchDelete",
+                  "inputs": [
+                    { "name": "resourceCode", "from": { "literal": "customer" } },
+                    { "name": "items", "from": "input.ids" }
+                  ]
+                },
+                { "id": "end", "type": "End" }
+              ],
+              "edges": [
+                { "source": "start", "target": "b" },
+                { "source": "b", "target": "end" }
+              ]
+            }
+            """;
+
+        FlowExecutor.ValidateDsl(ParseDsl(dsl));
+    }
+
+    [Fact]
+    public void Retry_on_write_without_idempotency_key_is_rejected()
+    {
+        const string dsl =
+            """
+            {
+              "nodes": [
+                { "id": "start", "type": "Start" },
+                {
+                  "id": "c", "type": "ResourceCreate", "retryOnWrite": true,
+                  "inputs": [{ "name": "resourceCode", "from": { "literal": "customer" } }]
+                },
+                { "id": "end", "type": "End" }
+              ],
+              "edges": [
+                { "source": "start", "target": "c" },
+                { "source": "c", "target": "end" }
+              ]
+            }
+            """;
+
+        var ex = Assert.Throws<Volo.Abp.UserFriendlyException>(() => FlowExecutor.ValidateDsl(ParseDsl(dsl)));
+        Assert.Contains("幂等键", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Retry_on_write_with_idempotency_key_passes_validation()
+    {
+        const string dsl =
+            """
+            {
+              "nodes": [
+                { "id": "start", "type": "Start" },
+                {
+                  "id": "c", "type": "ResourceCreate", "retryOnWrite": true,
+                  "inputs": [
+                    { "name": "resourceCode", "from": { "literal": "customer" } },
+                    { "name": "idempotencyKey", "from": "input.requestId" }
+                  ]
+                },
+                { "id": "end", "type": "End" }
+              ],
+              "edges": [
+                { "source": "start", "target": "c" },
+                { "source": "c", "target": "end" }
+              ]
+            }
+            """;
+
+        FlowExecutor.ValidateDsl(ParseDsl(dsl));
+    }
+
+    [Fact]
+    public void Retry_on_write_on_non_write_node_is_rejected()
+    {
+        const string dsl =
+            """
+            {
+              "nodes": [
+                { "id": "start", "type": "Start" },
+                { "id": "q", "type": "ResourceQuery", "retryOnWrite": true,
+                  "inputs": [{ "name": "resourceCode", "from": { "literal": "customer" } }] },
+                { "id": "end", "type": "End" }
+              ],
+              "edges": [
+                { "source": "start", "target": "q" },
+                { "source": "q", "target": "end" }
+              ]
+            }
+            """;
+
+        var ex = Assert.Throws<Volo.Abp.UserFriendlyException>(() => FlowExecutor.ValidateDsl(ParseDsl(dsl)));
+        Assert.Contains("不支持 retryOnWrite", ex.Message, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------
     // 种子守卫：已发布演示流程必须始终能通过校验
     // ------------------------------------------------------------------
 

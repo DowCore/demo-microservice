@@ -21,6 +21,18 @@ public interface IResourceCrudExecutor
         bool isDryRun,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>
+    /// 带节点级弹性开关的重载：<paramref name="allowWriteRetry"/> = DSL 的 retryOnWrite，
+    /// 仅在调用方已完成幂等校验时才应传 true。
+    /// </summary>
+    Task<JsonObject> ExecuteAsync(
+        string op,
+        JsonObject nodeInput,
+        bool isDryRun,
+        bool allowWriteRetry,
+        CancellationToken cancellationToken = default
+    );
 }
 
 public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
@@ -40,6 +52,7 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
     private readonly ICurrentUser _currentUser;
     private readonly IGuidGenerator _guidGenerator;
     private readonly IPermissionChecker _permissionChecker;
+    private readonly INodeResiliencePolicy _resilience;
 
     public ResourceCrudExecutor(
         IRepository<AppResource, Guid> resourceRepository,
@@ -50,7 +63,8 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         ICurrentTenant currentTenant,
         ICurrentUser currentUser,
         IGuidGenerator guidGenerator,
-        IPermissionChecker permissionChecker
+        IPermissionChecker permissionChecker,
+        INodeResiliencePolicy resilience
     )
     {
         _resourceRepository = resourceRepository;
@@ -62,12 +76,21 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         _currentUser = currentUser;
         _guidGenerator = guidGenerator;
         _permissionChecker = permissionChecker;
+        _resilience = resilience;
     }
+
+    public Task<JsonObject> ExecuteAsync(
+        string op,
+        JsonObject nodeInput,
+        bool isDryRun,
+        CancellationToken cancellationToken = default
+    ) => ExecuteAsync(op, nodeInput, isDryRun, allowWriteRetry: false, cancellationToken);
 
     public async Task<JsonObject> ExecuteAsync(
         string op,
         JsonObject nodeInput,
         bool isDryRun,
+        bool allowWriteRetry,
         CancellationToken cancellationToken = default
     )
     {
@@ -124,16 +147,36 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         }
 
         var provider = dataSource.Provider;
-        return normalized switch
-        {
-            "query" => await QueryAsync(
-                provider, dataSource, resource, schema, nodeInput, tableOverride, isDryRun, cancellationToken),
-            "get" => await GetAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
-            "create" => await CreateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
-            "update" => await UpdateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
-            "delete" => await DeleteAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, cancellationToken),
-            _ => throw new UserFriendlyException($"Unsupported resource op: {op}")
-        };
+
+        // 读写分离弹性：读操作（query/get）遇瞬态连接故障自动重试；
+        // 写操作默认不重试 —— 写重试需先有幂等保护（R6 尚未落地），此处守住安全默认值。
+        // 唯一包裹点放在 op 分派处，新增 op 无需重复接线，避免"配了不生效"重演。
+        var isWrite = normalized is not ("query" or "get");
+        return await _resilience.ExecuteAsync(
+            nodeId: resourceCode ?? tableName ?? normalized,
+            operation: normalized,
+            isWrite: isWrite,
+            allowWriteRetry: allowWriteRetry,
+            action: async ct => normalized switch
+            {
+                "query" => await QueryAsync(
+                    provider, dataSource, resource, schema, nodeInput, tableOverride, isDryRun, ct),
+                "get" => await GetAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                "create" => await CreateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                "update" => await UpdateAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                "delete" => await DeleteAsync(provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                // 批量写：单连接 + 单事务（复用 ParameterizedSqlExecutor.BatchAsync 的既有事务能力）。
+                // 只支持 SQL 家族 —— MongoDB 单机无跨文档事务，显式拒绝而不是假装原子。
+                "batchcreate" => await BatchWriteAsync(
+                    BatchOp.Create, provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                "batchupdate" => await BatchWriteAsync(
+                    BatchOp.Update, provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                "batchdelete" => await BatchWriteAsync(
+                    BatchOp.Delete, provider, dataSource, resource!, schema, nodeInput, isDryRun, ct),
+                _ => throw new UserFriendlyException($"Unsupported resource op: {op}")
+            },
+            cancellationToken: cancellationToken
+        );
     }
 
     private async Task<JsonObject> QueryAsync(
@@ -497,6 +540,244 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
         {
             throw new UserFriendlyException("Write to data source is not allowed.");
         }
+    }
+
+    private enum BatchOp
+    {
+        Create,
+        Update,
+        Delete
+    }
+
+    /// <summary>
+    /// 批量写：单连接 + 单事务，失败整体回滚。
+    /// 复用既有 SQL 构造（与单条 <see cref="CreateAsync"/>/<see cref="UpdateAsync"/>/<see cref="DeleteAsync"/> 同源），
+    /// 以及 <see cref="IParameterizedSqlExecutor.BatchAsync"/> 的既有事务实现 —— 不新建事务机制。
+    /// 输入：&#123; items: [ ... ], &#125;，items 为每条记录（create/update 为 record，delete 为 id 或含 id 的对象）。
+    /// 输出：&#123; op, affected, count &#125;（全事务语义：要么全成功，要么抛错回滚）。
+    /// </summary>
+    private async Task<JsonObject> BatchWriteAsync(
+        BatchOp op,
+        string provider,
+        DataSource dataSource,
+        AppResource resource,
+        QuerySchema schema,
+        JsonObject input,
+        bool isDryRun,
+        CancellationToken cancellationToken
+    )
+    {
+        await EnsureWriteAsync();
+
+        if (!DataSourceProvider.IsSql(provider))
+        {
+            throw new UserFriendlyException(
+                $"batch{op.ToString().ToLowerInvariant()} 仅支持 SQL 家族数据源；" +
+                $"{provider} 无跨文档事务，请改用 ForEach + itemErrorMode=continueOnError 逐条处理。"
+            );
+        }
+
+        var items = input["items"] as JsonArray
+                    ?? throw new UserFriendlyException("批量写需要 items 数组。");
+        if (items.Count == 0)
+        {
+            return new JsonObject { ["op"] = op.ToString().ToLowerInvariant(), ["affected"] = 0, ["count"] = 0 };
+        }
+
+        if (items.Count > OrchestrationConsts.CodeDbBatchMaxRows)
+        {
+            throw new UserFriendlyException(
+                $"批量写条目数 {items.Count} 超过上限 {OrchestrationConsts.CodeDbBatchMaxRows}。"
+            );
+        }
+
+        var table = schema.RequireTable();
+        var filter = FilterSqlBuilder.Build(provider, table, null, null, _currentTenant.Id);
+        var t = SqlDialect.QuoteIdent(provider, table.TableName);
+        var pk = SqlDialect.QuoteIdent(provider, resource.PrimaryKey);
+        var softDelete = table.Columns.Any(c => c.Name == resource.SoftDeleteField);
+
+        var paramList = new JsonArray();
+
+        switch (op)
+        {
+            case BatchOp.Create:
+            {
+                // 与单条 CreateAsync 同源：同一套列填充 + 平台字段
+                var (colSql, valSql, columns) = BuildInsertShape(provider, table);
+                foreach (var item in items)
+                {
+                    var record = item as JsonObject
+                                 ?? throw new UserFriendlyException("batchcreate 的 items 每项必须是对象。");
+                    var args = new JsonObject();
+                    foreach (var col in columns)
+                    {
+                        args["p" + Sanitize(col.Name)] = ResolveColumnValue(record, col);
+                    }
+
+                    args["pId"] = ReadString(record, "id") ?? _guidGenerator.Create().ToString();
+                    args["pTenantId"] = _currentTenant.Id?.ToString();
+                    args["pConcurrencyStamp"] = NewStamp();
+                    args["pCreationTime"] = DateTime.UtcNow.ToString("O");
+                    args["pCreatorId"] = _currentUser.Id?.ToString();
+                    args["pIsDeleted"] = false;
+                    paramList.Add(args);
+                }
+
+                var sql = $"INSERT INTO {t} ({colSql}) VALUES ({valSql})";
+                return await RunBatchAsync(op, dataSource, sql, paramList, items.Count, isDryRun, cancellationToken);
+            }
+
+            case BatchOp.Update:
+            {
+                var updatable = table.Columns
+                    .Where(c => c.Origin != TableOrigin.Convention)
+                    .ToList();
+                var setSql = string.Join(
+                    ", ",
+                    updatable.Select(c => $"{SqlDialect.QuoteIdent(provider, c.Name)} = {SqlDialect.ParamName(provider, "p" + Sanitize(c.Name))}")
+                );
+                if (string.IsNullOrWhiteSpace(setSql))
+                {
+                    throw new UserFriendlyException("batchupdate 找不到可更新的列。");
+                }
+
+                foreach (var item in items)
+                {
+                    var record = item as JsonObject
+                                 ?? throw new UserFriendlyException("batchupdate 的 items 每项必须是对象。");
+                    var id = ReadString(record, "id")
+                             ?? throw new UserFriendlyException("batchupdate 的每项都需要 id。");
+                    var args = new JsonObject();
+                    foreach (var col in updatable)
+                    {
+                        args["p" + Sanitize(col.Name)] = ResolveColumnValue(record, col);
+                    }
+
+                    args["pConcurrencyStamp"] = NewStamp();
+                    args["pLastModificationTime"] = DateTime.UtcNow.ToString("O");
+                    args["pLastModifierId"] = _currentUser.Id?.ToString();
+                    args["pId"] = id;
+                    paramList.Add(args);
+                }
+
+                // 乐观并发：ConcurrencyStamp 变化后旧版本不再匹配 —— 与单条 update 语义一致
+                var stampSql = table.Columns.Any(c => c.Name == "ConcurrencyStamp")
+                    ? $" AND {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pConcurrencyStamp")}"
+                    : "";
+                var stampSet = table.Columns.Any(c => c.Name == "ConcurrencyStamp")
+                    ? $", {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pConcurrencyStamp")}"
+                    : "";
+                var sql =
+                    $"UPDATE {t} SET {setSql}{stampSet} WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "pId")}";
+                return await RunBatchAsync(op, dataSource, sql, paramList, items.Count, isDryRun, cancellationToken);
+            }
+
+            case BatchOp.Delete:
+            {
+                foreach (var item in items)
+                {
+                    var record = item as JsonObject;
+                    var id = record != null
+                        ? ReadString(record, "id")
+                        : item?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(id))
+                    {
+                        throw new UserFriendlyException("batchdelete 的每项需要 id（字符串或含 id 的对象）。");
+                    }
+
+                    var args = filter.Args.DeepClone()!.AsObject();
+                    args["pId"] = id;
+                    if (softDelete)
+                    {
+                        args["pDeleted"] = true;
+                        args["pDeleter"] = _currentUser.Id?.ToString();
+                        args["pDeletionTime"] = DateTime.UtcNow.ToString("O");
+                    }
+
+                    paramList.Add(args);
+                }
+
+                var sql = softDelete
+                    ? $"UPDATE {t} SET {SqlDialect.QuoteIdent(provider, "IsDeleted")} = {SqlDialect.ParamName(provider, "pDeleted")}, " +
+                      $"{SqlDialect.QuoteIdent(provider, "DeleterId")} = {SqlDialect.ParamName(provider, "pDeleter")}, " +
+                      $"{SqlDialect.QuoteIdent(provider, "DeletionTime")} = {SqlDialect.ParamName(provider, "pDeletionTime")} " +
+                      $"WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "pId")}"
+                    : $"DELETE FROM {t} WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "pId")}";
+                return await RunBatchAsync(op, dataSource, sql, paramList, items.Count, isDryRun, cancellationToken);
+            }
+
+            default:
+                throw new UserFriendlyException($"不支持的批量操作：{op}");
+        }
+    }
+
+    /// <summary>与单条 CreateAsync 同源的插入列形状（列名 / 值占位符 / 参与列）。</summary>
+    private (string ColSql, string ValSql, List<TableColumn> Columns) BuildInsertShape(string provider, TableDefinition table)
+    {
+        var columns = table.Columns.Where(c => c.Origin != TableOrigin.Convention).ToList();
+        var names = new List<string>(columns.Select(c => c.Name))
+        {
+            "Id",
+            "TenantId",
+            "ConcurrencyStamp",
+            "CreationTime",
+            "CreatorId",
+            "IsDeleted"
+        };
+        var colSql = string.Join(", ", names.Select(n => SqlDialect.QuoteIdent(provider, n)));
+        var valSql = string.Join(
+            ", ",
+            names.Select(n => SqlDialect.ParamName(provider, "p" + Sanitize(n)))
+        );
+        return (colSql, valSql, columns);
+    }
+
+    /// <summary>按列名（大小写不敏感）取记录值；空值按列可空性处理。与单条 CreateAsync 取值规则一致。</summary>
+    private static JsonNode? ResolveColumnValue(JsonObject record, TableColumn col)
+    {
+        JsonNode? value = record[col.Name];
+        if (value == null)
+        {
+            foreach (var prop in record)
+            {
+                if (string.Equals(prop.Key, col.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = prop.Value;
+                    break;
+                }
+            }
+        }
+
+        if (IsBlankNode(value))
+        {
+            return col.PlatformType is TablePlatformType.Date or TablePlatformType.DateTime && !col.Nullable
+                ? throw new UserFriendlyException($"Column '{col.DisplayName}' is required.")
+                : null;
+        }
+
+        return value?.DeepClone();
+    }
+
+    private async Task<JsonObject> RunBatchAsync(
+        BatchOp op,
+        DataSource dataSource,
+        string sql,
+        JsonArray paramList,
+        int count,
+        bool isDryRun,
+        CancellationToken cancellationToken
+    )
+    {
+        var result = await _sqlExecutor.BatchAsync(dataSource, sql, paramList, isDryRun, cancellationToken);
+        return new JsonObject
+        {
+            ["op"] = op.ToString().ToLowerInvariant(),
+            ["count"] = count,
+            ["affected"] = result.AffectedRows,
+            // 全事务语义：能返回就代表整批已提交（失败会抛错并回滚）
+            ["committed"] = !isDryRun
+        };
     }
 
     private static List<string> ResolveSelectColumns(IReadOnlyList<TableColumn> columns, JsonNode? columnsNode)

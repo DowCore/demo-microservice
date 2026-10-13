@@ -66,6 +66,8 @@ public interface IAppResourceAppService : IApplicationService
     Task<ResourceInvokeResultDto> UpdateRecordAsync(string code, ResourceRuntimeSaveInput input);
 
     Task<ResourceInvokeResultDto> DeleteRecordAsync(string code, ResourceRuntimeGetInput input);
+
+    Task<ResourceBatchInvokeResultDto> BatchDeleteRecordsAsync(string code, ResourceRuntimeBatchInput input);
 }
 
 public interface IReportDefinitionAppService : IApplicationService

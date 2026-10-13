@@ -583,14 +583,62 @@ public class FlowExecutor : ITransientDependency
                 }
             }
 
+            // 节点级超时（timeoutMs）。默认 NodeDefaultTimeoutMs；0 表示不限时。
+            // 注意：包裹在**唯一的分发点**上，而不是每个 case 内部 —— 否则新增节点必然漏包。
+            var timeoutMs = node.TimeoutMs ?? OrchestrationConsts.NodeDefaultTimeoutMs;
+            using var nodeCts = timeoutMs > 0
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            nodeCts?.CancelAfter(timeoutMs);
+            var nodeToken = nodeCts?.Token ?? cancellationToken;
+
             var type = node.Type.ToLowerInvariant();
             if (type == "logic")
             {
                 type = (node.Kind ?? "Http").ToLowerInvariant();
             }
 
-            switch (type)
+            try
             {
+                await DispatchNodeAsync(type, node, ctx, record, isDryRun, callStack, nodeToken);
+            }
+            catch (OperationCanceledException) when (
+                nodeCts is not null && !cancellationToken.IsCancellationRequested)
+            {
+                throw new UserFriendlyException(
+                    $"节点「{node.Id}」({node.Type}) 执行超时（{timeoutMs} ms）。可通过 timeoutMs 调整，或置 0 关闭超时。"
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            record.Status = "Failed";
+            record.Error = ex.Message;
+        }
+        finally
+        {
+            sw.Stop();
+            record.DurationMs = (int)sw.ElapsedMilliseconds;
+        }
+
+        return record;
+    }
+
+    /// <summary>
+    /// 节点分发。抽出独立方法，使 ExecuteNodeAsync 能在**单一点**上做超时/审计包裹。
+    /// </summary>
+    private async Task DispatchNodeAsync(
+        string type,
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        bool isDryRun,
+        HashSet<string> callStack,
+        CancellationToken cancellationToken
+    )
+    {
+        switch (type)
+        {
                 case "start":
                 case "end":
                     record.OutputJson = "{}";
@@ -730,6 +778,10 @@ public class FlowExecutor : ITransientDependency
                 case "resourceupdate":
                 case "resourcedelete":
                 case "resourcecrud":
+                case "resourcebatchcreate":
+                case "resourcebatchupdate":
+                case "resourcebatchdelete":
+                case "resourcebatch":
                 {
                     await ExecuteResourceCrudAsync(node, ctx, record, isDryRun, cancellationToken);
                     CheckFailWhen(node, ctx);
@@ -739,19 +791,6 @@ public class FlowExecutor : ITransientDependency
                 default:
                     throw new UserFriendlyException($"Unsupported node type '{node.Type}'.");
             }
-        }
-        catch (Exception ex)
-        {
-            record.Status = "Failed";
-            record.Error = ex.Message;
-        }
-        finally
-        {
-            sw.Stop();
-            record.DurationMs = (int)sw.ElapsedMilliseconds;
-        }
-
-        return record;
     }
 
     /// <summary>
@@ -1415,6 +1454,9 @@ public class FlowExecutor : ITransientDependency
             "resourcecreate" => "create",
             "resourceupdate" => "update",
             "resourcedelete" => "delete",
+            "resourcebatchcreate" => "batchcreate",
+            "resourcebatchupdate" => "batchupdate",
+            "resourcebatchdelete" => "batchdelete",
             _ => (node.Kind ?? "").Trim().ToLowerInvariant()
         };
         if (string.IsNullOrWhiteSpace(op) && nodeInput["op"] != null)
@@ -1423,7 +1465,8 @@ public class FlowExecutor : ITransientDependency
         }
 
         record.InputJson = nodeInput.ToJsonString(JsonOptions);
-        var raw = await _resourceCrudExecutor.ExecuteAsync(op, nodeInput, isDryRun, cancellationToken);
+        var raw = await _resourceCrudExecutor.ExecuteAsync(
+            op, nodeInput, isDryRun, node.RetryOnWrite, cancellationToken);
         ApplyExecutableOutputs(node, raw, ctx);
         record.OutputJson = raw.ToJsonString(JsonOptions);
     }
@@ -1802,6 +1845,19 @@ public class FlowExecutor : ITransientDependency
         async Task<BranchOutcome> RunBranchAsync(FlowDslBranchDsl branch)
         {
             var branchRef = (branch.Ref ?? "").Trim();
+
+            // 分支超时逐级继承：branch.TimeoutMs → node.BranchTimeoutMs → node.TimeoutMs → 默认。
+            // 未做这层继承时 BranchTimeoutMs 只是"声明即弃"，属本次要消除的缺陷类型。
+            var branchTimeoutMs = branch.TimeoutMs
+                                  ?? node.BranchTimeoutMs
+                                  ?? node.TimeoutMs
+                                  ?? OrchestrationConsts.NodeDefaultTimeoutMs;
+            using var branchCts = branchTimeoutMs > 0
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            branchCts?.CancelAfter(branchTimeoutMs);
+            var branchToken = branchCts?.Token ?? cancellationToken;
+
             try
             {
                 var branchInputs = FlowContextResolver.MapNodeInputs(branch.Inputs, ctx);
@@ -1813,9 +1869,20 @@ public class FlowExecutor : ITransientDependency
                     branchInputs,
                     isDryRun,
                     callStack,
-                    cancellationToken
+                    branchToken
                 );
                 return new BranchOutcome(branchRef, outcome.Ok, outcome.Output, outcome.Error, branch.Optional);
+            }
+            catch (OperationCanceledException) when (
+                branchCts is not null && !cancellationToken.IsCancellationRequested)
+            {
+                return new BranchOutcome(
+                    branchRef,
+                    false,
+                    null,
+                    $"分支「{branchRef}」超时（{branchTimeoutMs} ms）。",
+                    branch.Optional
+                );
             }
             catch (Exception ex)
             {
@@ -2441,7 +2508,9 @@ public class FlowExecutor : ITransientDependency
                 }
             }
             else if (type is "resourceget" or "resourcecreate" or "resourceupdate"
-                or "resourcedelete" or "resourcecrud")
+                or "resourcedelete" or "resourcecrud"
+                or "resourcebatchcreate" or "resourcebatchupdate" or "resourcebatchdelete"
+                or "resourcebatch")
             {
                 if (node.Inputs is not { Count: > 0 } ||
                     node.Inputs.All(x => !string.Equals(x.Name, "resourceCode", StringComparison.OrdinalIgnoreCase)))
@@ -2449,6 +2518,27 @@ public class FlowExecutor : ITransientDependency
                     throw new UserFriendlyException(
                         $"Resource node '{node.Id}' requires an input named resourceCode."
                     );
+                }
+
+                // 批量节点必须显式声明 items 入参：批量语义对「空集」和「漏传」的处置不同，
+                // 漏传会静默变成 0 行影响，属典型的「配置被接受但不生效」，故在此拦截。
+                if (type is "resourcebatchcreate" or "resourcebatchupdate" or "resourcebatchdelete")
+                {
+                    var inputs = node.Inputs ?? [];
+                    if (inputs.All(x => !string.Equals(x.Name, "items", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        throw new UserFriendlyException(
+                            $"Batch resource node '{node.Id}' requires an input named items (array)."
+                        );
+                    }
+
+                    if (string.Equals(type, "resourcebatchdelete", StringComparison.OrdinalIgnoreCase) &&
+                        node.Inputs!.Any(x => string.Equals(x.Name, "onDelete", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        throw new UserFriendlyException(
+                            $"Batch resource node '{node.Id}' 不支持 onDelete：批量删除固定走软删（与单条 delete 一致）。"
+                        );
+                    }
                 }
             }
         }
@@ -2565,6 +2655,59 @@ public class FlowExecutor : ITransientDependency
         return type;
     }
 
+    /// <summary>
+    /// 判定节点类型是否属于「写操作」且可通过 retryOnWrite 开启重试。
+    /// 目前覆盖资源写（create/update/delete）与 SQL 写（Code 节点内 db.execute/batch 不在此列，
+    /// 因其重试开关需由脚本自身控制）；其余节点类型拒绝该字段，避免"配了不生效"。
+    /// </summary>
+    private static bool SupportWriteRetry(string type) =>
+        type.Equals("resourcecreate", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourceupdate", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourcedelete", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourcebatchcreate", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourcebatchupdate", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourcebatchdelete", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("resourcebatch", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 从节点入参中解析幂等键。约定：入参名 <c>idempotencyKey</c>（大小写不敏感）。
+    /// 字面量（{ literal: "..." } / 字符串）与路径绑定（input.x / sys.Now …）皆视为已提供，
+    /// 因为绑定的实际取值只有运行时才知道 —— 校验层只保证"声明了"，不保证"非空"。
+    /// </summary>
+    private static string? ResolveIdempotencyKey(FlowDslNode node)
+    {
+        if (node.Inputs is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        foreach (var input in node.Inputs)
+        {
+            if (!string.Equals(input.Name, "idempotencyKey", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (input.From is null)
+            {
+                return null; // 声明了入参但没有来源 → 视为未提供
+            }
+
+            // 字面量形式：{ "literal": "..." }
+            if (input.From is JsonObject obj && obj.TryGetPropertyValue("literal", out var literal))
+            {
+                var text = literal?.ToString();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+
+            // 路径绑定形式（input.x / sys.Now / results.n.f …）：运行期才求值，声明即视为已提供。
+            var path = input.From.ToString();
+            return string.IsNullOrWhiteSpace(path) ? null : path;
+        }
+
+        return null;
+    }
+
     /// <summary>从 Start 出发做可达性分析（沿出边 BFS）。</summary>
     private static HashSet<string> CollectReachable(FlowDslDocument dsl)
     {
@@ -2608,6 +2751,59 @@ public class FlowExecutor : ITransientDependency
     private static void ValidateControlNode(FlowDslNode node)
     {
         var type = ResolveNodeKind(node);
+
+        // 节点级超时校验：不允许"配了不生效"或"配了等于没配"的模糊取值。
+        if (node.TimeoutMs is { } timeoutMs)
+        {
+            if (timeoutMs < 0 ||
+                (timeoutMs > 0 && timeoutMs < OrchestrationConsts.NodeMinTimeoutMs) ||
+                timeoutMs > OrchestrationConsts.NodeMaxTimeoutMs)
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}' 的 timeoutMs 必须是 0（不限时）或 {OrchestrationConsts.NodeMinTimeoutMs}..{OrchestrationConsts.NodeMaxTimeoutMs} 之间的毫秒数。"
+                );
+            }
+        }
+
+        // branchTimeoutMs 只对 Parallel 有意义：配在其它节点上会被静默忽略，故直接拒绝。
+        if (node.BranchTimeoutMs is { } branchTimeoutMs)
+        {
+            if (!type.Equals("Parallel", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}'（{type}）不支持 branchTimeoutMs，该字段仅在 Parallel 上生效。"
+                );
+            }
+
+            if (branchTimeoutMs < 0 ||
+                (branchTimeoutMs > 0 && branchTimeoutMs < OrchestrationConsts.NodeMinTimeoutMs) ||
+                branchTimeoutMs > OrchestrationConsts.NodeMaxTimeoutMs)
+            {
+                throw new UserFriendlyException(
+                    $"Parallel '{node.Id}' 的 branchTimeoutMs 必须是 0 或 {OrchestrationConsts.NodeMinTimeoutMs}..{OrchestrationConsts.NodeMaxTimeoutMs} 之间的毫秒数。"
+                );
+            }
+        }
+
+        // retryOnWrite 是「危险开关」：写重试可能造成重复副作用。启用必须同时提供幂等键，
+        // 否则拒绝发布 —— 把纪律落到代码里，而不是只写在文档里。
+        if (node.RetryOnWrite)
+        {
+            if (!SupportWriteRetry(type))
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}'（{type}）不支持 retryOnWrite，该字段仅对资源写/SQL 写类节点生效。"
+                );
+            }
+
+            if (string.IsNullOrWhiteSpace(ResolveIdempotencyKey(node)))
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}' 声明了 retryOnWrite，但未提供幂等键（idempotencyKey）。" +
+                    "写操作重试可能造成重复副作用，必须配置幂等键后才能启用。"
+                );
+            }
+        }
 
         if (type.Equals("ForEach", StringComparison.OrdinalIgnoreCase) ||
             type.Equals("Loop", StringComparison.OrdinalIgnoreCase))

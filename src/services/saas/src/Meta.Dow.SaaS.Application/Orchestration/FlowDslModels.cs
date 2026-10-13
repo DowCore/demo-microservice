@@ -223,6 +223,14 @@ public class FlowDslNode
     public int? TimeoutMs { get; set; }
 
     /// <summary>
+    /// 允许写操作（SQL/Redis/Mongo 的 create/update/delete）在瞬态故障下重试。
+    /// **默认 false**：写重试可能造成重复副作用，必须显式开启。
+    /// 开启后要求节点具备幂等保护（当前校验层强制要求提供 idempotencyKey），
+    /// 否则 ValidateDsl 报错 —— 把"纪律"落进代码而不是文档里。
+    /// </summary>
+    public bool RetryOnWrite { get; set; }
+
+    /// <summary>
     /// 业务数据根（相对原始结果信封）。Http 常用 body.data；Sql 常用 rows。
     /// outputs.from 优先相对该根解析，找不到再回退 raw 根；statusCode / body.xxx 等信封路径始终相对 raw。
     /// </summary>

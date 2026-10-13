@@ -21,7 +21,10 @@ public class SaaSApplicationModule : AbpModule
             "OrchestrationHttpCall",
             client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(30);
+                // 超时决策交给弹性管道（见 Meta.Dow.ServiceDefaults）：总预算 60s（含重试）、
+                // 单次尝试 10s。此处不设 client.Timeout，避免外层截断重试空间。
+                // 节点级超时由 FlowExecutor 的 timeoutMs 控制（默认 30s）。
+                client.Timeout = Timeout.InfiniteTimeSpan;
             }
         );
 

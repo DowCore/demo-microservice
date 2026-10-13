@@ -135,6 +135,68 @@ public class AppResourceAppService : SaaSAppService, IAppResourceAppService
     public Task<ResourceInvokeResultDto> DeleteRecordAsync(string code, ResourceRuntimeGetInput input) =>
         InvokeAsync(code, r => r.DeleteFlowKey, input, persistOnSuccess: true);
 
+    /// <summary>
+    /// 批量删除记录。语义与单条 <see cref="DeleteRecordAsync"/> 完全一致 ——
+    /// 逐条调用资源绑定的 DeleteFlowKey 流程（不绕过编排、不直接 DELETE 表），
+    /// 只是把 N 次 HTTP 往返收成 1 次调用。
+    /// 采用「逐条独立事务 + 部分失败继续」策略：某条被流程拒绝不影响其余条目，
+    /// 返回 affected/skipped 供调用方如实展示，避免「一条坏数据导致整批无法删除」。
+    /// </summary>
+    [Authorize(OrchestrationPermissions.Resources.Execute)]
+    public async Task<ResourceBatchInvokeResultDto> BatchDeleteRecordsAsync(
+        string code,
+        ResourceRuntimeBatchInput input
+    )
+    {
+        var ids = (input?.Ids ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        if (ids.Count == 0)
+        {
+            return new ResourceBatchInvokeResultDto { Success = true, Requested = 0, Affected = 0, Skipped = 0 };
+        }
+
+        if (ids.Count > OrchestrationConsts.CodeDbBatchMaxRows)
+        {
+            throw new UserFriendlyException(
+                L["Orchestration:BatchTooManyRows", OrchestrationConsts.CodeDbBatchMaxRows, ids.Count]
+            );
+        }
+
+        var entity = await FindByCodeAsync(code);
+        if (entity.Status != AppResourceStatus.Published)
+        {
+            throw new UserFriendlyException(L["Orchestration:ResourceNotPublished", code]);
+        }
+
+        var affected = 0;
+        var errors = new List<ResourceBatchItemErrorDto>();
+        foreach (var id in ids)
+        {
+            var result = await InvokeAsync(
+                code,
+                r => r.DeleteFlowKey,
+                new ResourceRuntimeGetInput { Id = id },
+                persistOnSuccess: true
+            );
+            if (result.Success)
+            {
+                affected++;
+            }
+            else
+            {
+                errors.Add(new ResourceBatchItemErrorDto { Id = id, Error = result.Error ?? "Failed" });
+            }
+        }
+
+        return new ResourceBatchInvokeResultDto
+        {
+            Success = errors.Count == 0,
+            Requested = ids.Count,
+            Affected = affected,
+            Skipped = errors.Count,
+            Errors = errors
+        };
+    }
+
     private async Task<ResourceInvokeResultDto> InvokeAsync(
         string code,
         Func<AppResource, string> flowKeySelector,

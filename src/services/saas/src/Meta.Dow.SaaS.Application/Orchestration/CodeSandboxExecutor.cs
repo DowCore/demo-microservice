@@ -43,16 +43,19 @@ public class CodeSandboxExecutor : ICodeSandboxExecutor, ITransientDependency
     private readonly IParameterizedSqlExecutor _sqlExecutor;
     private readonly IRedisDataExecutor _redisExecutor;
     private readonly IMongoDataExecutor _mongoExecutor;
+    private readonly INodeResiliencePolicy _resilience;
 
     public CodeSandboxExecutor(
         IParameterizedSqlExecutor sqlExecutor,
         IRedisDataExecutor redisExecutor,
-        IMongoDataExecutor mongoExecutor
+        IMongoDataExecutor mongoExecutor,
+        INodeResiliencePolicy resilience
     )
     {
         _sqlExecutor = sqlExecutor;
         _redisExecutor = redisExecutor;
         _mongoExecutor = mongoExecutor;
+        _resilience = resilience;
     }
 
     public Task<JsonNode?> ExecuteAsync(CodeSandboxRequest request, CancellationToken cancellationToken = default)
@@ -97,6 +100,7 @@ public class CodeSandboxExecutor : ICodeSandboxExecutor, ITransientDependency
                 _sqlExecutor,
                 _redisExecutor,
                 _mongoExecutor,
+                _resilience,
                 request.IsDryRun,
                 request.CanWriteSql,
                 cancellationToken
@@ -183,6 +187,7 @@ public sealed class CodeDbHost
     private readonly IParameterizedSqlExecutor _sqlExecutor;
     private readonly IRedisDataExecutor _redisExecutor;
     private readonly IMongoDataExecutor _mongoExecutor;
+    private readonly INodeResiliencePolicy _resilience;
     private readonly bool _isDryRun;
     private readonly bool _canWrite;
     private readonly CancellationToken _cancellationToken;
@@ -193,6 +198,7 @@ public sealed class CodeDbHost
         IParameterizedSqlExecutor sqlExecutor,
         IRedisDataExecutor redisExecutor,
         IMongoDataExecutor mongoExecutor,
+        INodeResiliencePolicy resilience,
         bool isDryRun,
         bool canWrite,
         CancellationToken cancellationToken
@@ -202,11 +208,28 @@ public sealed class CodeDbHost
         _sqlExecutor = sqlExecutor;
         _redisExecutor = redisExecutor;
         _mongoExecutor = mongoExecutor;
+        _resilience = resilience;
         _isDryRun = isDryRun;
         _canWrite = canWrite;
         _cancellationToken = cancellationToken;
         _family = DataSourceProvider.GetFamily(dataSource.Provider);
     }
+
+    /// <summary>
+    /// 沙箱内数据访问统一走这里：读操作（isWrite: false）遇瞬态故障自动重试，
+    /// 写操作默认不重试（与 R1/R3 的安全默认值一致）。
+    /// 沙箱代码是同步执行的（Jint 内无真正 async），故这里同步等待。
+    /// </summary>
+    private T Run<T>(string api, bool isWrite, Func<CancellationToken, Task<T>> action) =>
+        _resilience
+            .ExecuteAsync(
+                nodeId: "code-db",
+                operation: api,
+                isWrite: isWrite,
+                action: action,
+                cancellationToken: _cancellationToken
+            )
+            .GetAwaiter().GetResult();
 
     // —— SQL ——
     public object query(string sql, object? args = null) => Query(sql, args);
@@ -216,9 +239,8 @@ public sealed class CodeDbHost
     public object Query(string sql, object? args = null)
     {
         EnsureFamily(DataSourceProvider.FamilySql, "db.query");
-        var result = _sqlExecutor
-            .QueryAsync(_dataSource, sql, ToJsonObject(args), _isDryRun, _cancellationToken)
-            .GetAwaiter().GetResult();
+        var result = Run("db.query", isWrite: false, ct => _sqlExecutor.QueryAsync(
+            _dataSource, sql, ToJsonObject(args), _isDryRun, ct));
         return ToSqlResult(result, includeRows: true);
     }
 
@@ -252,7 +274,8 @@ public sealed class CodeDbHost
     public object? Get(string key)
     {
         EnsureFamily(DataSourceProvider.FamilyRedis, "db.get");
-        return _redisExecutor.GetAsync(_dataSource, key, _isDryRun, _cancellationToken).GetAwaiter().GetResult();
+        return Run("db.get", isWrite: false, ct =>
+            _redisExecutor.GetAsync(_dataSource, key, _isDryRun, ct));
     }
 
     public object Set(string key, object? value, object? options = null)
@@ -281,9 +304,8 @@ public sealed class CodeDbHost
     public object MGet(object keys)
     {
         EnsureFamily(DataSourceProvider.FamilyRedis, "db.mget");
-        return _redisExecutor
-            .MGetAsync(_dataSource, ToStringList(keys), _isDryRun, _cancellationToken)
-            .GetAwaiter().GetResult();
+        return Run("db.mget", isWrite: false, ct =>
+            _redisExecutor.MGetAsync(_dataSource, ToStringList(keys), _isDryRun, ct));
     }
 
     public object MSet(object map)
@@ -313,24 +335,21 @@ public sealed class CodeDbHost
     public object Find(string collection, object? filter = null, object? options = null)
     {
         EnsureFamily(DataSourceProvider.FamilyMongo, "db.find");
-        return _mongoExecutor
-            .FindAsync(
-                _dataSource,
-                collection,
-                ToJsonObject(filter),
-                ToJsonObject(options),
-                _isDryRun,
-                _cancellationToken
-            )
-            .GetAwaiter().GetResult();
+        return Run("db.find", isWrite: false, ct => _mongoExecutor.FindAsync(
+            _dataSource,
+            collection,
+            ToJsonObject(filter),
+            ToJsonObject(options),
+            _isDryRun,
+            ct
+        ));
     }
 
     public object? FindOne(string collection, object? filter = null)
     {
         EnsureFamily(DataSourceProvider.FamilyMongo, "db.findOne");
-        return _mongoExecutor
-            .FindOneAsync(_dataSource, collection, ToJsonObject(filter), _isDryRun, _cancellationToken)
-            .GetAwaiter().GetResult();
+        return Run("db.findOne", isWrite: false, ct =>
+            _mongoExecutor.FindOneAsync(_dataSource, collection, ToJsonObject(filter), _isDryRun, ct));
     }
 
     public object InsertOne(string collection, object doc)

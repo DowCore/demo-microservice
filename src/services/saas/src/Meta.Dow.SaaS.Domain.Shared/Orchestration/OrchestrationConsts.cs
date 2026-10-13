@@ -41,4 +41,13 @@ public static class OrchestrationConsts
 
     /// <summary>Parallel / ForEach 嵌套深度上限（与 SubFlow 共用同一调用栈计数）</summary>
     public const int MaxControlNestingDepth = 5;
+
+    /// <summary>节点级默认超时（毫秒）。未配置 timeoutMs 时生效。0 表示不限时。</summary>
+    public const int NodeDefaultTimeoutMs = 30_000;
+
+    /// <summary>节点级超时上限（毫秒）。防止误配超大值使护栏失效。</summary>
+    public const int NodeMaxTimeoutMs = 600_000;
+
+    /// <summary>节点级超时下限（毫秒）。小于该值视为误配（除 0 = 不限）。</summary>
+    public const int NodeMinTimeoutMs = 50;
 }

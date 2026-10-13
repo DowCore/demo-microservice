@@ -1,283 +1,443 @@
-# Meta.Dow 表单编辑与 OA 流程重构设计规格书
+# Meta.Dow 表单与 OA 审批：能力契约、行为边界与增强规划
 
-> **文档性质**：表单设计器与 OA 审批流的核心架构重构与能力落地规格书。  
-> **关联文档**：[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)、[`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)、[`lowcode-form-preview.md`](./lowcode-form-preview.md)  
-> **前后端边界**：前端 `D:\Project\vue-demo`（Vben Admin / Ant Design Vue）；后端 `Meta.Dow.SaaS` 编排引擎。
-
-> **实现状态（2026-10 核对）**：本文原为"重构规格书"，下方 §2、§3 所列能力**绝大多数已落地**。仍待补的项标注 ⚠，详见 §0。  
-> **定义侧健壮性缺陷**：表单定义链（F1–F7）与 OA 流程定义链（W1–W9）的代码级缺陷汇总见 **§8**——§0 回答"有没有落地"，§8 回答"稳不稳"。
-
----
-
-## 0. 实现状态核对（2026-10）
-
-> 本节由代码核对补入，作为下方原文的"实施真相"。原文 §1–§4 保留作为能力契约参考，实施时以本表为准。
-
-| 章节 | 能力 | 状态 | 代码位置 |
-|------|------|------|----------|
-| §2.1 | 标准控件协议扩展（input/select/cascader/userPicker/deptPicker/upload/grid/card/table/tabs 等） | ✅ 已落地 | [ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) `FormFieldDef.Control` + `ControlProps` |
-| §2.2 | 字段动态联动 `dependencies`（show/hide/enable/disable/require/setValue） | ✅ 已落地 | `FormFieldDependencyDef`（同文件，`SourceField/Op/Value/Action/SetValue`） |
-| §2.3 | 容器树自动拍平 `Fields`，消除发布硬编码阻断 | ✅ 已落地 | [FormDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs) `EnsureFlattenedFields`，`UpdateAsync`/`PublishAsync` 均调用 |
-| §3.1 | 流程实例快照 `ProcessSnapshotJson`，流转基于快照寻址 | ✅ 已落地 | [WorkflowInstance.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/WorkflowInstance.cs) `ProcessSnapshotJson` + [WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs) 全程读快照 |
-| §3.2 | 五动作 `approve`/`reject_to_prev`/`reject_to_starter`/`reject_terminate`/`transfer` | ✅ 已落地 | `WorkflowRuntimeAppService.CompleteAsync` |
-| §3.3 | 节点字段权限矩阵 `FieldPermissions`（read/write/hide/required） | ✅ 已落地 | `WfProcessNode.FieldPermissions` + 办理时 `FilterRecordPatch` 按权限过滤 |
-| §3.3 | `EmptyFallback` 容错（admin/skip/error） | ✅ 已落地 | `WfProcessNode.EmptyFallback`，缺人时按策略处理 |
-| §3.4 | 审批时表单数据回写 `RecordPatch` | ✅ 已落地 | `CompleteAsync` 调 `FilterRecordPatch(node.FieldPermissions, input.RecordPatch)` 后合并到 `instance.RecordJson` |
-| §3.5 | 执行轨迹 `HistoryJson` | ✅ 已落地 | `WorkflowInstance.HistoryJson` 字段 + `CompleteAsync` 写入流转记录 |
-| §3.2 | 部门主管 `manager` 解析为**直属部门主管** | ✅ **已落地（2026-10 补充）** | 新增 `IWorkflowOrgResolver` / `WorkflowOrgResolver`，依托 ABP Identity 组织架构（`AbpOrganizationUnits`）解析发起人直属部门主管：优先本级 OU，找不到沿父级向上，取持有指定角色（默认 `manager`）的成员。`ResolveAssigneesAsync` 的 `case "manager"` 已改为调用它 |
-| §3.2 | `assigneeType=role` 显式分支 | ✅ **已落地（2026-10 补充）** | `ResolveAssigneesAsync` 补显式 `case "role"`；未知办理人类型改为显式报错，不再默默当角色码处理 |
-| §2 / §3 | 编排引擎节点不全：独立 `Sql` 节点、`Switch`、并行、循环 | ⚠ **未落地** | [FlowExecutor.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs) 节点 dispatch 仅覆盖 `start/end/log/assign/mask/throw/assert/condition/http/code/rabbitmqpublish/subflow/resourcecrud*`；SQL 经 Code 节点 `db.*` 间接实现；Switch/并行/循环见 [lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3 仍为规划 |
-| §3.5 | 前端审批时间轴 Timeline 渲染 | ✅ **已落地** | 前端 `vue-demo/apps/web-antd/src/views/orchestration/workflows/index.vue` 已按 `task.historyJson` 渲染流转记录（`actionLabel` 映射各动作），后端 `HistoryJson` 供数 |
-
-**结论**：§2 表单侧、§3 流程侧核心能力已落地；§3.2 的 `manager` 组织树解析、`role` 显式分支、§3.5 前端时间轴均已补齐（见上方 ✅）。**§8.1/§8.2 所列 F1–F7、W1–W9 定义侧健壮性缺陷已全部修复**（分批见 §8.4、§8.5）。剩余真实缺口集中在编排引擎控制流原语（Switch/并行/循环/独立 Sql），见 §8.5.4。下方原文保留作为能力契约。
+> **文档性质**：混合，已拆分——§1 定位与边界、§3 契约与实现细节、§6 操作说明为**事实契约**；§5 为**规划**（当前不可用）；§4 为**已知缺陷**。三部分严格隔离，不混写。
+> **代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误，62/62 单测通过。
+> **核对方式**：文中每条"已实现"结论均附 `相对路径:行号`，均经逐行 read 复核；§9 列出本次改写的失真断言全表。
+> **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划） ｜ 🐞 已知缺陷 ｜ ⚠️ 未核验（前端在 vue-demo）
+> **关联文档**：[`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)（OA 侧契约、缺陷与规划，与本文**不重复**）、[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)、[`lowcode-form-preview.md`](./lowcode-form-preview.md)、[`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md)、[`lowcode-report-management.md`](./lowcode-report-management.md)
+> **前后端边界**：前端 `vue-demo`（Vben Admin / Ant Design Vue）**不在本仓**，凡涉前端的结论一律标注 `⚠️ 未核验（前端在 vue-demo）`。
 
 ---
 
-## 1. 现状缺陷诊断与重构目标
+## 1. 定位与边界
 
-在现有实现中，表单设计器与 OA 流程存在严重的业务脱节与架构断层：
+### 1.1 这篇管什么
 
-| 模块 | 现状致命缺陷 | 业务影响 | 重构方案与标准 |
-|:---|:---|:---|:---|
-| **表单编辑** | 缺少组织协同控件（用户/部门/级联/上传等） | 无法录入请假人、报销部门、凭证附件等 OA 基础信息 | 扩充标准控件协议，引入 `userPicker`、`deptPicker`、`upload`、`radio`、`checkbox`、`select`、`cascader` 等控件 |
-| **表单编辑** | 缺少字段动态联动与依赖（显隐/只读/必填联动） | 无法根据条件动态展示输入项（如“请假类型=病假”才显示“上传医院证明”） | 增加 `dependencies` 规则协议，支持条件驱动的 show/hide/require/disable/setValue |
-| **表单编辑** | `Fields`、`Layout` 与 `VformJson` 多轨割裂，发布硬编码阻断 | 设计器使用容器树时若未手动同步 `Fields`，发布直接报 `FormFieldsRequired` 异常 | 统一以组件树/容器为核心，后端自动拍平同步 `Fields`，消除发布硬编码阻断 |
-| **OA 流程** | **缺少“退回/驳回”、“转办”等核心审批动作** | 审批人选不通过直接导致整条流程异常终结，无法退回修改重提 | 扩展任务完成动作：`approve`（同意）、`reject_to_prev`（驳回上一步）、`reject_to_starter`（退回发起人）、`reject_terminate`（终止作废）、`transfer`（转办） |
-| **OA 流程** | **缺少节点级表单字段权限控制** | 无法做到“发起人可写、主管只读、财务填报销金额”，权限控制形同虚设 | 节点引入 `fieldPermissions`（字段级 `read`/`write`/`hide`/`required` 矩阵） |
-| **OA 流程** | **审批过程无法补充或修改表单数据** | 审批人只能输入一段意见，无法在审核时纠正或补充表单字段 | `CompleteWorkflowTaskDto` 支持 `RecordPatch`（字段补丁增量合并到流程表单） |
-| **OA 流程** | **流程无版本快照，导致在途审批死锁** | 管理员修改发布流程后，在途任务按最新 JSON 寻址报错“流程里已无此节点” | 启动流程实例时固化保存 `ProcessSnapshotJson`，实例流转全生命周期基于快照寻址 |
-| **OA 流程** | 部门主管被硬编码为全局 `manager` 静态角色，空审批人直接崩溃 | 不是发起人直属主管；某节点无人时系统直接抛异常卡死 | 完善直属部门主管解析，并增加 `emptyFallback`（转管理员/自动跳过/报错）容错策略 |
+本仓（`Meta.Dow.SaaS`）的**表单定义链**与**人审工作流定义链**的：
+
+- 领域模型与 JSON 契约（字段、布局树、控件、联动、节点、连线）；
+- 定义侧与运行时的**真实行为**：默认值、上限、校验时机、失败开/失败关；
+- 定义侧与运行时**已知缺陷**（§4）；
+- 对照成熟方案后**仍缺**的能力（§5，明确"当前不可用"）。
+
+### 1.2 这篇不管什么
+
+- **不描述前端渲染**。表单渲染器、设计器交互、审批时间轴的实际渲染，全部在 `vue-demo`，本仓只能核验后端供数契约。
+- **不描述逻辑编排引擎的控制流原语**。`FlowExecutor` 的 `ForEach`/`Parallel`/`SubFlow` 等属于编排引擎，见 [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md)。**特别注意**：OA 侧与人审侧的"并行/循环"是**两回事**——编排侧的并行与循环**已实现**（见 §2 表），而 **OA 人审侧**的 fork/join、`callActivity` 确实未实现。
+- **不描述报表定义**。见 [`lowcode-report-management.md`](./lowcode-report-management.md)。
+
+### 1.3 初始缺陷诊断与重构目标（保留原文，状态已按代码校正）
+
+| 模块 | 原诊断的致命缺陷 | 业务影响 | 重构标准 | 现状 |
+|:---|:---|:---|:---|:---|
+| **表单编辑** | 缺少组织协同控件（用户/部门/级联/上传等） | 无法录入请假人、报销部门、凭证附件等 OA 基础信息 | 扩充标准控件协议 | ✅ 模型层已扩（§3.1）；渲染 `⚠️ 未核验` |
+| **表单编辑** | 缺少字段动态联动与依赖 | 无法按条件动态展示输入项 | 增加 `dependencies` 协议 | ⚠️ 协议已有，**无任何后端求值点**（§4.3） |
+| **表单编辑** | `Fields`、`Layout`、`VformJson` 多轨割裂，发布硬编码阻断 | 设计器用容器树时若未同步 `Fields`，发布报 `FormFieldsRequired` | 统一以容器树为核心，后端自动拍平 | ⚠️ 覆盖式拍平**主体已实现**，但存在幽灵字段缺口（§4.1） |
+| **OA 流程** | 缺少"退回/驳回"、"转办"等核心审批动作 | 审批不通过导致整条流程异常终结 | 五动作 | ⚠️ 入口齐备，**驳回语义有严重缺陷**（§4.8） |
+| **OA 流程** | 缺少节点级表单字段权限控制 | 权限控制形同虚设 | 节点 `fieldPermissions` | ⚠️ 已实现但 fail-open（§4.7） |
+| **OA 流程** | 审批过程无法补充或修改表单数据 | 审批人无法在审核时纠正字段 | `CompleteWorkflowTaskDto.RecordPatch` | 🐞 已实现但异常路径静默丢失（§4.9） |
+| **OA 流程** | 流程无版本快照，导致在途审批死锁 | 改流程后在途任务按最新 JSON 寻址报错 | 启动时固化 `ProcessSnapshotJson` | ✅ 流程侧已固化（§3.4） |
+| **OA 流程** | 部门主管硬编码为全局 `manager`，空审批人直接崩溃 | 不是发起人直属主管；无人时抛异常卡死 | 组织树解析 + `emptyFallback` | ⚠️ 已实现；`manager` 可解析出**发起人本人**（§4.6） |
+
+> **一句话结论**：表单定义链与 OA 定义链的**入口几乎都建好了**，但「入口存在」不等于「行为可靠」——表单未真正冻结、字段联动后端不求值、驳回语义错、补丁可能丢、并发无保护。§2 是能力清单，§4 是稳定性真相，两者不冲突。
 
 ---
 
-## 2. 表单系统重构升级规格
+## 2. 现状能力总表（本文唯一权威表）
 
-### 2.1 标准控件协议扩展
+> 本表回答"能力**有没有**落地"；§4 回答"**稳不稳**"。⚠️/❌/🐞 项一律不得理解为可用。
 
-在 [ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) 中扩展控件类型定义：
+### 2.1 表单侧
+
+| # | 能力 | 状态 | 证据 `file:line` | 备注 |
+|--:|------|:----:|------------------|------|
+| F-1 | 控件类型枚举（`input`/`textarea`/`number`/`select`/`radio`/`checkbox`/`cascader`/`userPicker`/`deptPicker`/`upload`/`table`/`list`/`tree`/…） | ✅ | `src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs:334`（`FormFieldDef.Control` 默认 `input`，注释列全枚举） | 模型是**自由字符串**，非 enum：拼错不报错 |
+| F-2 | 控件特有配置 `ControlProps` | ✅ | `ResourceSchema.cs:362`（字段）、`:441`（控件节点） | `Dictionary<string, object?>`，键值任意、不校验 |
+| F-3 | 字段动态联动协议 `dependencies` | ⚠️ | `ResourceSchema.cs:359`（`List<FormFieldDependencyDef>`）、`:304-315`（`SourceField`/`Op`/`Value`/`Action`/`SetValue`） | **协议存在，后端零消费点**；全部求值在前端（§4.3） |
+| F-4 | 栅格与容器树（`grid`/`card`/`data-table`/`subform`） | ✅ | `ResourceSchema.cs:381-442`（`FormWidgetDef`）、`:449-450`（`FormDef.Layout`） | |
+| F-5 | 容器树自动拍平 `Fields`（覆盖式） | ⚠️ | `src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs:213-228`（`EnsureFlattenedFields`）；调用点 `:117`（`UpdateAsync`）、`:165`（`PublishAsync`） | **抽出 0 个字段时不覆盖** → 幽灵字段仍可发布（§4.1） |
+| F-6 | 拍平不丢明细结构/规则/联动/控件配置 | ✅ | `FormDefinitionAppService.cs:275-297`（`BuildField`）、`:235-262`（`ExtractFieldsFromWidgets`）、`:264-273`（`IsDetailContainer`） | 明细容器的子列聚合为 `Children`，不再扁平到顶层 |
+| F-7 | 克隆不丢属性（深拷贝） | ✅ | `FormDefinitionAppService.cs:426-454`（`CloneWidget`）、`:456-479`（`CloneField`）、`:481-493`（`CloneRule`）、`:495-503`（`CloneDependencies`） | `Rules`/`Dependencies`/`ControlProps` 均新建对象 |
+| F-8 | 发布生成不可变快照 + `SchemaVersion` | ⚠️ | `src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/FormDefinition.cs:37`（`PublishedSchema`）、`:25`（`SchemaVersion`）、`:81-86`（`Publish`）、`:89`（`GetEffectiveSchema`）；调用 `FormDefinitionAppService.cs:174-175` | 快照是**单份**、无历史版本；历史记录 `PublishedSchema=null` 时回落**可变草稿**（§4.2） |
+| F-9 | 落库列名映射 `ColumnName` | ⚠️ | `ResourceSchema.cs:325`（字段）、`:403`（控件） | **运行时无任何消费点**（§4.4）；仅用于发布校验 `FormDefinitionAppService.cs:350` |
+| F-10 | 发布校验：字段名唯一 | ✅ | `FormDefinitionAppService.cs:299-325`（`ValidateFieldNames`），调用点 `:171` | 大小写不敏感去重；递归校验 `Children` |
+| F-11 | 发布校验：与绑定资源列对齐 | ⚠️ | `FormDefinitionAppService.cs:328-358`（`ValidateAgainstResourceAsync`），调用点 `:172` | **fail-open**：资源不存在（`:336-339`）或无列（`:342-345`）时**直接放行**（§4.5） |
+| F-12 | 删除引用完整性检查 | ⚠️ | `FormDefinitionAppService.cs:134-156` | 覆盖 OA `FormRef`（`:138`）、报表 `ActionDef.FormKey`（`:143-147`）、资源 `ListView.Actions[].FormKey`（`:149-153`）；**先查后删非原子**，且 `FormKey` 实为模式名（§4.10） |
+| F-13 | 资源列重新同步入口 | ⚠️ | `FormDefinitionAppService.cs:182-206`（`ResyncCatalogFromResourceAsync`）；端点 `src/services/saas/src/Meta.Dow.SaaS.HttpApi/Orchestration/AppBuilderControllers.cs:273-276` | **只刷新 `FieldCatalog`**，**不重推 `Schema.Fields`**（§4.11） |
+| F-14 | 字段校验规则的**后端求值** | ❌ | `ResourceSchema.cs:287-302`（`FormFieldRuleDef` 仅 `MinLength`/`MaxLength`/`Pattern`/`PatternMessage`/`Min`/`Max`/`Message`） | 后端无消费点；§5.1 的 `Kind`/`Len`/`Enum`/`Validator`/`Deps`/`Severity` 全不存在 |
+| F-15 | 表单提交走编排 `SubmitFlowKey` | ❌ | `ResourceSchema.cs:458` 定义；仅被 `FormDefinitionAppService.cs:419` 与 `ReportDefinition.cs:314` 克隆 | **无运行时消费点** |
+
+### 2.2 OA 定义链（W1–W9 逐条复核）
+
+> 完整运行时契约见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §3，本文不重复。
+
+| # | 原缺陷 | 状态 | 证据 `file:line` | 遗留问题 |
+|--:|--------|:----:|------------------|----------|
+| W1 | 定义侧零校验 | ⚠️ | `WorkflowDefinitionValidator.cs:50-150`（全量结构校验），调用点 `WorkflowDefinitionAppService.cs:154`（仅 `PublishAsync`） | 已发布定义可被 `PUT` **原地改写且不重校验** → 校验可被整体绕过（§4.12 ①） |
+| W2 | 连线指向不存在节点 → 静默通过 | ⚠️ | `WorkflowRuntimeAppService.cs:484-492`（`RequireTargetNode` 抛错），三处调用 `:454`/`:466`/`:474` | **无出线节点仍 fail-open** → `Complete("approved")`（`:443-446` → `:433`），§4.12 ② |
+| W3 | 未知节点类型被当审批节点 | ✅ | `WorkflowRuntimeAppService.cs:420-430`（`approver` 显式分支，其余抛错） | — |
+| W4 | 默认格式是残废的 `childNode` 链 | ✅ | `WorkflowDefinition.cs:92-105`（`DefaultProcessJson()` 产出 `nodes`/`edges`）；旧树仍可读 `WorkflowRuntimeAppService.cs:1192-1195` | 双格式长期并存（旧格式仍能读入，边不带条件） |
+| W5 | 解析容错过度，坏数据静默降级 | ✅ | `WorkflowRuntimeAppService.cs:1108-1116`、`:1134-1143`、`:1154-1162`（`LoadGraph` strict）、`:1213-1221`（环检测） | `strict:false` 仅用于历史快照展示 |
+| W6 | 条件分支靠数组顺序 | ⚠️ | `WorkflowRuntimeAppService.cs:1435-1439`（`Priority`/`IsDefault`）、`:462-475`（排序取首个命中）；校验 `WorkflowDefinitionValidator.cs:156-178` | **全 0 时仍按数组顺序**；`IsDefault` 完全不校验；校验只查 `Priority>0` 的重复（§4.12 ③） |
+| W7 | 办理人魔法字符串，默认值危险 | ⚠️ | `WorkflowRuntimeAppService.cs:1501`（`EmptyFallback = "error"`）、`:622-630`（显式 `role`、未知类型抛错）、`:600-632`（`manager` 分支） | `WorkflowOrgResolver` **不排除发起人本人 → 可自审批**（§4.6） |
+| W8 | 字段权限 fail-open | ⚠️ | `WorkflowRuntimeAppService.cs:957-990`（未知值抛错 `:980`）、`:993-1012`（`EnforceRequiredFields`） | **未声明字段默认放行**（`:983-986`）；**无模式级 baseline**（§4.7） |
+| W9 | 无版本、无唯一索引 | ⚠️ | `WorkflowDefinition.cs:25`（`Version`）、`:81-85`（`Publish` 递增）；`WorkflowInstance.cs:30`/`:33`；`src/services/saas/src/Meta.Dow.SaaS.MongoDB/SaaSMongoDbModule.cs:53-63`（唯一索引 `TenantId+Code`） | **建索引失败仅 `LogWarning`**，启动照常（`SaaSMongoDbModule.cs:101-104`）；只存 int 版本号，**无历史快照可回放**（§4.2） |
+
+### 2.3 编排引擎侧（澄清历史误记）
+
+| 能力 | 状态 | 证据 `file:line` |
+|------|:----:|------------------|
+| 循环 `ForEach` / `Loop` | ✅ | `src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FlowExecutor.cs:759-765`（`ExecuteForEachAsync`） |
+| 并行 / 合流 `Parallel` / `When` | ✅ | `FlowExecutor.cs:767-773`（`ExecuteParallelAsync`） |
+| 子流程 `SubFlow` | ✅ | `FlowExecutor.cs:750-757`（`ExecuteSubFlowAsync`） |
+| 独立 `Sql` 节点 | ❌ | 节点 dispatch 无 `sql` 分支（`FlowExecutor.cs:791-792` 对未知类型抛错）；SQL 经 Code 节点 `db.*` 间接实现 |
+| 独立 `Switch` 节点 | ❌ | 同上 |
+
+> **历史误记更正**：旧版 §8.5.4 把"并行网关/合流、循环"写成"仍为规划"，那是**逻辑编排引擎**的能力，且**已实现**。真正未实现的是 **OA 人审侧**的 fork/join 与 `callActivity`（见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §5），以及编排引擎的独立 `Sql`/`Switch` 节点。
+
+### 2.4 测试覆盖真相（实测）
+
+| 测试类 | 测试特性 | 用例数 | 覆盖内容 |
+|--------|--------:|-------:|----------|
+| `FlowExecutorControlFlowTests` | 33 `[Fact]` + 2 `[Theory]`（6 `[InlineData]`） | **39** | **逻辑编排引擎**的出边基数/可达性校验、`ForEach`、`Parallel`、四条种子演示流程端到端 |
+| `WorkflowDefinitionValidatorTests` | 11 `[Fact]` | 11 | 定义侧结构校验（`WorkflowDefinitionValidator.cs`） |
+| `FormSchemaFlatteningTests` | 7 `[Fact]` | 7 | 表单拍平/克隆/字段名校验 |
+| `WorkflowRecordPatchTests` | 4 `[Fact]` | 4 | `FilterRecordPatch` 的 read/hide/write/required/未知值 |
+| `SecretsConfigSafetyTests` | 1 `[Fact]` | 1 | secrets 配置禁止 JSON 数组 |
+| **合计** | **58**（56 `[Fact]` + 2 `[Theory]`） | **62** | 无 `MemberData`/`ClassData`；`dotnet test -c Release` 实测 62/62 通过 |
+
+**零覆盖清单（这是 §4 缺陷长期存活的结构性原因）**：
+
+- **全部运行时路径**：`WorkflowRuntimeAppService` 的 `EnterAsync` / `ChooseNext` / `CompleteAsync` / `CreateTasksAsync` / `ResolveAssigneesAsync`；`WorkflowOrgResolver`；`WorkflowNotifier`；
+- **驳回语义**（§4.8）、**补丁落库**（§4.9）、**并发行为**（§4.13）；
+- **F-8 快照 / F-12 删除引用检查 / F-13 重同步**（表单侧运行时）；
+- 表单拍平只覆盖「Layout 抽出 ≥1 字段」的路径，**没有**「Layout 存在但抽不出字段」的用例（即 §4.1 缺口无回归保护）。
+
+---
+
+## 3. 契约与实现细节（按代码写实）
+
+### 3.1 表单 Schema 模型
+
+三层共存的模型（`ResourceSchema.cs`）：
+
+| 类型 | 位置 | 作用 |
+|------|------|------|
+| `FormDef` | `:444-459` | `Fields`（扁平，由 Layout 派生）+ `Layout`（容器树）+ `VformJson`（VForm3 描述）+ `SubmitFlowKey` |
+| `FormWidgetDef`（节点） | `:381-442` | 布局树节点，`Kind` = `field`/`container`；容器 `Container` ∈ `grid`/`card`/`data-table`/`subform` |
+| `FormFieldDef`（字段） | `:317-375` | 扁平字段，与上方**几乎重复**（见 §4.14） |
+
+**控件枚举（`FormFieldDef.Control`，`:334` 默认 `input`）**——模型层是自由字符串，**拼错不会报错、不会告警**：
+
+- 基础输入：`input`、`textarea`、`number`、`password`
+- 选择与多选：`radio`、`checkbox`、`select`、`cascader`
+- 日期时间：`date`、`datetime`、`time`、`dateRange`
+- 组织架构：`userPicker`、`deptPicker`
+- 文件媒体：`upload`
+- 开关与评价：`switch`、`rate`、`slider`
+- 布局与容器：`grid`、`card`、`table`、`list`、`tree`、`tabs`
+
+对应的 JSON 形态：
 
 ```json
 {
-  "control": "userPicker", // 控件类型
-  "multiple": false,       // 是否多选
+  "control": "userPicker",
+  "multiple": false,
   "controlProps": {
     "placeholder": "请选择审批人",
-    "orgScope": "currentDept" // 范围限制：全员 / 本部门 / 指定角色
+    "orgScope": "currentDept"
   }
 }
 ```
 
-支持的标准控件枚举：
-- **基础输入**：`input`、`textarea`、`number`、`password`
-- **选择与多选**：`radio`、`checkbox`、`select`、`cascader`（级联）
-- **日期时间**：`date`、`datetime`、`time`、`dateRange`
-- **组织架构**：`userPicker`（用户选择器）、`deptPicker`（部门选择器）
-- **文件媒体**：`upload`（附件/图片上传）
-- **开关与评价**：`switch`、`rate`、`slider`
-- **布局与容器**：`grid`（栅格）、`card`（卡片）、`table`（明细子表）、`tabs`（标签页）
+> `multiple` 与 `orgScope` 在代码里**没有强类型属性**，只能塞进 `ControlProps`（`ResourceSchema.cs:362`）——键名由前后端约定，后端不校验。
 
-### 2.2 字段动态联动协议（Dynamic Dependencies）
+**`FormFieldDef` 全字段（`:317-375`）**：
 
-在 `FormFieldDef` 与 `FormWidgetDef` 中增加联动规则 `dependencies`：
+| 属性 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `Field` | string | `null!`（必填） | 字段名 |
+| `ColumnName` | string? | null | 落库列名映射；空则按 `Field` 处理（**无运行时消费点**，§4.4） |
+| `Title` | string | `null!` | 标题 |
+| `Control` | string | `"input"` | 控件类型（自由字符串） |
+| `Span` | int | `12` | 24 栅格占列 |
+| `Placeholder` | string? | null | 占位 |
+| `VisibleOnCreate`/`VisibleOnUpdate`/`VisibleOnDetail` | bool | `true` | 场景可见性 |
+| `ReadonlyOnCreate`/`ReadonlyOnUpdate` | bool | `false` | 场景只读（**无 `ReadonlyOnDetail`**） |
+| `RequiredOnCreate`/`RequiredOnUpdate` | bool | `false` | 场景必填（**无 `RequiredOnDetail`**） |
+| `Rules` | `FormFieldRuleDef?` | null | **单个可空对象**，不是数组（§4.15） |
+| `Dependencies` | `List<FormFieldDependencyDef>` | `[]` | 联动规则（**后端不求值**） |
+| `ControlProps` | `Dictionary<string, object?>` | `[]` | 控件特有配置 |
+| `Children` | `List<FormFieldDef>` | `[]` | 明细列/子字段 |
+| `MinItems`/`MaxItems` | int? | null | 明细行数上下限 |
+| `TreeChildrenField` | string? | null | `tree` 子节点数组字段名 |
+
+**`FormFieldRuleDef`（唯一存在的校验规则模型，`:287-302`）**：
+
+```csharp
+public class FormFieldRuleDef
+{
+    public int? MinLength { get; set; }
+    public int? MaxLength { get; set; }
+    public string? Pattern { get; set; }
+    public string? PatternMessage { get; set; }
+    public decimal? Min { get; set; }
+    public decimal? Max { get; set; }
+    public string? Message { get; set; }
+}
+```
+
+`Rules` 属性**本身是 `FormFieldRuleDef?`**（`:356`），即"一个字段一条规则对象"。旧文档 §5.1/§5.1.1 设计的 `List<FormFieldRuleDef> Rules` + `Kind`/`Len`/`Enum`/`Validator`/`Deps`/`Trigger`/`Severity` + `ValidateFlowKey` **在代码中全部不存在**（全仓 grep 无 `ButtonDef`/`ValidateFlowKey`/`modePermissions`）。这些一律归入 §5。
+
+**`FormFieldDependencyDef`（`:304-315`）**：
 
 ```csharp
 public class FormFieldDependencyDef
 {
-    /// <summary>依赖的触发字段名</summary>
-    public string SourceField { get; set; } = null!;
-
-    /// <summary>操作符：eq | ne | in | notin | contains | isEmpty | isNotEmpty</summary>
-    public string Op { get; set; } = "eq";
-
-    /// <summary>比较的目标值</summary>
-    public string? Value { get; set; }
-
-    /// <summary>触发的动作：show | hide | enable | disable | require | optional | setValue</summary>
-    public string Action { get; set; } = "show";
-
-    /// <summary>当 Action=setValue 时的赋值内容或公式</summary>
-    public string? SetValue { get; set; }
+    public string SourceField { get; set; } = null!;   // 触发字段
+    public string Op { get; set; } = "eq";             // eq | ne | in | notin | contains | isEmpty | isNotEmpty
+    public string? Value { get; set; }                 // 比较值
+    public string Action { get; set; } = "show";       // show | hide | enable | disable | require | optional | setValue
+    public string? SetValue { get; set; }              // Action=setValue 时的赋值
 }
 ```
 
-前端渲染器（`RecordFormFields`）与后端校验器根据此规则实现动态显隐、禁用与切换必填。
+`Op` / `Action` 均为**自由字符串**，后端无枚举校验、无求值器。文档旧版 §5.2 设计的 `loadOptions`/`fetchValue`/`compute`/`cascade` 四个 Action **不存在**（§5.2）。
 
-### 2.3 统一 Schema 规范与自动拍平
+### 3.2 拍平（`EnsureFlattenedFields`）的真实语义
 
-- 无论前端传入的是扁平 `Fields` 还是容器树 `Layout`，`FormDefinitionAppService` 在保存与发布时，**自动从容器树中递归提取所有叶子字段，自动填充并校准 `Fields`**。
-- 彻底移除“必须手动维护扁平 Fields 才能发布”的硬编码限制，确保 WYSIWYG 栅格设计器与底层数据校验无缝衔接。
-
----
-
-## 3. OA 流程系统重构升级规格
-
-### 3.1 流程实例快照（Snapshot）与版本隔离
-
-在 `WorkflowInstance` 实体中增加：
-- `ProcessSnapshotJson`：在流程启动（`StartAsync`）时，直接复制当期已发布的 `definition.ProcessJson`。
-- **执行原则**：流转期间所有找节点（`graph.Nodes.GetValueOrDefault`）、选出口（`ChooseNext`）、执行条件（`ConditionPasses`）全部**严格读取实例自身的 `ProcessSnapshotJson`**。
-- 无论后台管理员如何编辑、新增、删除流程节点，均不影响既有历史在途审批单。
-
-### 3.2 完备的审批流转动作机制
-
-`CompleteWorkflowTaskDto` 扩充动作指令：
+`FormDefinitionAppService.cs:213-228`：
 
 ```csharp
-public class CompleteWorkflowTaskDto
+internal static void EnsureFlattenedFields(FormDef schema)
 {
-    /// <summary>
-    /// 审批动作：
-    /// approve (同意流转)
-    /// reject_to_prev (驳回至上一审批节点)
-    /// reject_to_starter (退回给发起人修改)
-    /// reject_terminate (彻底作废终止)
-    /// transfer (转办给他人)
-    /// </summary>
-    public string Action { get; set; } = "approve";
-
-    /// <summary>兼容旧字段</summary>
-    public bool Pass { get; set; } = true;
-
-    /// <summary>审批处理意见</summary>
-    public string? Opinion { get; set; }
-
-    /// <summary>转办目标人（Action=transfer 时必填）</summary>
-    public string? TransferUserName { get; set; }
-
-    /// <summary>退回目标节点 ID（Action=reject_to_prev 时可选，空则默认上一节点）</summary>
-    public string? TargetNodeId { get; set; }
-
-    /// <summary>审批人在当前节点补充或修改的表单字段增量补丁</summary>
-    public Dictionary<string, object?>? RecordPatch { get; set; }
+    if (schema == null) return;
+    schema.Fields ??= [];
+    if (schema.Layout is not { Count: > 0 }) return;      // 无 Layout → 保留原 Fields
+    var extracted = new List<FormFieldDef>();
+    ExtractFieldsFromWidgets(schema.Layout, extracted);
+    if (extracted.Count > 0)                              // ← 缺口：抽出 0 个时不覆盖
+    {
+        schema.Fields = extracted;
+    }
 }
 ```
 
-#### 流转行为语义：
-1. **`approve`（同意）**：
-   - 记录当前节点通过；若满足多实例（会签/或签/比例）通过条件，推进至下一节点。
-2. **`reject_to_starter`（退回给发起人）**：
-   - 当前节点未完成任务全部取消；
-   - 流程当前节点退回至 `start` 节点；
-   - 为发起人生成一条状态为 `pending` 的修改待办，待发起人更新表单后重新提交。
-3. **`reject_to_prev`（驳回到上一节点）**：
-   - 从流程执行轨迹栈（History Stack）中查出上一经由的审批节点；
-   - 取消当前节点待办，为上一节点的办理人重新激活并生成待办任务。
-4. **`reject_terminate`（彻底作废）**：
-   - 将流程标记为 `rejected` 终止态。
-5. **`transfer`（转办）**：
-   - 将当前任务的 `AssigneeUserName` 移交给指定的接手人，原任务生成转办日志。
+- **是覆盖式**：Layout 有内容且能抽出至少 1 个字段时，`Fields` 被**整体替换**，因此"改必填/换控件/改标题""删字段收缩"都已生效（旧版 F1 的"只增不覆盖"已不成立）。
+- **调用点**：`UpdateAsync`（`:117`）与 `PublishAsync`（`:165`）都会先跑一遍。
+- **仍存在的缺口**：见 §4.1。
 
-### 3.3 节点级表单字段权限（Field Permission Matrix）
+**字段抽取规则（`:235-262`）**：
 
-在 `WfProcessNode` 节点定义中引入字段权限字典：
+- `Kind = "container"` 且 `Container ∈ {data-table, subform, list, tree}` 且 `Field` 非空 → 作为**明细字段**加入，其 `Children` 递归抽成该字段的 `Children`（不会重复出现在顶层）；
+- `Kind = "field"` 且 `Field` 非空 → 作为普通字段加入；
+- 其它容器（`grid`/`card`）→ 自身不入表，只递归其 `Children`。
 
-```csharp
-public sealed class WfProcessNode
-{
-    // ... 原有属性 ...
+`BuildField`（`:275-297`）逐属性拷贝 `ColumnName`/`Title`/`Control`/`Span`/`Placeholder`/`VisibleOn*`/`ReadonlyOn*`/`RequiredOn*`/`Rules`/`MinItems`/`MaxItems`/`TreeChildrenField`，并把 `Dependencies` 与 `ControlProps` **深拷贝**。
 
-    /// <summary>
-    /// 字段名 -> 权限类型：
-    /// "read" (只读) | "write" (可编辑) | "hide" (隐藏不可见) | "required" (必填)
-    /// 缺省字段默认按表单原生配置回退
-    /// </summary>
-    public Dictionary<string, string> FieldPermissions { get; set; } = [];
+> 注意 `Title = widget.Title ?? widget.Field!`（`:280`）——控件没配标题时**用字段名兜底**，不是保留空。
 
-    /// <summary>
-    /// 当选人算出来为空时的容错策略：
-    /// "admin" (转交管理员) | "skip" (自动跳过该节点) | "error" (阻断并提示报错)
-    /// </summary>
-    public string EmptyFallback { get; set; } = "admin";
-}
-```
+### 3.3 发布链与快照
 
-### 3.4 审批时表单数据回写（Form Patching）
+`FormDefinitionAppService.PublishAsync`（`:162-178`）顺序：
 
-- 审批人在办理待办提交 `RecordPatch` 时，`WorkflowRuntimeAppService` 将补丁内容与 `instance.RecordJson` 进行深度字段合并更新；
-- 支持在审核阶段由关键角色（如 HR 填核定假种、财务填实付金额）在线补全单据信息。
+1. `EnsureFlattenedFields(entity.Schema)`（`:165`）；
+2. `Fields` 为空 → 抛 `Orchestration:FormFieldsRequired`（`:166-169`）；
+3. `ValidateFieldNames(entity.Schema)`（`:171` → `:299-325`）：递归校验字段名非空且**大小写不敏感唯一**；
+4. `ValidateAgainstResourceAsync(entity)`（`:172` → `:328-358`）；
+5. `entity.Publish(CloneForm(entity.Schema))`（`:175` → `FormDefinition.cs:81-86`）：`PublishedSchema = 深拷贝`、`SchemaVersion++`、`Status = Published`；
+6. `UpdateAsync(autoSave: true)`。
 
-### 3.5 审批历史流转轨迹记录（Workflow Execution History）
+`GetEffectiveSchema()`（`FormDefinition.cs:89`）= `PublishedSchema ?? Schema`。消费点：`GetPublishedByCodeAsync`（`FormDefinitionAppService.cs:67-76`，`Map(entity, published: true)` → `:515`）与 `GetPublishedLookupAsync`（`:542`）。
 
-在 `WorkflowInstance` 中维护 `HistoryJson`（或专门的执行轨迹列表），记录每一次流转：
-- `NodeId`、`NodeName`
-- `OperatorUserName`
-- `Action`（发起 / 同意 / 驳回 / 转办）
-- `Opinion`
-- `ExecutionTime`
-- `Duration`
+`CloneForm`（`:416-423`）**不深拷贝** `VformJson`（string，不可变，无妨）与 `SubmitFlowKey`（string），`Fields`/`Layout` 逐层克隆。
 
-前端审批详情页基于该轨迹渲染清晰的审批时间轴（Timeline），并为“驳回到上一步”提供准确的目标节点索引。
+### 3.4 流程实例快照与版本
+
+- 启动：`StartAsync`（`WorkflowRuntimeAppService.cs:50-98`）在 `beforeStartFlowKey` 成功后才 `new WorkflowInstance(..., definition.ProcessJson, definition.Version, formSchemaVersion)`（`:73-83`），随后 `AppendHistoryRecord(instance, "start", "开始", user, "start", "发起申请")`（`:84`）。
+- 流转：`CompleteAsync` 优先读 `instance.ProcessSnapshotJson`，为 `{}` 时才回落当前定义（`:146-148`）；`MapInstanceAsync` 同理（`:880-885`）。
+- 实例上的版本号：`DefinitionVersion`（`WorkflowInstance.cs:30`）与 `FormSchemaVersion`（`:33`），暴露在 `WorkflowInstanceDto`（`AppBuilderDtos.cs:771`/`:774`）。
+- **但只有 int，没有历史结构**：见 §4.2。
+
+### 3.5 字段权限矩阵与补丁过滤
+
+契约与行为见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §3.5（避免重复）。此处只补两条经常被误读的点：
+
+- `FilterRecordPatch` 对 `read`/`hide` 是**静默忽略**（不报错、不提示），调用方无法从响应中看出补丁被丢弃（`WorkflowRuntimeAppService.cs:975-978`）；
+- `MergeRecordPatch` 是**顶层键覆盖**（`:1063-1081`），不是深度合并——嵌套对象会被整段替换。
 
 ---
 
-## 4. 实施阶段计划
+## 4. 行为边界与已知缺陷
 
-1. **第一阶段（后端领域与接口升级）**：
-   - 升级 [ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) 数据模型（扩展控件类型、联动规则、字段权限矩阵）。
-   - 改造 [FormDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs)，实现容器树自动提取同步 `Fields`。
-   - 升级 [WorkflowInstance.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/WorkflowInstance.cs)，引入 `ProcessSnapshotJson` 与 `HistoryJson`。
-   - 升级 [WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs)，完整实现快照驱动流转、`RecordPatch` 数据回写、`reject_to_prev` / `reject_to_starter` 驳回退回机制。
-2. **第二阶段（编译验证与测试保障）**：
-   - 全解决方案执行 `dotnet build` 确保零错误。
-   - 编写单元/集成测试验证退回、快照、字段合并流转。
-3. **第三阶段（前端对接指引）**：
-   - 更新文档为前端 `D:\Project\vue-demo` 团队提供对接字段与规范。
+格式：`【严重度】现象 — 机理 — file:line — 后果/规避`（`file:line` 未加路径前缀者均指 `src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/` 下文件）
+
+### F 系列（表单定义链）
+
+#### 4.1 【中】拍平被 `extracted.Count > 0` 门控 → 幽灵字段仍可发布
+
+**现象**：设计器把某个字段节点删掉、同时在画布上保留/新增一个纯容器（`grid`/`card`）时，旧 `Fields` 条目**不会收缩**；发布仍然成功，发布的是一份含已删字段的陈旧定义。
+
+**机理**：`EnsureFlattenedFields`（`FormDefinitionAppService.cs:213-228`）的覆盖只在 `extracted.Count > 0` 时发生（`:224`）。当 `Layout` 非空但抽不出任何字段（只有容器）时，函数提前于覆盖逻辑之后什么也不做，`schema.Fields` 原样保留。`PublishAsync` 只校验 `Fields.Count > 0`（`:166`），非零即通过。
+
+**后果**：幽灵字段进入已发布快照与 `FieldCatalog` 之外的字段集，前端渲染与后端校验的依据不一致；该缺口**无回归测试**（`FormSchemaFlatteningTests` 的 7 个用例全都保证抽出 ≥1 个字段）。
+
+**规避**：删除字段时确保 Layout 里至少还有一个 `kind=field` 节点；根治应把 `schema.Fields = extracted` 移出条件分支（Layout 非空即覆盖，允许结果为空数组）。
+
+#### 4.2 【中】表单并未真正冻结：无历史快照、历史记录回落可变草稿
+
+**现象**：`SchemaVersion` 与 `PublishedSchema` 都在，但**无法回答"那次实例用的是哪张表单结构"**——只有一个 int。
+
+**机理**：
+
+1. `PublishedSchema` 是**单份可变引用**，每次发布整份覆盖（`FormDefinition.cs:81-86`），**不保留历史版本列表**；
+2. 历史数据（发布快照功能上线前已发布的表单）`PublishedSchema == null`，`GetEffectiveSchema()` 会 `?? Schema` 回落到**可变草稿**（`FormDefinition.cs:89`）；
+3. 实例只存 `FormSchemaVersion`（int，`WorkflowInstance.cs:33`）。
+
+**后果**：文档旧版说"OA 启动时再固化 `FormSnapshotJson`"——**该字段不存在**（全仓 grep 无 `FormSnapshotJson`）。流程冻结了，**表单并没有冻结**。旧版 §8.3 的"最坏组合（F4+W9）"在 `267d375` 上**部分仍然成立**：在途审批单读到的字段结构仍可随草稿漂移。
+
+**规避**：无。发布后不要再改草稿（但这与设计器正常工作流冲突）。
+
+#### 4.3 【中】字段联动 `dependencies` 后端零求值点
+
+**现象**：`Dependencies` 可以被保存、可以随拍平与克隆原样传递，但**后端不会执行它**——显隐/禁用/必填/赋值全部依赖前端。
+
+**机理**：全仓 grep `.Dependencies` 仅命中 `FormDefinitionAppService.cs` 四处**拷贝**（`:295`、`:452`、`:473`、`CloneDependencies` 定义 `:495-503`），**没有任何求值调用**。`Op`/`Action` 也没有枚举校验。
+
+**后果**：跳过前端直接调 API 提交数据时，联动带来的必填/禁用约束**全部不生效**。对 OA 场景尤为相关：`dependencies` 常被用来做"请假类型=病假才要求上传证明"这类合规校验，后端不校验等于没有。**规避**：把真正的硬约束下沉到逻辑编排 Code/Condition 节点。
+
+#### 4.4 【中】`ColumnName` 有属性、无消费点
+
+**现象**：`FormFieldDef.ColumnName` / `FormWidgetDef.ColumnName` 都已存在，也能在拍平/克隆中传递，但**没有任何运行时读取点**。
+
+**机理**：全仓 grep `ColumnName` 仅 8 处：`OrchestrationConsts.cs:11`（长度常量）、`ResourceSchema.cs:325`/`:403`（定义）、`FormDefinitionAppService.cs:279`/`:437`/`:460`（拷贝）、`:350`（**仅发布校验**用于「字段→资源列」映射比对）。`ResourceCrudExecutor` 里**没有**任何按 `ColumnName` 投影 `record` 的代码。
+
+**后果**：旧版 §5.5/§5.8.4 描述的"提交 `record` 时按 `ColumnName` 投影到库"**未实现**。列改名后把 `ColumnName` 改成新列名，表单控件 key 不变——但落库仍按 `Field` 走，改名实际失效。**规避**：不要让 `ColumnName` 与 `Field` 不一致。
+
+#### 4.5 【中】资源列对齐校验 fail-open
+
+**现象**：绑定资源的表单，即使字段完全对不上资源列，发布也可能成功。
+
+**机理**：`ValidateAgainstResourceAsync`（`FormDefinitionAppService.cs:328-358`）有三处**直接 `return`（放行）**：
+
+- `SourceResourceCode` 为空（`:330-333`）→ 不校验（合理）；
+- **资源查不到**（`:335-339`）→ 静默放行；
+- **资源没有任何列**（`CollectResourceColumns` 返回空，`:341-345`）→ 静默放行。
+
+另外校验**跳过明细字段**（`:348` 的 `Where(f => f.Children is not { Count: > 0 })`），即子表列名映射完全不管。
+
+**后果**：绑定关系写错（资源被删/改名）时，表单仍能发布，错误推迟到运行时的静默丢数据。**规避**：发布后人工核对 `SourceResourceCode` 是否存在。
+
+#### 4.6 【中】`manager` 可解析出**发起人本人** → 可自审批
+
+**现象**：发起人自己恰好是所在组织单元里持 `manager` 角色的成员时，主管解析返回**发起人自己**，节点待办落回发起人。
+
+**机理**：`WorkflowOrgResolver.cs:64-72` 遍历 OU 成员，命中角色即 `return member.UserName`（`:70`），**全程未与入参 `userName` 比对**。
+
+**后果**：审批链失去制衡。**规避**：组织架构上确保发起人不是本部门 `manager` 角色成员。（此条同时记录在 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.6——OA 侧文档为主，此处仅留存根。）
+
+#### 4.7 【中】字段权限矩阵 fail-open 的两处
+
+见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.5（主文档）。摘要：**未声明权限的字段默认放行**（`WorkflowRuntimeAppService.cs:983-986`）；**模式级 baseline 层不存在**——旧版 §5.8.3 设计的"模式级 baseline ∩ 节点级 ∪ 按钮白名单"三层叠加，代码里只有节点级一层。
+
+#### 4.8 【高】驳回被静默当成通过（会签/比例节点）
+
+见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.1（主文档，含完整机理与行号）。摘要：`WorkflowRuntimeAppService.cs:274` 的 `!input.Pass` 分支内层 `if (ShouldRejectNode(...))`（`:276`）在 `all`/`sequential`/`single` 下恒为 true、在 `any`/`ratio` 下可能为 false；为 false 时**不 return**，落到 `task.Approve(...)`（`:299`）并记 `approve` 轨迹（`:301`）。
+
+#### 4.9 【高】审批表单补丁在异常路径上静默丢失
+
+见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.9（主文档）。摘要：补丁先写内存（`:161`），Mongo 无变更跟踪且 `TransactionBehavior=Disabled`（`SaaSMongoDbModule.cs:27-28`），任何在 `_instances.UpdateAsync` 之前的 `throw`（`:293` 意见必填、`:297` `EnforceRequiredFields`、`:551` 无办理人、`:630` 未知办理人类型）都会让本次补丁与轨迹整段丢失。
+
+#### 4.10 【中】删除引用检查的两个盲点
+
+**现象**：`DeleteAsync`（`FormDefinitionAppService.cs:134-156`）确实做了引用检查，但：
+
+1. **先查后删非原子**：`AnyAsync`/`GetListAsync`（`:138`/`:143`/`:149`）与 `DeleteAsync`（`:155`）之间无事务，`SaaSMongoDbModule.cs:27-28` 又显式关闭了 UoW 事务；并发下仍可删掉刚被引用的表单。
+2. **`ListView.Actions[].FormKey` 不是表单引用**：`AppResource.cs:159`/`:165`/`:171`/`:280` 生成动作时把 `FormKey` 写成 **`"create"`/`"update"`/`"detail"`**（模式名，配合 `FormMode`），并不是表单库 `Code`。因此 `:150` 那条比对**永远不会命中**——既漏检真实的资源内联表单（`AppResource.Form`，`AppResource.cs:53`），又在语义上过度宣称。
+3. **`ReportDefinition.Actions[].FormKey` 才是真引用**（报表动作指向表单库 Code），这条检查有效（`:143-147`）。
+4. `GetListAsync()` 把**全表**工作流/报表/资源拉进内存再 `Any`（`:138` 是 `AnyAsync`，`:143`/`:149` 是全量加载），大租户下是明显的性能问题。
+
+**后果**：`FormKey` 那条检查给出虚假的安全感；真实存在的资源内联表单绑定**未被保护**。**规避**：不要依赖该检查保护 `AppResource.Form`。
+
+#### 4.11 【中】`resync-catalog` 只刷 `FieldCatalog`，不重推 `Schema.Fields`
+
+**现象**：`POST /api/orchestration/forms/{id}/resync-catalog`（`AppBuilderControllers.cs:273-276`）的注释与文档旧版称"重新对齐字段目录与拍平字段"，实际**只替换 `FieldCatalog`**。
+
+**机理**：`ResyncCatalogFromResourceAsync`（`FormDefinitionAppService.cs:182-206`）构造 `UpdateDraft(entity.Name, entity.Description, entity.SourceResourceCode, entity.Schema, resource.ListView.Columns.ToList())`（`:197-203`）——第 4 个参数传的是**原样的 `entity.Schema`**，只有第 5 参数 `fieldCatalog` 换了。代码注释亦自认"已有编辑过的 Schema 不覆盖"（`:196`）。
+
+**后果**：资源表结构变更后，`Schema.Fields` **不会**跟着对齐；如果期望的是"重新同步到可发布状态"，这个端点做不到。**规避**：资源列变更后需在表单设计器里手工重配字段，再发布。
+
+#### 4.12 【高/中】已发布定义的三个绕过口
+
+| # | 现象 | 机理 | `file:line` |
+|--:|------|------|-------------|
+| ① 【高】 | 已发布审批流可被 `PUT` 原地改写，**不重新校验** | `WorkflowDefinitionAppService.UpdateAsync` 只调 `EnsureFormRefAsync` 再 `UpdateDraft`，不判断 `Status`、不调 `WorkflowDefinitionValidator` | `WorkflowDefinitionAppService.cs:108-127` vs 校验唯一入口 `:154` |
+| ② 【高】 | **无出线节点仍 fail-open** | `ChooseNext` 在无出线时返回 `(null, false)`；`EnterAsync` 的 `while` 收到 null 退出，落到 `Complete("approved")` | `WorkflowRuntimeAppService.cs:443-446` → `:386` / `:433` |
+| ③ 【中】 | 优先级/默认分支语义不完整 | 全 `Priority=0` 时 `OrderBy` 稳定排序＝**数组顺序**；`IsDefault` 在校验器里**完全没解析**；优先级查重只查 `Priority>0` | `WorkflowRuntimeAppService.cs:462-475`；`WorkflowDefinitionValidator.cs:156-178` |
+
+①②组合即为最危险路径：先正常发布，再 `PUT` 删掉某节点全部出线；此后新实例走到该节点即**无人审批「已通过」**。详见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.2。
+
+#### 4.13 【高】并发无保护
+
+见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.10。摘要：`WorkflowInstance.cs:10` 与 `WorkflowTask.cs:10` 均**无 `ConcurrencyStamp`**；`AppendHistory`（`WorkflowInstance.cs:76-85`）是 JSON 读改写；`CompleteAsync` 的状态检查（`:134`）与变更（`:299-300`）之间无互斥 → 双重推进、轨迹互相覆盖。
+
+#### 4.14 【低】`FormFieldDef` 与 `FormWidgetDef` 仍是两个近乎重复的类（F3 未真正合并）
+
+**现象**：旧版 §8.5.1 声称 F3 "保留双模型但消除漏拷贝根因：两类的字段集按 F2 对齐为同一超集语义"。**"消除根因"不成立**——两类仍是各自独立声明的类，属性逐条重复书写，只是**本轮把缺失的属性补齐了**（所以漏拷贝暂时不复发）。
+
+**机理**：两类的字段集现状（已逐条比对）：
+
+| 属性组 | `FormFieldDef`（`:317-375`） | `FormWidgetDef`（`:381-442`） | 是否对齐 |
+|--------|:---:|:---:|:---:|
+| `Field` / `Title` / `Control` / `Span` / `Placeholder` | ✅ `:319`/`:327`/`:334`/`:337`/`:339` | ✅ `:400`/`:394`/`:405`/`:407`/`:409` | ✅ |
+| `ColumnName` | ✅ `:325` | ✅ `:403` | ✅ |
+| `VisibleOnCreate`/`Update`/`Detail` | ✅ `:341-345` | ✅ `:411-415` | ✅ |
+| `ReadonlyOnCreate`/`Update` | ✅ `:347-349` | ✅ `:417-419` | ✅ |
+| `RequiredOnCreate`/`Update` | ✅ `:351-353` | ✅ `:421-423` | ✅ |
+| `Rules`（单对象） | ✅ `:356` | ✅ `:426` | ✅ |
+| `Dependencies` / `ControlProps` | ✅ `:359`/`:362` | ✅ `:438`/`:441` | ✅ |
+| `Children` | ✅ `:365`（`List<FormFieldDef>`） | ✅ `:398`（`List<FormWidgetDef>`） | 元素类型不同 |
+| `MinItems`/`MaxItems`/`TreeChildrenField` | ✅ `:368`/`:371`/`:374` | ✅ `:429`/`:432`/`:435` | ✅ |
+| `Id` / `Kind` / `Container` / `Columns` / `Hidden` | ❌ 无 | ✅ `:383`/`:386`/`:389`/`:392`/`:396` | 仅布局侧需要 |
+| `ReadonlyOnDetail` / `RequiredOnDetail` | ❌ 两侧都无 | ❌ | — |
+
+**真正未解决的是"三处同改"**：新增一个字段属性时，仍需同时修改 `BuildField`（`FormDefinitionAppService.cs:275-297`）、`CloneWidget`（`:426-454`）、`CloneField`（`:456-479`）**三处**——F2 的根因（每加属性改三处、必然漏）**并未消除**，只是当前属性集已补齐、暂时不复发。
+
+> **更正**：本轮初稿曾断言"`FormWidgetDef` 少了 `VisibleOnDetail`，因此明细可见性无法在拍平结果中表达"——**该断言错误**。`FormWidgetDef.VisibleOnDetail` 存在于 `ResourceSchema.cs:415`，且 `BuildField` 会透传（`FormDefinitionAppService.cs:286`）。文档不能留下这种"看起来精确"的错误结论，故在此显式更正。
+
+#### 4.15 【低】`Rules` 是单对象而非数组
+
+**现象**：旧版 §5.1/§5.1.1 通篇按 `List<FormFieldRuleDef> Rules` 设计（"规则数组"、"每字段挂 `validate: [{...}]`"），代码里 `FormFieldDef.Rules` 与 `FormWidgetDef.Rules` 都是**单个可空对象**（`ResourceSchema.cs:356`、`:426`）。
+
+**机理**：一个字段只能挂一条"长度+正则+数值范围"组合规则（`FormFieldRuleDef` 内部已有 7 个字段，勉强够用），无法表达"多条独立规则各自带自己的 message/severity"。
+
+**后果**：文档与代码的契约不一致；按文档实现的规则数组会被**静默丢弃**（`FormWidgetDef.Rules` 反序列化时多余数组元素报错或忽略，取决于序列化器行为）。**规避**：按单对象契约对接。
+
+#### 4.16 【低】`Control`/`Op`/`Action`/`Container` 均为自由字符串，无枚举校验
+
+`FormFieldDef.Control`（`:334`）、`FormFieldDependencyDef.Op`/`Action`（`:308`/`:312`）、`FormWidgetDef.Container`（`:389`）都没有枚举或白名单校验。发布校验 `ValidateFieldNames`（`FormDefinitionAppService.cs:299-325`）只查字段名唯一，不查这些。**后果**：拼错控件名不会在任何环节报错，只有前端渲染出空白。对比 `WorkflowDefinitionValidator` 对节点类型/办理人规则/多人规则都做了枚举校验（`WorkflowDefinitionValidator.cs:17-43`、`:183-207`）——**表单侧的校验强度明显弱于 OA 侧**。
 
 ---
 
-## 5. 表单定义能力深化（对照 form-create / VForm3 / Formily / 钉钉）
+## 5. 规划（未实现）—— 当前不可用
 
-> §0 已确认 §2 表单侧核心控件、联动 `dependencies`、自动拍平已落地。本节补的是对照成熟方案后**仍缺的能力**，按优先级排列。参考：[form-create](https://www.form-create.com/designer/) 的 `validate`/`control`、[VForm3](https://www.vform666.com/vform3/) 的设计器/渲染器分离、[Formily](https://github.com/alibaba/formily) 的 `x-reactions`/`x-validator`、钉钉审批的字段权限矩阵。
+> 本章与 §3 严格隔离。以下能力在 `267d375` 上**不存在**，不要按此配置或对接。
+> **注意**：§5.1–§5.6 是**协议设计稿**（保留原设计论证，供实施时参考），不是契约。§5.7、§5.8 是**交互/按钮设计稿**。两者都未落地。
 
-### 5.1 字段校验规则协议（P1，当前缺标准化）
+### 5.1 字段校验规则协议（含双层校验模型）❌
 
-**现状不足**：`FormFieldDef` 有 `requiredOnCreate/Update/Detail` 与 `Dependencies`，但缺统一的 `rules` 协议。文档反复提"复用编排 InputSchema rules"，但表单侧没有与编排一致的规则 DSL，前端校验靠各控件自实现。
+**现状不足**：`FormFieldDef` 有 `RequiredOnCreate/Update/Detail` 与 `Dependencies`，但缺统一的 `rules` 协议；表单侧没有与编排一致的规则 DSL，后端也**不求值**（§4.3、F-14）。对比参考：[form-create](https://www.form-create.com/designer/) 每字段挂 `validate: [{ required, message, pattern, min, max }]`；[Formily](https://github.com/alibaba/formily) 用 `x-validator` 支持内置规则 + 自定义函数名；Ant Design Vue `rules` 也是这套。
 
-**对照**：form-create 每字段挂 `validate: [{ required, message, pattern, min, max }]`；Formily 用 `x-validator` 支持内置规则 + 自定义函数名；Ant Design Vue `rules` 也是这套。
-
-**协议设计**（补入 `FormFieldDef`）：
+**协议设计稿（补入 `FormFieldDef`，与现有单对象 `Rules` 二选一后替换）**：
 
 ```csharp
 public class FormFieldRuleDef
 {
-    public string Kind { get; set; } = "required";
-    // required | pattern | min | max | len | enum | custom
-    public string? Pattern { get; set; }       // 正则
-    public decimal? Min { get; set; }
-    public decimal? Max { get; set; }
-    public List<string>? Enum { get; set; }
-    public string? CustomFlowKey { get; set; }  // 跨字段/查库校验走已发布 flowKey
-    public string Message { get; set; } = "";  // 违规文案
-    public string Trigger { get; set; } = "blur"; // change | blur
-}
-public List<FormFieldRuleDef> Rules { get; set; } = [];
-```
-
-**约束（原）**：`custom` 不内联任意 JS，只挂 `flowKey`（入参 `record`，出参 `{ valid: bool, message }`），与编排 Code 沙箱同级；前端先跑 `required/pattern/min/max`，`custom` 提交时调 `/api/logic/{flowKey}`。
-
-> ⚠ **下方 §5.1.1 修订本约束**：经对照 form-create/VForm3/Formily 实践，"前端不内联 JS"过于保守，剥夺了前端灵活度。改为**双层校验**：前端 JS 灵活校验为体验，后端逻辑编排校验为权威。上方 `CustomFlowKey` 字段保留兼容，新增 `Validator`/`Deps`/`Severity`/`ValidateFlowKey`。
-
-### 5.1.1 双层校验模型（2026-10 修订）
-
-**原则：前端灵活 + 后端权威**
-
-| 层 | 目的 | 形态 | 信任度 |
-|----|------|------|--------|
-| **前端层** | 即时反馈、用户体验 | 声明式规则 + JS 函数体（跨字段、异步、联动清空） | 不可信（用户可绕，等于绕自己） |
-| **后端层** | 防绕过、权威 | 提交时走逻辑编排 `create/update` 流的 Code/Condition 节点；可选 `validateFlowKey` 试提交 | 唯一可信 |
-
-> 对照：form-create `validate: [{required}, {validator:(rule,val,cb)=>cb()}]`；Formily `x-validator` 支持函数+字符串函数名；Ant Design Vue `rules.validator: async (rule,val)=>true|string`；VForm3 `onValidate` 配置扩展。**成熟方案都给前端 JS 灵活度，权威校验在后端。** 本协议对齐此分工。
-
-**扩展协议（补入 `FormFieldRuleDef`，与上方原字段共存）**：
-
-```csharp
-public class FormFieldRuleDef
-{
-    /// required | pattern | min | max | len | enum | validator | asyncValidator
+    // required | pattern | min | max | len | enum | validator | asyncValidator
     public string Kind { get; set; } = "required";
 
     // —— 声明式参数 ——
-    public string? Pattern { get; set; }       // 正则
+    public string? Pattern { get; set; }
     public decimal? Min { get; set; }
     public decimal? Max { get; set; }
     public int? Len { get; set; }
@@ -285,13 +445,12 @@ public class FormFieldRuleDef
 
     /// 前端 JS 灵活校验函数体（Kind=validator/asyncValidator 时用）
     /// 签名：(value, row, ctx) => boolean | string | {valid,message} | Promise<同左>
-    /// 返回 true=通过；string=失败文案；{valid,message}=显式；Promise=异步
     public string? Validator { get; set; }
 
-    /// 该规则依赖的其它字段名；任一变化时自动重校验本字段（跨字段联动校验）
+    /// 该规则依赖的其它字段名；任一变化时自动重校验本字段
     public List<string> Deps { get; set; } = [];
 
-    public string Message { get; set; } = "";         // 静态文案（Validator 返回非空时优先）
+    public string Message { get; set; } = "";
     public string Trigger { get; set; } = "blur";    // change | blur | submit
     public string Severity { get; set; } = "error";  // error | warning
 }
@@ -301,6 +460,15 @@ public List<FormFieldRuleDef> Rules { get; set; } = [];
 /// 入参 record，出参 { valid, errors:[{field,message}] }
 public string? ValidateFlowKey { get; set; }
 ```
+
+**双层校验模型（原则：前端灵活 + 后端权威）**：
+
+| 层 | 目的 | 形态 | 信任度 |
+|----|------|------|--------|
+| **前端层** | 即时反馈、用户体验 | 声明式规则 + JS 函数体（跨字段、异步、联动清空） | 不可信（用户可绕，等于绕自己） |
+| **后端层** | 防绕过、权威 | 提交时走逻辑编排 `create/update` 流的 Code/Condition 节点；可选 `validateFlowKey` 试提交 | 唯一可信 |
+
+> 对照：form-create `validate: [{required}, {validator:(rule,val,cb)=>cb()}]`；Formily `x-validator` 支持函数 + 字符串函数名；Ant Design Vue `rules.validator: async (rule,val)=>true|string`；VForm3 `onValidate` 配置扩展。**成熟方案都给前端 JS 灵活度，权威校验在后端。** 本协议对齐此分工。
 
 **前端 `ctx` 校验上下文（只读快照，沙箱隔离）**：
 
@@ -314,7 +482,7 @@ public string? ValidateFlowKey { get; set; }
 
 **禁止**：直连 DB；`document/window/storage` 沙箱隔离；`eval/new Function` 由运行时统一注入受控（不开放给设计器用户直接写）。
 
-**前端 JS 校验示例**：
+**前端 JS 校验示例（设计稿）**：
 
 ```js
 // 1. 简单长度+复杂度
@@ -330,7 +498,6 @@ public string? ValidateFlowKey { get; set; }
 
 // 3. 严重级 warning：超 1 万提示但允许提交
 (value, row, ctx) => value > 10000 ? "超 1 万，需走审批" : true
-// （rule.Severity = "warning"；前端可拦截 warning 让用户确认后继续提交）
 
 // 4. 异步查重（调 validateFlowKey，不直连 DB）
 async (value, row, ctx) => {
@@ -347,7 +514,7 @@ async (value, row, ctx) => {
 }
 ```
 
-**后端权威校验（提交时必跑）**：
+**后端权威校验（提交时必跑，设计稿）**：
 
 ```
 表单提交
@@ -362,10 +529,7 @@ async (value, row, ctx) => {
   → 校验通过 → ResourceCreate 写库
 ```
 
-- `validateFlowKey`（可选）：独立的"试提交"校验流，前端点"校验"按钮或异步 rule 调用，入参 `record`，出参 `{ valid, errors:[{field,message}] }`；正式 `create/update` 流仍**自带**校验，不依赖前端是否调了 `validateFlowKey`。
-- 后端校验代码在编排 Code 节点，与编排安全同级：参数化、白名单、`sys.*` 注入、`[Authorize]` + flowKey 必跑。
-
-**安全边界（关键）**：
+**安全边界（关键，保留原论证）**：
 
 | 关注点 | 前端 | 后端 |
 |--------|------|------|
@@ -375,35 +539,30 @@ async (value, row, ctx) => {
 | 查库 | 只调 `validateFlowKey`（受控流），不直连 DB | 编排节点 `db.*`，白名单 DS |
 | 防滥用 | 异步 rule 限流（同字段 change 内只跑一次） | `traceMode=errors` + `visibleTo` 受控 |
 
-**与联动（§5.2）的关系**：
+### 5.2 高级联动：级联取数 / 异步选项 / 表达式计算 ❌
 
-- §5.2 联动改值后，自动触发 `Deps` 命中字段重校验。
-- `compute` 联动可在前端用 JS 表达式（与校验同沙箱），但**写库值以 `create/update` 流 Code 节点重算为准**——前端 `compute` 结果仅作展示，后端不信任前端算的值，防止篡改计算结果绕过金额计算等关键逻辑。
-
-### 5.2 高级联动：级联取数 / 异步选项 / 表达式计算（P1，当前仅显隐）
-
-**现状不足**：`dependencies` 只做 show/hide/enable/disable/require/setValue，但常见的"改省份自动拉城市""改客户自动带出信用额度""金额=单价×数量"都没有协议。
+**现状不足**：`dependencies` 只做 show/hide/enable/disable/require/setValue（且后端不求值），常见的"改省份自动拉城市""改客户自动带出信用额度""金额=单价×数量"都没有协议。
 
 **对照**：Formily `x-reactions` 用 `fulfill.state` + `fulfill.run`（受控表达式）；VForm3 `eventFunc` 在 onChange 触发；form-create `control` 触发其它字段显隐/赋值。钉钉审批有"公式字段"。
 
-**协议设计**（扩展 `FormFieldDependencyDef.Action` 枚举与 `SetValue` 语义）：
+**协议设计稿（扩展 `Action` 枚举与 `SetValue` 语义）**：
 
 | 新 Action | 含义 | SetValue 形态 |
 |-----------|------|---------------|
 | `loadOptions` | 改 A 后异步拉 B 的选项（如城市） | `flowKey` + 输出映射到 B 的 `options` |
 | `fetchValue` | 改 A 后查库回填 B（如信用额度） | `flowKey`，入参取 A，出参写 B |
-| `compute` | 表达式计算（金额=单价×数量） | 前端 JS 表达式（与 §5.1.1 校验同沙箱），写库以 `create/update` 流重算为准 |
+| `compute` | 表达式计算（金额=单价×数量） | 前端 JS 表达式（与 §5.1 校验同沙箱），**写库以 `create/update` 流 Code 节点重算为准** |
 | `cascade` | 级联清空依赖项（改省时清空市） | 目标字段名数组 |
 
-**约束**：`loadOptions`/`fetchValue` 必须挂已发布 `flowKey`，不在前端跑任意查询；`compute` 可在前端用 JS 表达式（与 §5.1.1 校验同沙箱，支持字段路径与算术），**但写库值以 `create/update` 流 Code 节点重算为准**——前端 `compute` 仅作展示，后端不信任前端算的值；旧"白名单解析器禁止 eval"方案废弃，改为双层信任（前端灵活 + 后端权威）。
+**约束**：`loadOptions`/`fetchValue` 必须挂已发布 `flowKey`，不在前端跑任意查询；`compute` 可在前端用 JS 表达式，**但写库值以 `create/update` 流 Code 节点重算为准**——前端 `compute` 仅作展示，后端不信任前端算的值；旧"白名单解析器禁止 eval"方案废弃，改为双层信任（前端灵活 + 后端权威）。
 
-### 5.3 子表 / 明细的行级权限与行联动（P2，当前缺）
+### 5.3 子表 / 明细的行级权限与行联动 ❌
 
-**现状不足**：`table`/`list` 控件已支持，但缺①行级字段权限（与节点 `FieldPermissions` 类似但按行）、②行级联动（改某行单价时该行金额重算）、③行数量上下限、④行必填校验。
+**现状不足**：`table`/`list` 控件已支持，但缺①行级字段权限（与节点 `FieldPermissions` 类似但按行）、②行级联动（改某行单价时该行金额重算）、③行数量上下限的**运行时强制**（模型有 `MinItems`/`MaxItems`，见 `ResourceSchema.cs:368`/`:371`，但后端不校验）、④行必填校验。
 
 **对照**：钉钉明细表支持行级公式、行级必填、行数量限制；VForm3 子表 `subForm` 支持行级联动。
 
-**协议设计**（`table` 控件的 `ControlProps` 扩展）：
+**协议设计稿（`table` 控件的 `ControlProps` 扩展）**：
 
 ```json
 {
@@ -412,41 +571,41 @@ async (value, row, ctx) => {
     "minRows": 0, "maxRows": 20,
     "rowRules": [ { "field": "Amount", "kind": "required", "when": "Qty > 0" } ],
     "rowCompute": [ { "field": "Amount", "expr": "Price * Qty" } ],
-    "addColumnFlowKey": "order.addLine"   // 加行时可调流（如带默认值）
+    "addColumnFlowKey": "order.addLine"
   }
 }
 ```
 
 行级联动复用 §5.2 的 `compute`/`fetchValue`，作用域限当前行。
 
-### 5.4 表单版本与发布快照（P1，当前缺）
+### 5.4 表单版本与发布快照的**完整**方案 ⚠️ 半成品
 
-**现状不足**：`FormDefinition` 有草稿/已发布 `Status`，但发布是否生成不可变快照未确认（`lowcode-form-preview.md` §4.3 已标注"实现时核对 PublishAsync 是否生成不可变快照"）。在途 OA 实例引用 `formRef`，若发布即改 Schema，审批中的表单结构会漂移。
+**已落地的一半**：`PublishedSchema` + `SchemaVersion` + `GetEffectiveSchema()`（§3.3）。
+**未落地的一半**：`WorkflowInstance.FormSnapshotJson` —— 该字段**不存在**（`WorkflowInstance.cs` 只有 `ProcessSnapshotJson` 与 `FormSchemaVersion`）；历史版本列表不存在。对照参考：Flowable 表单有 `FormVersion`；飞书审批模板有版本号；Formily Schema 带 `version`。
 
-**对照**：Flowable 表单有 `FormVersion`；飞书审批模板有版本号；Formily Schema 带 `version`。
+**协议设计稿（补齐后半）**：
 
-**协议设计**：
-- `FormDefinition` 增 `PublishedSchemaJson` + `PublishedVersion`（int，每次发布 +1）。
-- `PublishAsync` 把当前草稿 `SchemaJson` 深拷贝到 `PublishedSchemaJson`，`Status=Published`，`PublishedVersion++`。
-- OA `WorkflowInstance` 启动时除 `ProcessSnapshotJson` 外，再固化 `FormSnapshotJson = form.PublishedSchemaJson`（与流程快照同生命周期）。
-- 运行时渲染/校验**只读** `FormSnapshotJson`，草稿编辑不影响在途单。
-- 与 `lowcode-form-workflow-board.md` §5.13"资源发布运行时只读已发布 Schema"对齐。
+- OA `WorkflowInstance` 启动时除 `ProcessSnapshotJson` 外，再固化 `FormSnapshotJson = form.GetEffectiveSchema()`（与流程快照同生命周期）；
+- 运行时渲染/校验**只读** `FormSnapshotJson`，草稿编辑不影响在途单；
+- `FormDefinition` 保留历史发布版本列表（而非单份覆盖），使 `FormSchemaVersion` 可回放；
+- 与 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) §5.13"资源发布运行时只读已发布 Schema"对齐。
 
-### 5.5 表单与资源的字段映射契约（P1，当前隐式）
+### 5.5 表单与资源的字段映射契约（`ColumnName` 的**运行时**部分）⚠️ 半成品
 
-**现状不足**：`FormDef.Fields` 与 `TableDefinition.Columns` 的映射靠字段名同名隐式匹配，缺显式 `columnName` 映射，改名后表单提交会丢字段。
+**已落地的一半**：`FormFieldDef.ColumnName` / `FormWidgetDef.ColumnName` 属性 + 发布时的对齐校验（§3.1、F-9）。
+**未落地的一半**：**提交 `record` 时按 `ColumnName` 投影到库**。`ResourceCrudExecutor` 没有任何按 `ColumnName` 投影的代码（§4.4）。
 
-**协议设计**：`FormFieldDef` 增 `ColumnName`（默认等于 `Name`），提交 `record` 时按 `ColumnName` 投影到库；列改名后只需改 `ColumnName`，不用改表单控件 key。
+**协议设计稿**：提交 `record` 时按 `ColumnName`（空则 `Field`）投影到库列；列改名后只需改 `ColumnName`，不用改表单控件 key。
 
-### 5.6 多语言与布局预设（P2）
+### 5.6 多语言与布局预设 ❌
 
-**现状不足**：标题/占位符是单语言字符串；布局无紧凑/宽松预设。
+**现状不足**：`Title`/`Placeholder` 是单语言 `string`（`ResourceSchema.cs:327`/`:339`），无 i18n 结构；布局无紧凑/宽松预设。
 
-**协议设计**：`title`/`placeholder`/`description` 支持 `i18n: { "zh-CN": "...", "en-US": "..." }`，运行时按 `sys.culture` 取；`FormDef.layoutPreset: compact | default | spacious`，控制栅格间距与字号。
+**协议设计稿**：`title`/`placeholder`/`description` 支持 `i18n: { "zh-CN": "...", "en-US": "..." }`，运行时按 `sys.culture` 取；`FormDef.layoutPreset: compact | default | spacious`。
 
-### 5.7 表单设计细化与动态按钮配置（P1，当前缺操作细项）
+### 5.7 表单设计器交互与动态按钮配置 ❌
 
-> §5.1–5.6 补的是"协议字段"，本节补的是"设计器怎么用 + 按钮怎么动态挂"。对照 form-create/VForm3 设计器三栏交互、钉钉/飞书审批的按钮动态化。
+> 本节是**前端交互设计稿**（`vue-demo`），本仓完全无法核验。落地优先级见 §5.7.8。
 
 #### 5.7.1 表单设计器交互不足清单
 
@@ -463,22 +622,22 @@ async (value, row, ctx) => {
 
 设计器右栏配置面板分两层：**通用项**（所有控件共享）+ **特有项**（按 `control` 类型）。
 
-**通用项（FormCommonProps，所有控件）**：
+**通用项（`FormCommonProps`，所有控件）**：
 
 | 分组 | 字段 | 说明 |
 |------|------|------|
 | 基本 | `key` | 字段名（提交 key，唯一） |
-| 基本 | `columnName` | 库列映射（§5.5） |
+| 基本 | `columnName` | 库列映射（§5.5；**属性存在但运行时无消费**） |
 | 基本 | `label`/`labelI18n` | 标题/多语言 |
 | 基本 | `placeholder`/`help`/`tooltip` | 占位/帮助/提示气泡 |
-| 校验 | `rules` | §5.1.1 规则数组 |
-| 校验 | `requiredOnCreate/Update/Detail` | 节点级必填快捷（与 FieldPermissions 联动） |
+| 校验 | `rules` | §5.1 规则（**当前是单对象，非数组**） |
+| 校验 | `requiredOnCreate/Update/Detail` | 节点级必填快捷（**注意：无 `RequiredOnDetail` 属性**） |
 | 布局 | `span` | 栅格占列（1-24），默认 12 |
 | 布局 | `labelWidth`/`labelPosition` | 标签宽/位置（top/left） |
 | 布局 | `offset`/`push`/`pull` | 栅格偏移 |
 | 联动 | `dependencies` | §5.2 显隐/赋值/级联 |
 | 联动 | `defaultValue`/`defaultValueExpr` | 创建默认值（字面量或 JS 表达式，如 `ctx.sys.now`） |
-| 权限 | `fieldPermissions` | 按节点 read/write/hide/required（§3.3） |
+| 权限 | `fieldPermissions` | 按节点 read/write/hide/required（§3.5） |
 | 高级 | `customClass`/`style` | 自定义类名/样式（白名单） |
 
 **特有项（按 control，示例）**：
@@ -504,22 +663,29 @@ async (value, row, ctx) => {
 
 **嵌套规则**：容器可嵌套容器（card→grid→table），最多 3 层防性能问题；`table` 子表内只允许字段不允许容器；设计器拖拽时校验嵌套合法性并提示。
 
+> 后端现状：`FormWidgetDef` 只有 `Columns`（栅格列数，`:392`），**没有** `gutter`/`panels`/`collapse`/`divider` 的结构化属性——这些只能塞 `ControlProps` 或留在 `VformJson`。
+
 #### 5.7.4 数据源与字典统一管理
 
-**现状不足**：`select`/`cascader` 选项来源零散，有的硬编码、有的调 flowKey、有的查字典，无统一协议。
+**现状不足**：`select`/`cascader` 选项来源零散，有的硬编码、有的调 `flowKey`、有的查字典，无统一协议。
 
 **协议**：选项来源三选一，优先级 `dictCode` > `optionsFlowKey` > `options`：
-- `dictCode`：挂 `sys_dict` 字典码，前端缓存 5 分钟，后端 `SettingManagement` 维护（与报表 `transform.dict` 同源）。
-- `optionsFlowKey`：挂已发布流，入参 `{ parentValue? }`（级联用），出参 `[{label,value,disabled?}]`，`isReusable`+`visibleTo` 受控，前端按 `parentValue` 缓存。
+
+- `dictCode`：挂字典码，前端缓存 5 分钟，后端 `SettingManagement` 维护（与报表 `transform.dict` 同源）；
+- `optionsFlowKey`：挂已发布流，入参 `{ parentValue? }`（级联用），出参 `[{label,value,disabled?}]`，`isReusable`+`visibleTo` 受控，前端按 `parentValue` 缓存；
 - `options`：静态数组，适合性别这类固定枚举。
 
 **字典管理**：管理端增"字典管理"菜单（`sys_dict` + `sys_dict_item`），支持树形字典（省市区）；表单设计器选项面板可"从字典选"下拉。
 
-#### 5.7.5 动态化按钮配置协议（ButtonDef，核心）
+> 后端现状：`ResourceSchema.cs` 里有可复用字典模型 `NamedDict`/`DictOption`（`:56-73`），但**挂在 `ListViewDef.Dictionaries`（`:284`）上，是列表/报表用的**，与表单字段**没有绑定关系**。
+
+#### 5.7.5 动态化按钮配置协议（`ButtonDef`，核心）❌
 
 **现状不足**：表单底部按钮（提交/保存/暂存）、列表 action 按钮、审批节点按钮各自硬编码，无统一动态配置协议。钉钉/飞书审批的按钮是按节点 + 权限 + 流程状态动态渲染的。
 
-**统一协议**（补入 `FormDef` / `AppResource.ListView` / `WfProcessNode`）：
+> **关键事实**：全仓 grep **无 `ButtonDef`**。表单侧没有按钮模型；列表/报表侧现有 `ActionDef`（`ResourceSchema.cs:227-272`），字段集与下方设计稿**不对齐**（无 `VisibleExpr`/`DisabledExpr`/`BeforeExpr`/`AfterExpr`/`FlowKey` 之外的动态条件）。
+
+**统一协议设计稿**（补入 `FormDef` / `AppResource.ListView` / `WfProcessNode`）：
 
 ```csharp
 public class ButtonDef
@@ -527,25 +693,25 @@ public class ButtonDef
     public string Key { get; set; } = "";          // 唯一，如 submit/save/approve/reject
     public string Label { get; set; } = "";        // 文案（支持 i18n）
     public string? LabelI18n { get; set; }
-    public string? Icon { get; set; }              // 图标名
+    public string? Icon { get; set; }
     public string Type { get; set; } = "default";  // primary|default|dashed|danger|link
-    public string Scene { get; set; } = "form";    // form(表单底部)|toolbar(列表工具栏)|row(行内)|node(审批节点)
+    public string Scene { get; set; } = "form";    // form|toolbar|row|node
     public string? Permission { get; set; }        // 权限码，如 Order.Approve
-    public string? FlowKey { get; set; }           // 点击调用的已发布流（提交/审批/自定义业务）
-    public string? ValidateFlowKey { get; set; }   // 点击前试校验流（可选，§5.1.1）
-    public string? BeforeExpr { get; set; }        // 前端 JS：点击前钩子（二次确认/数据预处理），返回 false 取消
+    public string? FlowKey { get; set; }           // 点击调用的已发布流
+    public string? ValidateFlowKey { get; set; }   // 点击前试校验流（可选，§5.1）
+    public string? BeforeExpr { get; set; }        // 前端 JS：点击前钩子，返回 false 取消
     public string? AfterExpr { get; set; }         // 前端 JS：成功后（跳转/刷新/发消息）
-    public string? VisibleExpr { get; set; }      // 前端 JS：可见条件（按状态/角色/节点）
+    public string? VisibleExpr { get; set; }       // 前端 JS：可见条件
     public string? DisabledExpr { get; set; }      // 前端 JS：禁用条件
-    public string? Confirm { get; set; }           // 二次确认文案（非空则弹确认框）
-    public int? BatchLimit { get; set; }            // 行/选择场景单批上限（与报表 ActionDef.batchLimit 同义）
+    public string? Confirm { get; set; }           // 二次确认文案
+    public int? BatchLimit { get; set; }           // 单批上限
     public string? Redirect { get; set; }          // 成功后跳转路由
-    public bool RefreshAfter { get; set; } = true; // 成功后刷新当前列表/详情
+    public bool RefreshAfter { get; set; } = true; // 成功后刷新
 }
 public List<ButtonDef> Buttons { get; set; } = [];
 ```
 
-**按钮三类来源的统一**：
+**按钮三类来源的统一（设计稿）**：
 
 | 场景 | 挂载点 | 示例 |
 |------|--------|------|
@@ -553,7 +719,7 @@ public List<ButtonDef> Buttons { get; set; } = [];
 | 列表工具栏/行内 | `AppResource.ListView.Buttons`（与报表 `ActionDef` 合流） | 新增/导出/批量删除/行内编辑 |
 | 审批节点 | `WfProcessNode.Buttons`（覆盖默认 approve/reject） | 自定义"加签""委办""退回上级" |
 
-**关键：审批按钮也走 ButtonDef**。当前 `approve/reject_*` 是硬编码动作，改为节点配 `Buttons: [{Key:"approve",FlowKey:"order.afterApprove",...},{Key:"reject_to_prev",...}]`，前后端统一渲染；缺省时节点按 `multi`+`assigneeType` 自动生成默认按钮。
+**关键：审批按钮也走 `ButtonDef`**。当前 `approve/reject_*` 是硬编码动作，改为节点配 `Buttons: [{Key:"approve",FlowKey:"order.afterApprove",...},{Key:"reject_to_prev",...}]`；缺省时节点按 `multi`+`assigneeType` 自动生成默认按钮。
 
 #### 5.7.6 按钮事件流（before → flow → after）
 
@@ -573,20 +739,20 @@ public List<ButtonDef> Buttons { get; set; } = [];
        · 跳转 Redirect / 刷新 RefreshAfter / 发消息 / 关闭弹窗
 ```
 
-**与 §5.1.1 双层校验对齐**：`BeforeExpr` 是体验层（可绕），`FlowKey` 内 Code 节点是权威层（不可绕）；`ValidateFlowKey` 是按钮级的"试提交"，与字段级 `validateFlowKey` 互补。
+**与 §5.1 双层校验对齐**：`BeforeExpr` 是体验层（可绕），`FlowKey` 内 Code 节点是权威层（不可绕）；`ValidateFlowKey` 是按钮级的"试提交"。
 
 #### 5.7.7 按钮与权限/状态/节点的动态联动
 
-| 联动维度 | 实现 |
+| 联动维度 | 实现（设计稿） |
 |----------|------|
 | 按角色显隐 | `Permission` 权限码 + `VisibleExpr`（`ctx.sys.roles.includes('admin')`） |
-| 按表单状态显隐 | `VisibleExpr` 读 `ctx.record.Status`（草稿显示"提交"，已提交显示"撤回"） |
-| 按审批节点显隐 | 审批按钮挂在 `WfProcessNode.Buttons`，仅当前节点渲染；`VisibleExpr` 读 `ctx.nodeId===current` |
+| 按表单状态显隐 | `VisibleExpr` 读 `ctx.record.Status` |
+| 按审批节点显隐 | 审批按钮挂在 `WfProcessNode.Buttons`，仅当前节点渲染 |
 | 按数据状态禁用 | `DisabledExpr`（库存为 0 时禁用"出库"按钮） |
 | 按选择数动态 | 列表 `BatchLimit` + `DisabledExpr`（未选行时禁用批量按钮） |
-| 按钮顺序 | `Buttons` 数组顺序即渲染顺序；审批节点默认按钮可在数组前补自定义按钮 |
+| 按钮顺序 | `Buttons` 数组顺序即渲染顺序 |
 
-**对照钉钉/飞书**：钉钉审批按钮按节点 + 角色动态渲染（审批人见"同意/拒绝/转办"，发起人见"撤回"，抄送人无按钮）；飞书列表 action 按状态显隐。本协议用 `VisibleExpr`/`DisabledExpr`/`Permission` 三件套覆盖这些场景，且表达式走前端 JS（与 §5.1.1 同沙箱），权威判断在后端 `FlowKey` 内 Code 节点（防前端绕过）。
+**对照钉钉/飞书**：钉钉审批按钮按节点 + 角色动态渲染（审批人见"同意/拒绝/转办"，发起人见"撤回"，抄送人无按钮）；飞书列表 action 按状态显隐。本协议用 `VisibleExpr`/`DisabledExpr`/`Permission` 三件套覆盖这些场景，权威判断在后端 `FlowKey` 内 Code 节点。
 
 #### 5.7.8 落地优先级
 
@@ -600,15 +766,15 @@ public List<ButtonDef> Buttons { get; set; } = [];
 | §5.7.1 撤销重做/模板字段库/大纲树 | P2（体验增强） |
 | §5.7.3 布局容器配置细项 | P2 |
 
-### 5.8 报表按钮与表单关联的缺陷与补充（P1，当前 ActionDef 与 ButtonDef 割裂）
+### 5.8 报表按钮与表单关联的缺陷与补充（`ActionDef` 与 `ButtonDef` 割裂）❌
 
-> §5.7.5 把 `ButtonDef` 统一到 `FormDef.Buttons` / `ListView.Buttons` / `WfProcessNode.Buttons`，并写"列表 `AppResource.ListView.Buttons` 与报表 `ActionDef` 合流"。但 `lowcode-report-management.md` §6 的 `ActionDef` 字段（scene/scope/open/fieldsMode/payload/after/batchLimit）与 `ButtonDef` 字段（FlowKey/BeforeExpr/AfterExpr/VisibleExpr/DisabledExpr/Permission）**并未真正对齐**，且"按钮打开表单"这条主链路有多处缺陷。本节补全。
+> §5.7.5 把 `ButtonDef` 统一到 `FormDef.Buttons` / `ListView.Buttons` / `WfProcessNode.Buttons`。但 [`lowcode-report-management.md`](./lowcode-report-management.md) §6 的 `ActionDef` 字段（`scene`/`scope`/`open`/`fieldsMode`/`payload`/`after`/`batchLimit`）与 `ButtonDef` 字段**并未真正对齐**，且"按钮打开表单"这条主链路有多处缺陷。本节保留为设计稿。
 
-#### 5.8.1 缺陷清单（12 项）
+#### 5.8.1 缺陷清单（12 项，设计侧）
 
 | # | 缺陷 | 影响 |
 |---|------|------|
-| 1 | `ActionDef` 无 `formKey`/`formMode`，打开表单只能用资源默认 form | 一个资源多表单（紧凑列表/完整编辑/只读详情）无法按场景选 |
+| 1 | `ActionDef` 无 `formKey`/`formMode` 的**多表单**语义 | 一个资源多表单（紧凑列表/完整编辑/只读详情）无法按场景选 |
 | 2 | 表单模式（create/edit/view/audit）未协议化 | 非 OA 场景缺"模式级字段权限"，纯 CRUD 无法按模式控制只读/必填 |
 | 3 | 行内"编辑"取了行 record，但如何注入表单 `initialValues` 未定义 | 数据回填靠隐式约定，改名即断 |
 | 4 | `ActionDef.after` 与 `ButtonDef.AfterExpr`/`RefreshAfter` 语义重复且不一致 | 两套"提交后行为"协议，实现易分叉 |
@@ -621,118 +787,115 @@ public List<ButtonDef> Buttons { get; set; } = [];
 | 11 | 报表列 `fieldPermissions` 与表单字段 `fieldPermissions` 继承关系未定 | OA 场景打开表单后字段权限是否继承当前节点不清 |
 | 12 | `ActionDef` 与 `ButtonDef` 字段不对齐，前端两套渲染逻辑 | 维护成本高，行为不一致 |
 
-#### 5.8.2 统一协议：ActionDef ⊂ ButtonDef（合流）
+> **注**：`ActionDef` 现状（`ResourceSchema.cs:227-272`）已有 `FormKey`/`FormMode`/`FieldsMode`/`Fields`/`PayloadFields`/`After`/`Confirm`/`BatchLimit`/`MultiSelect`——第 1、2 项已**部分**存在（`FormKey`+`FormMode` 属性在，见 `:247`/`:249`），但**运行时是否消费未在本仓核验**（资源运行时的表单打开逻辑在 `ResourceCrudExecutor`/前端）。
+
+#### 5.8.2 统一协议：`ActionDef` ⊂ `ButtonDef`（合流，设计稿）
 
 **决策**：`ActionDef` 不再独立，改为 `ButtonDef` 的"列表/报表场景特化"。`ButtonDef` 增报表相关字段，`ActionDef` 保留为别名兼容：
 
 ```csharp
-public class ButtonDef
-{
-    // —— §5.7.5 已有字段 ——
-    public string Key; public string Label; public string? Icon;
-    public string Type; public string Scene;     // form|toolbar|row|node
-    public string? Permission; public string? FlowKey; public string? ValidateFlowKey;
-    public string? BeforeExpr; public string? AfterExpr;
-    public string? VisibleExpr; public string? DisabledExpr;
-    public string? Confirm; public int? BatchLimit;
-    public string? Redirect; public bool RefreshAfter;
-
-    // —— 报表/列表场景补充（原 ActionDef 字段合流）——
-    public string? Scope { get; set; }          // none|row|selection|cell|column（报表行/选择/单元格/列）
-    public string? Open { get; set; }            // none|modal|drawer|page|link|inline（打开方式，inline=行内编辑）
-    public string? FormKey { get; set; }         // 打开的表单（缺省=资源默认 form）
-    public string? FormMode { get; set; }        // create|edit|view|audit（缺省按 Key 推断：submit→create, edit→edit）
-    public string? FieldsMode { get; set; }      // full|whitelist|none（表单字段白名单，用于精简行内编辑）
-    public List<string>? FieldsWhitelist { get; set; } // fieldsMode=whitelist 时的字段列表
-    public string? PayloadToFields { get; set; } // payload → 表单 defaultValue 映射（JSON：{formField: "expr|payloadKey"}）
-    public string? DetailFlowKey { get; set; }   // 打开详情时取完整 record（含子表）的流
-    public string? CanOpenExpr { get; set; }     // 打开前预校验（如 Status!='approved'），前端 JS，返回 false 禁用并 tooltip
-    public string? RefreshScene { get; set; }    // list(刷报表)|detail(刷详情)|none（覆盖 RefreshAfter 的细化）
-    public bool CloseAfterSubmit { get; set; } = true; // 表单提交后关弹窗（false=留在表单继续录）
-}
+// —— 报表/列表场景补充（原 ActionDef 字段合流）——
+public string? Scope { get; set; }          // none|row|selection|cell|column
+public string? Open { get; set; }           // none|modal|drawer|page|link|inline
+public string? FormKey { get; set; }        // 打开的表单（缺省=资源默认 form）
+public string? FormMode { get; set; }       // create|edit|view|audit
+public string? FieldsMode { get; set; }     // full|whitelist|none
+public List<string>? FieldsWhitelist { get; set; }
+public string? PayloadToFields { get; set; } // payload → 表单 defaultValue 映射
+public string? DetailFlowKey { get; set; }   // 打开详情时取完整 record（含子表）的流
+public string? CanOpenExpr { get; set; }     // 打开前预校验，前端 JS
+public string? RefreshScene { get; set; }    // list|detail|none
+public bool CloseAfterSubmit { get; set; } = true;
 ```
 
 **对应关系**：原 `ActionDef.after` → `ButtonDef.AfterExpr` + `RefreshScene` + `CloseAfterSubmit`；原 `ActionDef.fieldsMode` → `ButtonDef.FieldsMode` + `FieldsWhitelist`；原 `ActionDef.batchLimit` → `ButtonDef.BatchLimit`。废弃 `ActionDef` 独立类，保留别名兼容期。
 
-#### 5.8.3 表单模式与模式级字段权限（补 §5.7.2 通用项）
+#### 5.8.3 表单模式与模式级字段权限（设计稿）
 
-**协议**：`FormMode: create | edit | view | audit`（audit=OA 审批节点办理）。表单字段权限三层叠加：
+**协议**：`FormMode: create | edit | view | audit`（audit = OA 审批节点办理）。表单字段权限三层叠加：
 
 ```
-最终字段权限 = 模式级 baseline(FieldPermissions by mode) 
+最终字段权限 = 模式级 baseline(FieldPermissions by mode)
               ∩ OA 节点级(若 audit 模式，WfProcessNode.FieldPermissions)
               ∪ 显式覆盖(按钮 FieldsWhitelist)
 ```
 
-| 模式 | baseline 默认 | 按钮场景 |
+| 模式 | baseline 默认（设计） | 按钮场景 |
 |------|--------------|----------|
 | `create` | 所有字段可写（除系统列） | 表单底部"提交/暂存" |
 | `edit` | 主键+系统列只读，余可写 | 行内/弹窗"编辑" |
 | `view` | 全部只读 | "查看详情"，无提交按钮 |
 | `audit` | 按 OA 节点 `FieldPermissions` | 审批节点按钮（§5.7.5） |
 
-`FormFieldDef` 增 `modePermissions: { create:{read,write,hide,required}, edit:{...}, view:{...} }`，非 OA 场景用此；OA 场景 `audit` 模式读 `WfProcessNode.FieldPermissions` 覆盖。
+`FormFieldDef` 增 `modePermissions: { create:{...}, edit:{...}, view:{...} }`，非 OA 场景用此；OA 场景 `audit` 模式读 `WfProcessNode.FieldPermissions` 覆盖。
 
-#### 5.8.4 数据回填与 payload 映射
+> **现状**：`modePermissions` **不存在**（全仓 grep 无）；三层叠加**只有节点级一层**（§4.7）。
+
+#### 5.8.4 数据回填与 payload 映射（设计稿）
 
 **行 record → 表单**（`Open=modal/drawer/page` + `FormMode=edit/view`）：
-- 默认：报表当前行 record 整体作为表单 `initialValues`，按 `FormFieldDef.ColumnName` 投影（§5.5）。
-- 子表回填：若表单含 `table` 子表且行 record 不含子表数据，调 `DetailFlowKey` 取完整 record（含子表），入参 `{ id: row.Id }`，出参 `{ record, subTables: {lines:[...]} }`。
+
+- 默认：报表当前行 record 整体作为表单 `initialValues`，按 `FormFieldDef.ColumnName` 投影（§5.5——**该投影未实现**，§4.4）。
+- 子表回填：若表单含 `table` 子表且行 record 不含子表数据，调 `DetailFlowKey` 取完整 record，入参 `{ id: row.Id }`，出参 `{ record, subTables: {lines:[...]} }`。
 
 **payload → 表单默认值**（`PayloadToFields`，"基于当前行新建"场景）：
+
 ```json
 {
   "PayloadToFields": {
-    "CustomerId": "row.CustomerId",      // 取报表行的 CustomerId
-    "OrderDate": "ctx.sys.now",            // 取系统时间
-    "Source": "'referral'"                 // 字面量
+    "CustomerId": "row.CustomerId",
+    "OrderDate": "ctx.sys.now",
+    "Source": "'referral'"
   }
 }
 ```
-映射值支持：`row.{field}`（报表行字段）、`ctx.sys.*`、`'{literal}'`（字面量字符串）。与 §5.7.2 `defaultValueExpr` 同沙箱，前端 JS 求值后作为 `create` 模式初始值。
 
-#### 5.8.5 提交后刷新策略（统一 after 协议）
+映射值支持：`row.{field}`、`ctx.sys.*`、`'{literal}'`。与 §5.7.2 `defaultValueExpr` 同沙箱，前端 JS 求值后作为 `create` 模式初始值。
+
+#### 5.8.5 提交后刷新策略（统一 after 协议，设计稿）
 
 废弃 `ActionDef.after`，统一用 `ButtonDef` 三字段：
 
 | 字段 | 取值 | 行为 |
 |------|------|------|
-| `CloseAfterSubmit` | true/false | 提交后关弹窗（false=留在表单继续录，适合连续录入） |
-| `RefreshScene` | list/detail/none | 刷新目标（list=刷报表，detail=刷表单详情，none=不刷） |
+| `CloseAfterSubmit` | true/false | 提交后关弹窗（false=留在表单继续录） |
+| `RefreshScene` | list/detail/none | 刷新目标 |
 | `AfterExpr` | JS | 自定义（跳转 `Redirect`/发消息/调其它流），最后执行 |
 
-默认：`CloseAfterSubmit=true` + `RefreshScene=list` + `RefreshAfter=true`（与 §5.7.5 默认一致）。
+默认：`CloseAfterSubmit=true` + `RefreshScene=list` + `RefreshAfter=true`。
 
-#### 5.8.6 权限解析链（打开表单全链路）
+#### 5.8.6 权限解析链（打开表单全链路，设计稿）
 
 ```
 报表按钮点击
-  → ① 报表访问权限：App.Report.{code}（已落地，iam-rbac-menu §7）
-  → ② 按钮权限：ButtonDef.Permission，如 Order.Edit（前端 VisibleExpr 先过滤，后端 flowKey 内 [Authorize] 二次确认）
+  → ① 报表访问权限：App.Report.{code}（已落地，见 iam-rbac-menu §7）
+  → ② 按钮权限：ButtonDef.Permission（前端 VisibleExpr 先过滤，后端 flowKey 内 [Authorize] 二次确认）
   → ③ 打开表单：按 FormMode 取 modePermissions baseline
   → ④ 若 audit 模式：叠加 WfProcessNode.FieldPermissions
-  → ⑤ 表单内按钮权限：FormDef.Buttons[*].Permission（如 Order.Approve 仅审批节点显示）
+  → ⑤ 表单内按钮权限：FormDef.Buttons[*].Permission
   → ⑥ 提交流 FlowKey 内 Code 节点：权限最终确认（防前端绕过 ① ② ⑤）
 ```
 
 关键：前端 `VisibleExpr`/`DisabledExpr`/`Permission` 是体验过滤（可绕），后端 `FlowKey` 内 Code 节点 `[Authorize]` + 权限码校验是权威（不可绕）。
 
-#### 5.8.7 批量编辑表单（补 §6.4 之外的批量场景）
+#### 5.8.7 批量编辑表单（设计稿）
 
 **协议**：`ButtonDef` 增 `BatchEdit: { enabled: true, fields: [...] }`（仅 `Scope=selection` 时生效）。
-- 用户选 N 行 → 点"批量编辑" → 弹精简表单（只含 `BatchEdit.fields` 字段）→ 填公共值 → 提交。
+
+- 用户选 N 行 → 点"批量编辑" → 弹精简表单（只含 `BatchEdit.fields`）→ 填公共值 → 提交。
 - 提交流入参 `{ ids: [...], patch: {字段:值} }`，流内 Code 节点循环 `UpdateAsync` 或批量 SQL（参数化），受 `BatchLimit` 上限。
-- 校验：每个字段的 `rules` 跑一次（不按行跑，因为是公共值）；行级业务校验在流内按 id 循环。
+- 校验：每个字段的 `rules` 跑一次（不按行跑）；行级业务校验在流内按 id 循环。
 
-#### 5.8.8 行内编辑与表单校验统一
+#### 5.8.8 行内编辑与表单校验统一（设计稿）
 
-**协议**：`Open=inline`（行内编辑）时：
-- 单元格用对应字段的 `control` + `controlProps` + `rules` 渲染（与表单同协议，不是独立控件）。
-- 失焦时跑该字段 `rules`（含异步），失败标红 + tooltip。
-- 提交时调 `FlowKey`（或资源默认 `updateFlowKey`），入参 `{ id, patch: {field:value} }`，流内 Code 节点做权威校验。
-- `FieldsMode=whitelist` + `FieldsWhitelist` 控制哪些列可行内编辑（与弹窗表单字段白名单同源）。
+**协议**：`Open=inline` 时：
 
-**关键**：行内编辑与弹窗表单**共用** `FormFieldDef.rules` + `FlowKey` 校验，不再两套校验逻辑。
+- 单元格用对应字段的 `control` + `controlProps` + `rules` 渲染（与表单同协议）；
+- 失焦时跑该字段 `rules`（含异步），失败标红 + tooltip；
+- 提交时调 `FlowKey`（或资源默认 `updateFlowKey`），入参 `{ id, patch: {field:value} }`，流内 Code 节点做权威校验；
+- `FieldsMode=whitelist` + `FieldsWhitelist` 控制哪些列可行内编辑。
+
+**关键**：行内编辑与弹窗表单**共用** `FormFieldDef.Rules` + `FlowKey` 校验，不再两套校验逻辑。
 
 #### 5.8.9 落地优先级
 
@@ -749,461 +912,25 @@ public class ButtonDef
 
 ---
 
-## 6. OA 流程能力深化（对照 Workflow-Vue3 / lowflow-design / 钉钉 / 飞书 / BPMN）
+## 6. 操作说明 / 交互规格
 
-> §0 已确认五动作、会签/或签/比例、快照、字段权限、`RecordPatch`、`EmptyFallback` 已落地。本节补的是对照成熟审批产品后**仍缺的能力**。参考：[Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)、钉钉/飞书审批、BPMN 网关语义。
+> §6.6–§6.9 是**历史事故复盘与真机验证记录**（原文 §8.6/§8.7/§8.8/§8.9）。均为真实记录，**按原样保留**并仅做路径与表述校正。它们不属于"当前能力契约"，是运维知识。
 
-### 6.1 直属部门主管解析（P1，已知缺口）
+### 6.1 接口与权限
 
-**现状**：`case "manager"` 返回 `AssigneePick(null, 角色码)`，按角色匹配，未接组织树（[lowcode-oa-workflow.md](./lowcode-oa-workflow.md) §6 自述）。
+| 侧 | 端点 | 权限码 |
+|----|------|--------|
+| 表单库 | `api/orchestration/forms`（`AppBuilderControllers.cs:256-276`） | `Orchestration.Forms.*`（`FormDefinitionAppService.cs:33`/`:58`/`:78`/`:111`/`:133`/`:161`/`:181`） |
+| 审批流定义 | `api/orchestration/workflows`（`AppBuilderControllers.cs:281-317`） | `Orchestration.Workflows.*` |
+| 审批运行时 | `api/orchestration/workflow-runtime`（`:321-339`） | `Orchestration.Workflows.Default` |
 
-**协议设计**：
-- `ResolveAssigneesAsync` 增 `case "manager"` 真正分支：取 `instance.StarterUserId` → 查 `AbpOrganizationUnits` 主部门 → 取部门 `manager` 角色 OU 关联用户。
-- 兜底：无主管时按 `EmptyFallback`（admin/skip/error）。
-- 增 `case "role"` 显式分支：与 `manager` 区分——`role` 是"角色内任一人可办"（一个名额），`manager` 是"组织树解析直属主管"。
-- 与 `iam-rbac-menu.md` §5 组织机构 + §8 数据权限复用同一 `DataScopeResolver` 的 OU 解析。
+表单侧新增的两个提交后端点：`POST /api/orchestration/forms/{id}/publish`（`:269-271`）、`POST /api/orchestration/forms/{id}/resync-catalog`（`:273-276`）。
 
-### 6.2 抄送 `cc` 节点的真实通知（P1，当前只记不送）
+### 6.2 表单设计器「容器删不掉」（2026-10-10，前端 `vue-demo`）
 
-**现状**：`cc` 节点"只记通知，不挡流程"，但通知如何送达未定义（站内/IM/邮件？）。
+> ⚠️ 未核验（前端在 vue-demo）：以下全部在 `vue-demo`，本仓无法复核。保留原文记录。
 
-**协议设计**：`cc` 节点办理时调 `afterFlowKey` 或直接走 `RabbitMqPublish`，载荷含 `assignee/users` + `instance` 摘要；消费端对接站内消息 / 飞书 IM（`lark-im`）/ 邮件（`SettingManagement.Emailing`）。抄送不生成 `WorkflowTask`，只写 `HistoryJson` 一条 `cc` 记录。
-
-### 6.3 超时与催办（P1，当前缺）
-
-**现状**：文档 §6.1 提"超时提醒"未落地；`WorkflowTask` 无到期字段。
-
-**协议设计**：
-- `WfProcessNode` 增 `TimeoutMinutes` + `RemindMinutes`（提前提醒）+ `TimeoutAction: skip | escalate | notify`。
-- `WorkflowTask` 增 `DueAt`（启动时算）+ `RemindedAt`。
-- 后台 Job（Hangfire/Quartz）扫 `DueAt < now && Status=pending`，按 `TimeoutAction` 处理：`skip` 自动通过、`escalate` 转上级、`notify` 发消息。
-- 前端"我的待办"标红超时项；列表支持"催办"按钮（给办理人发提醒）。
-
-### 6.4 加签 / 减签 / 委办（P2，对照钉钉）
-
-**现状**：仅 `transfer`（转办，整体移交）。缺钉钉常见的加签/减签/委办。
-
-| 动作 | 语义 | 与 transfer 区别 |
-|------|------|------------------|
-| `addsign_before` | 前加签：当前人提交前，先让指定人审 | 不移交，加一关 |
-| `addsign_after` | 后加签：当前人通过后，加指定人再审 | 当前人不算办完 |
-| `countersign` | 会签加签：临时把单人节点变会签 | 改 multi |
-| `delegate` | 委办：委托他人代办，办完记回原人 | 不移交，原人仍可收回 |
-| `remove_sign` | 减签：撤销某候选人的审批权 | 仅多实例节点 |
-
-**协议设计**：`CompleteWorkflowTaskDto.Action` 扩展上述枚举；加签在 `HistoryJson` 记一条 `addsign` 轨迹，原任务不取消，新增 `WorkflowTask` 挂同节点。
-
-### 6.5 流程撤回与自选审批人（P2，对照钉钉/飞书）
-
-**撤回**：发起人对未进入审批的实例主动撤回。`Action: withdraw`，仅当首个 `approver` 节点无任何 `approved` 任务时允许；撤回后实例 `Status=withdrawn`。
-**自选审批人**：`approver` 节点 `assigneeType=starterSelect`，发起人在提交表单时指定该节点的办理人；存入 `record.__approver_{nodeId}`，运行时按 `formField` 读取。
-
-### 6.6 审批人去重（P1，当前缺）
-
-**现状**：同一人在链路多次出现会收到多条待办。
-
-**协议设计**：`ResolveAssigneesAsync` 返回候选后，过滤"该用户在本实例 `HistoryJson` 已 `approved` 的节点"，去重后不生成新任务，直接记 `autoSkip` 轨迹。参考钉钉"审批人去重自动跳过"。
-
-### 6.7 并行网关与汇合（P3，对照 BPMN）
-
-**现状**：当前是纵向链式 + 连线条件分支，缺并行（多分支同时走、全部到齐才向下）。
-
-**协议设计**：`WfProcessNode` 增 `type=parallel`（fork，一进多出全激活）+ `type=join`（汇合，等所有入边任务完成才向下）。与编排引擎的 `Parallel`/`Wait`（[lowcode-logic-orchestration.md](./lowcode-logic-orchestration.md) §11.3 P2）区分——人审并行在审批引擎，不在编排画布。P3 评估是否引入 bpmn-js 画布。
-
-### 6.8 子流程嵌套（P3）
-
-**现状**：编排有 `SubFlow`，审批无子流程。
-
-**协议设计**：`WfProcessNode` 增 `type=callActivity`，`callActivityDef: { workflowKey, inputMapping, outputMapping }`；父实例创建子实例，子实例结束按 `outputMapping` 回写父 `record`。用于"报销含出差申请"场景。
-
-### 6.9 流程版本迁移（P1，当前靠快照规避）
-
-**现状**：`ProcessSnapshotJson` 保证在途实例不受定义变更影响，但**新版本如何让在途实例迁移**未定义。
-
-**协议设计**：
-- `WorkflowDefinition` 增 `PublishedVersion` + `MigrationPlan`（节点 ID 映射表：旧节点 → 新节点）。
-- 管理员发布新版时可选填 `MigrationPlan`；后台 Job 扫在途实例，按映射把当前节点 ID 改到新版本对应节点，`ProcessSnapshotJson` 替换为新版 DSL。
-- 无映射的实例继续按旧快照跑完，不强制迁移。
-
-### 6.10 流程模板库与导出导入（P2）
-
-**协议设计**：`WorkflowDefinition` 增 `IsTemplate`；管理端"模板库"一键克隆为草稿；`ExportAsync` 输出 `ProcessJson + FormSnapshotJson` 单文件 JSON，`ImportAsync` 校验后入库。参考飞书审批模板中心。
-
-### 6.11 批量审批（P1，对照钉钉）
-
-**现状**：`my-tasks` 一次一条。
-
-**协议设计**：`POST /tasks/batch-complete`，入参 `taskIds[]` + 共同 `Action` + `Opinion`；后端循环 `CompleteAsync`，同 DS 事务；前端列表多选 + 批量通过/驳回。限制单批上限（如 50）。
-
----
-
-## 7. 优先级总览
-
-| 能力 | 优先级 | 关联代码 |
-|------|--------|----------|
-| §5.1 字段校验 rules 协议 | P1 | `FormFieldDef` |
-| §5.2 级联取数 / 异步选项 / 计算 | P1 | `FormFieldDependencyDef` |
-| §5.4 表单发布快照 | P1 | `FormDefinitionAppService.PublishAsync` + `WorkflowInstance.FormSnapshotJson` |
-| §5.5 字段映射 `ColumnName` | P1 | `FormFieldDef` |
-| §6.1 直属部门主管 + role 显式分支 | P1 | `WorkflowRuntimeAppService.ResolveAssigneesAsync` |
-| §6.2 抄送通知 | P1 | `cc` 节点 + `RabbitMqPublish` |
-| §6.3 超时与催办 | P1 | `WfProcessNode` + `WorkflowTask` + 后台 Job |
-| §6.6 审批人去重 | P1 | `ResolveAssigneesAsync` + `HistoryJson` |
-| §6.9 版本迁移 | P1 | `WorkflowDefinition.MigrationPlan` |
-| §6.11 批量审批 | P1 | `WorkflowRuntimeAppService` + API |
-| §5.3 子表行级权限/联动 | P2 | `table` 控件 `ControlProps` |
-| §5.6 多语言/布局预设 | P2 | `FormFieldDef` + `FormDef` |
-| §6.4 加签/减签/委办 | P2 | `CompleteWorkflowTaskDto.Action` |
-| §6.5 撤回/自选审批人 | P2 | `Action: withdraw` + `assigneeType=starterSelect` |
-| §6.10 模板库/导出导入 | P2 | `WorkflowDefinition.IsTemplate` |
-| §6.7 并行网关/汇合 | P3 | `WfProcessNode` fork/join |
-| §6.8 子流程嵌套 | P3 | `callActivity` 节点 |
-
-**落地顺序建议**：先 P1 表单侧（§5.1/5.2/5.4/5.5）与 P1 流程侧（§6.1/6.2/6.3/6.6/6.9/6.11）同步推进，前者保证表单契约稳定，后者补齐审批闭环；P2 再做加签/撤回/子表行级；P3 评估并行网关与子流程是否必须，否则继续自研轻量引擎不上 bpmn-js。
-
----
-
-## 8. 定义侧健壮性缺陷（2026-10 代码审计补充）
-
-> **本节定位**：§0 的核对表回答“能力**有没有**落地”，本节回答“定义链**稳不稳**”。两者不冲突——表单/流程定义侧目前**几乎没有约束**，配置错误不会被拦在发布口，而是在运行时以最坏的形态爆发。以下每条均附代码位置与实证。
->
-> **一句话结论**：两处定义链的共同病根是「把语义存成自由字符串，然后信任调用方」。表单侧有强类型但三套 Schema 各说各话；OA 流程侧连类型都没有（`ProcessJson` 就是 `string`）。更关键的是——**逻辑编排有发布校验（`FlowDefinitionAppService` 调 `FlowExecutor.ValidateDsl`），表单和 OA 流程一条都没有**。
-
-### 8.1 表单定义缺陷（F1–F7）
-
-| 编号 | 缺陷 | 触发条件 / 实证 | 影响 | 代码位置 | 修复方向 |
-|:--:|:---|:---|:---|:---|:---|
-| **F1** | **拍平只增不覆盖，改了等于没改** | 设计器修改一个**已存在**字段（改必填/控件/标题）时，`EnsureFlattenedFields` 用 `if (!existingMap.ContainsKey(field.Field))` 判定，已有同名字段直接跳过，新定义不写入；删除字段时 `Fields` 也不收缩 | `PublishAsync` 仅校验 `Fields.Count > 0`，于是**发布的是一份陈旧字段定义**；长期残留“幽灵字段” | [FormDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/FormDefinitionAppService.cs) `EnsureFlattenedFields` L139–159、`PublishAsync` L129–132 | 改为「以 Layout 为准的覆盖式同步」：对同名字段做属性覆盖，并删除 Layout 中已不存在的字段 |
-| **F2** | **拍平与克隆会丢字段（明细子表直接失真）** | ① `ExtractFieldsFromWidgets` 构造 `FormFieldDef` 时**不复制** `Rules` / `Children` / `MinItems` / `MaxItems` / `TreeChildrenField`；② `FormWidgetDef` 本身也缺 `MinItems`/`MaxItems`/`TreeChildrenField`；③ `CloneWidget` 与 `CloneField` **都不复制** `Dependencies` / `ControlProps` | `table`/`list`/`tree` 明细经 Layout→Fields 拍平后**子列结构、行数限制、校验规则全部丢失**；从资源同步表单时**字段联动规则与控件配置被静默清空** | 同文件 `ExtractFieldsFromWidgets` L161–192、`CloneWidget` L237–258、`CloneField` L260–280；[ResourceSchema.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain.Shared/Orchestration/ResourceSchema.cs) `FormWidgetDef` L375+ | 合并 F3 的重复模型，拷贝时用整体映射而非逐属性手抄 |
-| **F3** | **`FormFieldDef` 与 `FormWidgetDef` 是两个几乎重复的类** | `Field`/`Title`/`Control`/`Span`/`Placeholder`/`VisibleOn*`/`ReadonlyOn*`/`RequiredOn*`/`Dependencies`/`ControlProps` 在两个类里各写一遍，差异只在明细相关字段 | 是 F2 那些漏拷贝 bug 的**根因**——每加一个属性就要改三处拷贝代码，必然漏 | `ResourceSchema.cs` `FormFieldDef` L315–369、`FormWidgetDef` L375–421 | 只保留一个模型，另一处用组合表达 |
-| **F4** | **发布不产生快照，契约随时漂移** | `Publish()` 只是把 `Status` 置为 Published，`Schema` 还是**同一个可变对象**；`GetPublishedByCodeAsync` 返回的就是当前 Schema | **已发布的表单可以被下一版直接改写**；OA 流程冻结了流程快照，却引用着一份**会变的表单**，在途审批单结构随之漂移 | [FormDefinition.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/FormDefinition.cs) `Publish()` L70；`FormDefinitionAppService.GetPublishedByCodeAsync` L58–68 | 发布时生成**不可变 Schema 快照 + `SchemaVersion`**；实例引用快照而非 Code |
-| **F5** | **字段无唯一性与合法性校验** | 字段名不查重（提交两个同名字段不被拒）；**不校验字段是否属于绑定资源/表的真实列**；文档 §5.5/§5.8（第 439、679 行）明确写了“按 `FormFieldDef.ColumnName` 投影”，但**代码里没有 `ColumnName` 这个属性** | 字段名拼错在 Mongo 无 schema 的情况下就是**静默丢数据**；文档描述了一个不存在的契约 | `ResourceSchema.cs` `FormFieldDef`（无 `ColumnName`）；`FormDefinitionAppService.PublishAsync` L129 | 发布校验字段名唯一 + 与资源列对齐；文档与代码二选一对齐 |
-| **F6** | **引用完整性为零** | `DeleteAsync` 不做任何引用检查 | 被 OA `FormRef`、报表 `ActionDef.FormKey` 引用的表单可直接删除，**运行时才报 `FormNotFound`** | `FormDefinitionAppService.DeleteAsync` L121–122 | 删除前检查引用（对标逻辑编排 `FlowUsageIndexer`） |
-| **F7** | **`FieldCatalog` 与 `Schema.Fields` 两套字段库** | `FormDefinition` 同时持有设计器字段库 `FieldCatalog` 与真实字段 `Schema.Fields`；`CreateAsync` 有 `SourceResourceCode` 时会把资源默认表单克隆进 Schema；`SyncCatalogFromResourceAsync` **只在创建时跑一次**，资源列后续变更无法重新同步、也无同步入口 | “新建即复制资源表单”与“空白表单 + 字段库”两种心智混在一起，字段来源不唯一 | `FormDefinition` `FieldCatalog` L30；`FormDefinitionAppService.CreateAsync` L70–101、`SyncCatalogFromResourceAsync` L194–209 | 明确单一事实源，补资源列重新同步入口 |
-
-### 8.2 OA 流程定义缺陷（W1–W9）
-
-| 编号 | 缺陷 | 触发条件 / 实证 | 影响 | 代码位置 | 修复方向 |
-|:--:|:---|:---|:---|:---|:---|
-| **W1** | **定义侧零校验，坏流程能“发布成功”** | `UpdateDraft` 对 `ProcessJson` 只判非空；`PublishAsync` 只校验 `FormRef` 存在且已发布。**不校验** start/end 是否存在、节点 id 是否唯一、是否有环、审批节点是否配了办理人、条件引用的字段是否存在 | 任何字符串都存得进去；配置错误不在发布口拦截 | [WorkflowDefinition.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Domain/Orchestration/WorkflowDefinition.cs) `UpdateDraft` L56–75；[WorkflowDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionAppService.cs) `PublishAsync` L129–142 | 照 `FlowExecutor.ValidateDsl` 模式加结构校验 |
-| **W2** | **指向不存在节点的连线 = 单据被静默通过（最严重）** | `ChooseNext` 用 `graph.Nodes.GetValueOrDefault(edge.TargetId)` 取下一节点，取不到返回 `null`；`EnterAsync` 收到 null 后 `while` 循环退出，直接执行 `instance.Complete("approved")` | **一条打错目标的连线，会让审批单在没有任何人审批的情况下变成“已通过”**——审批场景里的 fail-open 数据事故 | [WorkflowRuntimeAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowRuntimeAppService.cs) `ChooseNext` L406/416/423、`EnterAsync` L385–386 | 目标节点不存在时**显式报错**，不得回落为“通过” |
-| **W3** | **未知节点类型被当作审批节点** | `EnterAsync` 只显式判断 `end`/`start`/`condition`/`cc`，其余**全部落到“创建待办”分支** | 把 `approver` 拼成 `aprpver`，流程照样跑，只是行为不是你要的，且**没有任何告警** | `WorkflowRuntimeAppService.EnterAsync` L339–387 | 未知 `type` 抛异常并记录 |
-| **W4** | **双格式长期分叉，且默认格式是残废的那一个** | `ParseProcess` 同时支持画布 `nodes/edges` 与旧的 `childNode` 链；`FlattenTree` 每个节点只能 `Link` 一个子节点（**结构上无法表达多出边**），生成的边**永远不带条件**；而 `DefaultProcessJson()` 生成的正是这个树格式 | **新建流程默认落在一个既不能分支、也不能带条件的格式上**——而“同一节点多条出线按条件选择”恰是 §6 要求的能力 | `WorkflowRuntimeAppService.ParseProcess` L938–1012、`FlattenTree` L1014–1029；`WorkflowDefinition.DefaultProcessJson` L79–100 | 让 `DefaultProcessJson` 直接产出 `nodes/edges`，或给树格式补多出边支持；不要长期养两套 |
-| **W5** | **解析容错过度，坏数据静默降级** | `graph.Nodes[id] = node` —— 重复节点 id **后者静默覆盖前者**；连线缺 `source`/`target` 直接 `continue`；`FlattenTree` 同样覆盖同名节点 | 一个写坏的流程“解析成功”，但**节点少了一半**，问题被推迟到运行时 | `WorkflowRuntimeAppService.ParseProcess` L974/L983、`FlattenTree` L1020 | 重复 id / 缺关键字段直接报错 |
-| **W6** | **条件分支无语义，靠数组顺序决定** | 多出边时 `foreach (var edge in edges.Where(EdgeHasCondition))` 返回**第一个匹配**；无优先级字段、无互斥性校验、无告警；条件用编号 + `combine` 字符串公式（`"1 and (2 or 3)"`） | 前端设计器里**拖动连线顺序就会静默改变审批走向**；同一系统里“条件”存在三种表达（连线编号公式 / 节点 `leaveCondition` / 报表 `FilterGroup` 树） | `WorkflowRuntimeAppService.ChooseNext` L412–418 | 加优先级/互斥校验；统一迁移到 `FilterGroup` 树 |
-| **W7** | **办理人相关全是魔法字符串，且默认值危险** | `assigneeType=role` 无显式 case（落 `default`）；`manager` 未接组织树，只把角色码 `manager` 丢给匹配；`EmptyFallback` **默认 `"admin"`**；`multi`/`multiRatio`/`opinion` 无枚举校验，`multi=ratio` 但 `MultiRatio` 为空的行为未定义（实现取 `?? 100`） | **一个配置失误会把审批单直接派给管理员账号**（审批场景默认值应为 `error`）；`manager` 名不副实；非法枚举静默走兜底 | `WorkflowRuntimeAppService.ResolveAssigneesAsync` L502–529、`EmptyFallback` 默认值 L1256、`CreateTasksAsync` L459–475 | `EmptyFallback` 默认改 `error`；补显式 `case "role"`；接组织树实现 `manager` |
-| **W8** | **字段权限矩阵服务端只有两个有效值且 fail-open** | `FieldPermissions` 是 `Dictionary<string,string>`（键任意、不校验是否真实字段）；`FilterRecordPatch` **只对 `read`/`hide` 阻止写入，其它任何值（含拼错的 `"reade"`）一律放行** | 服务端 `write` 和 `required` **实际不起作用**；权限写错静默无效；文档 §5.8.3 设计的“模式级 baseline ∩ 节点级 ∪ 按钮白名单”三层叠加，代码里只有节点级一层 | `WorkflowRuntimeAppService.FilterRecordPatch` L846–866、`WfProcessNode.FieldPermissions` L1255 | 未知权限值改为**拒绝**；补模式级 baseline 层 |
-| **W9** | **无版本、无唯一索引** | 流程无版本号/版本表（对比 `FlowDefinition` 有 `FlowVersion`）；实例上 `ProcessSnapshotJson` 只是字符串，**无法回答“这次实例对应第几版定义”**；`Code` 全系统作为引用键却**没有唯一索引**，仅靠 `AnyAsync` 预检；实例只存 `FormRef` 字符串、**不存表单 schema 快照** | 并发创建可产生重复 `Code`；流程冻结了、**表单没冻结** | `WorkflowDefinitionAppService.CreateAsync` L80；`WorkflowRuntimeAppService.WfProcessNode` L1240–1256 | 加 `Version` 字段 + 唯一索引；实例保存表单 schema 快照引用 |
-
-### 8.3 交叉影响与修复优先级
-
-**最坏组合**：在途审批单读取的字段结构随表单编辑漂移（F4 + W9），而流程快照让它看起来“很安全”。
-
-**建议动手顺序**（前两步改动集中、风险可控）：
-
-1. **止血（改动小、收益大）**：W2 的 `null` 目标改为报错；`EnterAsync` 对未知 type 抛异常；`EmptyFallback` 默认改 `error`；`FilterRecordPatch` 未知权限值改为拒绝。
-2. **补发布校验**：照 `FlowExecutor.ValidateDsl` 的模式给 `WorkflowDefinition.PublishAsync` 加结构校验（start/end 唯一、id 唯一、无环、approver 必填办理人、条件字段属于绑定表单）；给 `FormDefinition.PublishAsync` 加字段名唯一 + 与资源列对齐校验。
-3. **修 F1/F2**：把拍平改成“以 Layout 为准的覆盖式同步”；合并 `FormFieldDef`/`FormWidgetDef`，消除漏拷贝的根因。
-4. **补快照与唯一索引**：表单发布生成不可变 Schema 快照 + `SchemaVersion`；给 `FormDefinition.Code`、`WorkflowDefinition.Code` 建唯一索引；实例保存表单快照引用。
-5. **统一条件模型**：把审批连线条件从编号公式迁移到 `FilterGroup` 树，与报表对齐。
-6. **明确双格式去留**：要么让 `DefaultProcessJson` 直接产出 `nodes/edges`，要么给树格式补 `Children` 支持多出边——不要长期养两套。
-
-> **与 §0 的关系**：§0 列的 §2/§3 能力确实“已落地”，但落地质量受本节 F/W 各项约束——例如 §3.3 的 `FieldPermissions` 虽已实现，却因 W8 在服务端 fail-open；§3.1 的流程快照虽已实现，却因 F4/W9 只冻结流程不冻结表单。补本节缺陷前，§0 的“✅”应理解为“已具备该入口，尚未通过健壮性验收”。
-
-### 8.4 本批次已修复项（2026-10「OA 审批闭环 P1」）
-
-以下缺陷本批次已改代码并编译通过（后端 `Meta.Dow.SaaS`，前端 `vue-demo`）。未列出的 W4/W5/W6/W9 与表单侧 F1–F7 已由后续批次补齐，见 **§8.5**。
-
-| 编号 | 修复内容 | 代码位置 |
-|:--:|:---|:---|
-| **W1** | 新增发布前结构校验器：节点 id 唯一且类型合法、start/end 唯一、非结束节点必须有出线、连线端点存在、无环、审批/抄送节点办理人完整、条件字段属于绑定表单。`PublishAsync` 调用它 | 新增 [WorkflowDefinitionValidator.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionValidator.cs)；[WorkflowDefinitionAppService.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowDefinitionAppService.cs) `PublishAsync` |
-| **W2** | 连线目标节点不存在时**显式报错**，不再回落为 `Complete("approved")` | `WorkflowRuntimeAppService.RequireTargetNode`（`ChooseNext` 三处调用点） |
-| **W3** | `EnterAsync` 对 `approver` 显式处理，未知节点类型**抛异常**，不再按审批节点兜底执行 | `WorkflowRuntimeAppService.EnterAsync` |
-| **W7** | `EmptyFallback` 默认由 `admin` 改 `error`（失败关闭）；补显式 `case "role"`；未知办理人类型抛异常；发布校验同时校验 `multi` 枚举 | `WorkflowRuntimeAppService`（`WfProcessNode.EmptyFallback`、`CreateTasksAsync`、`ResolveAssigneesAsync`） |
-| **W8** | `FilterRecordPatch` 对未知权限值**显式报错**（不再静默放行）；新增 `EnforceRequiredFields` 在通过前校验 `required` 字段非空；`write`/`required` 正常放行 | `WorkflowRuntimeAppService.FilterRecordPatch` / `EnforceRequiredFields` |
-| **§6.1** | `manager` 接组织树：新增 `IWorkflowOrgResolver`，按发起人直属 OU（优先本级、沿父级向上）解析持有指定角色（默认 `manager`）的主管 | 新增 [WorkflowOrgResolver.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowOrgResolver.cs) |
-| **§6.2** | 抄送由“只记不送”改为**真实通知**：经 fanout 广播交换机派发 `workflow.cc` 消息（含收件人/角色/单据），失败仅告警不阻断流程 | 新增 [WorkflowNotifier.cs](file:///d:/Project/demo-microservice/src/services/saas/src/Meta.Dow.SaaS.Application/Orchestration/WorkflowNotifier.cs)；`EnterAsync` cc 分支 |
-| **§6.6** | 审批人去重：同一节点同一人（或同一角色）只建一条待办；驳回重办时已有未取消待办的人不再重复建单 | `WorkflowRuntimeAppService.CreateTasksAsync` |
-| 前端 | 设计器 `emptyFallback` 默认改 `error` 并与后端对齐；`manager` 提示补充组织树解析说明；候选人为空选项改以“报错阻断”为推荐 | `vue-demo/.../workflows/designer.vue` |
-
-### 8.5 本批次已修复项（2026-10「全量缺陷清缴」）
-
-> 承接 §8.4，本批次把 §8.1（F1–F7）与 §8.2 剩余项（W4/W5/W6/W9）全部落地，并附带工程化加固。后端 `Meta.Dow.slnx` 全量编译 0 错误，前端 `web-antd` 类型检查 0 错误。
-
-#### 8.5.1 表单定义（F1–F7）
-
-| 编号 | 修复内容 | 代码位置 |
-|:--:|:---|:---|
-| **F1** | `EnsureFlattenedFields` 改为**以 Layout 为准的覆盖式同步**：同名字段按 Layout 覆盖属性，Layout 中已删除的字段从 `Fields` 中移除。不再“只增不覆盖” | `FormDefinitionAppService.EnsureFlattenedFields` |
-| **F2** | `FormWidgetDef` 补齐 `Rules` / `MinItems` / `MaxItems` / `TreeChildrenField` / `Dependencies` / `ControlProps` / `ColumnName`；`ExtractFieldsFromWidgets` 处理明细容器并整树提取；`CloneWidget` / `CloneField` 改为整体属性拷贝，明细子列/行数限制/校验规则/控件配置不再丢失 | `ResourceSchema.cs` `FormWidgetDef`；`FormDefinitionAppService` 三处 |
-| **F4** | 表单发布生成**不可变快照** `PublishedSchema` + `SchemaVersion`（每次发布 +1）；新增 `GetEffectiveSchema()`，运行时优先读快照 | `FormDefinition.Publish(FormDef)` / `GetEffectiveSchema()`；`FormDefinitionDto.SchemaVersion` |
-| **F5** | 新增 `FormFieldDef.ColumnName`（与 `Field` 解耦的落库列映射，文档 §5.5/§5.8.4 早已描述但代码缺失）；发布校验 `ValidateFieldNames`（字段名唯一）+ `ValidateAgainstResourceAsync`（与绑定资源列对齐） | `ResourceSchema.cs`；`FormDefinitionAppService` 两个校验方法 |
-| **F6** | `DeleteAsync` 增加**引用完整性检查**：被 OA 流程 `FormRef`、报表 `ActionDef.FormKey`、资源表单引用时拒绝删除并给出引用方 | `FormDefinitionAppService.DeleteAsync` |
-| **F7** | 新增**资源列重新同步入口** `ResyncCatalogFromResourceAsync`（`POST /api/orchestration/forms/{id}/resync-catalog`），资源表结构变更后可重新对齐字段目录与拍平字段，布局树不受影响 | `FormDefinitionAppService`；`AppBuilderControllers` 新端点；前端 `resyncCatalogFromResourceApi` |
-| **F3** | 保留双模型但**消除漏拷贝根因**：两类的字段集按 F2 对齐为同一超集语义，克隆/拍平统一走整树映射，新增属性只需改一处 | `ResourceSchema.cs` |
-
-#### 8.5.2 OA 流程定义（W4/W5/W6/W9）
-
-| 编号 | 修复内容 | 代码位置 |
-|:--:|:---|:---|
-| **W4** | `DefaultProcessJson()` 重写为直接产出 **`nodes/edges`** 画布格式，不再默认落到“不能分支、不能带条件”的 `childNode` 链；旧树格式仍可读入（`FlattenTree` 保留），但新建流程不再产生 | `WorkflowDefinition.DefaultProcessJson` |
-| **W5** | 解析**失败关闭**：新增 `LoadGraph(json, strict = true)`，重复节点 id / 缺 `source`/`target` / 缺 `nodeId` 直接抛 `UserFriendlyException`；`FlattenTree` 增加**环检测**（`visited` 集合），不再静默覆盖或死循环 | `WorkflowRuntimeAppService.LoadGraph` / `FlattenTree` |
-| **W6** | 连线新增 `Priority`（数字小者优先）与 `IsDefault`（显式默认分支）；`ChooseNext` 多条件出边时按 `Priority` 排序取首个命中，兜底取 `IsDefault` → 无条件边（不再依赖数组顺序，拖动连线不再静默改走向）；发布校验器新增 `CheckEdgePriorities`（同源条件边优先级重复即报错） | `WorkflowRuntimeAppService.WfEdge` / `ChooseNext`；`WorkflowDefinitionValidator.CheckEdgePriorities` |
-| **W9** | `WorkflowDefinition` 新增 `Version`，`Publish()` 递增；实例新增 `DefinitionVersion` / `FormSchemaVersion`，启动时固化当次定义版本与表单结构版本，可回答“这次实例对应第几版”；`SaaSMongoDbModule` 在启动时创建 **唯一索引 `TenantId + Code`**（`FormDefinition` / `WorkflowDefinition` / `FlowDefinition`）与常用查询索引，杜绝并发重复 Code | `WorkflowDefinition.Version`；`WorkflowInstance`；`SaaSMongoDbModule.EnsureIndexesAsync`；DTO `Version` / `DefinitionVersion` / `FormSchemaVersion` |
-
-#### 8.5.3 工程化加固与守卫
-
-| 方向 | 内容 |
-|:---|:---|
-| **密钥治理** | 各 Host `appsettings.json` 移除明文 `SwaggerClientSecret` / `DefaultPassPhrase`，改由 git-ignored 的 `appsettings.secrets.json` 提供；提交 `*.example` 模板；`.gitignore` 覆盖 `**/appsettings.secrets.json`、`tempkey.jwk`、`tempkey.rsa`，并将历史误提交文件 `git rm --cached` |
-| **证书** | AuthServer 从 `OpenIddict:Certificate:Path` 加载 OpenIddict **签名与加密证书**，不再依赖开发默认证书 |
-| **健康检查** | `MapDefaultEndpoints()` 在所有环境映射 `/health` 与 `/alive`（JSON 输出）；5 个 Host 的 `Program.cs` 均调用 |
-| **网关加固** | JWT Bearer 校验（Authority/Audience）+ 默认“已认证”策略；**限流** ~300 req/min（按客户端分区）；统一 401/429 错误体；路由修正——`administration` 由 `{**catch-all}` 收窄为 `/api/administration/{*any}`，新增 `/api/abp/*`、`administration-fallback`（`{**catch-all}` 且**要求认证**）；集群超时 30s |
-| **服务边界** | 移除 SaaS `Application` / `Application.Contracts` 对 Administration 的**编译期 `ProjectReference`**，改用 `Volo.Abp.Identity.Domain` 包，服务可独立构建 |
-| **分布式锁** | `ConfigureDistributedLocking` 提为公共扩展方法（无 Redis 时跳过）；`FlowScheduleHostedService` 触发前获取 `IAbpDistributedLock`，多实例不再重复触发 |
-| **构建基建** | 新增 `global.json`（SDK 10.0.401）、`.editorconfig`、`Directory.Packages.props`（CPM，119 个包）、`.dockerignore`；重写 7 个 Dockerfile 到 net10.0 与正确路径；删除 9 个失效 docker-compose 与 `scratch/`；`Meta.Dow.slnx` 纳入 tests 目录 |
-| **包源治理** | 删除 4 个模板残留的服务级 `NuGet.Config`（指向已无用的第三方 `BlazoriseMyGet` feed，且使 CPM 报 `NU1507`）；根 `NuGet.config` 补 **`<packageSourceMapping>`**，把所有包固定到 `nuget.org`，同时防依赖混淆 |
-| **CI** | 新增 `.github/workflows/ci.yml`：restore → build（Release）→ test，上传 trx |
-| **测试** | 新增 `tests/Meta.Dow.Orchestration.Tests`（xUnit，23 个用例）：`WorkflowDefinitionValidatorTests`(11) / `FormSchemaFlatteningTests`(7) / `WorkflowRecordPatchTests`(4) / `SecretsConfigSafetyTests`(1)；相关应用服务成员由 `private` 改 `internal` + `InternalsVisibleTo` 以便直测 |
-| **前端对齐** | `orchestration.ts` 类型补齐 `schemaVersion` / `version` / `definitionVersion` / `formSchemaVersion` / `columnName` / `rules` / `minItems` / `maxItems` / `treeChildrenField`；新增 `resyncCatalogFromResourceApi`；表单库列表增加版本列与「同步字段」操作；OA 列表增加版本列；流程设计器连线属性增加**分支优先级**与**默认分支**开关；`form-schema.ts` 的 `normalizeWidget`/`flattenLayout` 补齐属性透传（前端侧 F2 同等修复）；`vform-props.ts` 新增「落库列名」属性项 |
-| **文档** | 重写 `src/CLAUDE.md`（原文严重失真：Aspire 9.5.2 / Blazor WASM / EF Core / PostgreSQL / `Meta.Dow.sln` / Makefile 均为错误信息），改为与代码一致的 Aspire 13.5.3 / MongoDB / `Meta.Dow.slnx` / CPM / CI 等 |
-
-#### 8.5.4 仍未落地（明确记录）
-
-| 项 | 说明 |
-|:---|:---|
-| §2 / §3 编排引擎控制流原语 | 独立 `Sql` 节点、`Switch`、**并行网关/汇合**、**循环** 仍为规划（见 `lowcode-logic-orchestration.md` §11.3）；当前 SQL 走 Code 节点 `db.*` 间接实现 |
-| §6.7 / §6.8 | 并行网关（fork/join）、子流程嵌套（`callActivity`）未实现，维持 P3 |
-| §8.3 第 5 项 | 审批连线条件**尚未**从编号公式迁移到统一的 `FilterGroup` 树模型（W6 只补了优先级与默认分支，未统一表达） |
-
----
-
-### 8.6 登录回归事故：OpenIddict 客户端被"数组按索引合并"抹除（2026-10-10）
-
-**现象**：前端跳到 AuthServer 后不再出现登录页，直接返回 OpenIddict 错误响应：
-
-```
-error: invalid_request
-error_description: The specified 'client_id' is invalid.
-error_uri: https://documentation.openiddict.com/errors/ID2052
-```
-
-**根因（配置合并语义 × 破坏性清理）**
-
-`.NET` 配置对 **JSON 数组是按索引合并**的，而不是整段替换、也不是拼接。8.5.3 的密钥治理把 `ClientSecret`
-从 `appsettings.json` 抽到 `appsettings.secrets.json` 时，secrets 文件里用**同一个 `"Clients"` 键**再写了一份
-数组，于是两份配置按索引逐字段"混血"：
-
-| 索引 | `appsettings.json` 原值 | `secrets.json` 覆盖 | 合并结果 |
-|:--|:--|:--|:--|
-| 0 | `MetaDow_Vue` + Vue 的 GrantTypes/Scopes/RedirectUris | `{ClientId: Administration_API, ClientSecret}` | **`Administration_API`**，但带着 Vue 的授权码/密码/刷新令牌、Vue 的 scope 与回调地址 |
-| 1 | `Administration_API` | `IdentityService_API` | `IdentityService_API` 带着 Administration_API 的重定向 |
-| 2 | `IdentityService_API` | `Projects_API` | `Projects_API` 带着 IdentityService_API 的重定向 |
-| 3 | `Projects_API` | `SaaS_API` | `SaaS_API` 带着 Projects_API 的重定向 |
-| 4 | `SaaS_API` | —（secrets 只有 4 项） | `SaaS_API` 保持原值 |
-
-结果：**`MetaDow_Vue` 不再是任何一个条目的 `ClientId`**，随后 `RemoveObsoleteClientsAsync`（"删掉配置里没登记的客户端"）
-把它**软删除**（MongoDB 实测 `IsDeleted: true`，`DeletionTime: 2026-10-10T13:33:09.713Z`），前端再带
-`client_id=MetaDow_Vue` 请求 `/connect/authorize` 即被拒。
-
-**修复**
-
-| 层 | 措施 | 位置 |
-|:--|:--|:--|
-| 配置 | 密钥改放**独立的 `ClientSecrets` 对象键**（`{clientId: secret}`）。对象是**按 key** 合并的，不会错位；`Clients` 数组只保留在 `appsettings.json` 一处，成为唯一事实来源 | `DbMigrator/appsettings.secrets.json`(+`.example`) |
-| 种子器 | 新增 `LoadClients()` 把 `ClientSecrets:{clientId}` 合并进客户端定义 | `OpenIddictDataSeeder.cs` |
-| 种子器 | 新增 `ValidateClients()`：**先在内存校验完再碰数据库**（ClientId 非空/不重复、GrantTypes/Scopes 非空），不合法直接抛错中止 | 同上 |
-| 种子器 | 破坏性清理**显式开关** `PruneObsoleteClients`（默认 `false`），并逐个 ClientId 打 **Warning** 日志，杜绝"客户端静默消失" | 同上 |
-| 种子器 | `ApplyClientSettings` 改为**配置即事实**：先 `Clear()` 掉 `Permissions`/`Requirements`/`RedirectUris`/`PostLogoutRedirectUris` 再按配置重建。原实现在旧值上累加，混血数据一旦写入就永远清不掉；改后重跑迁移可**自愈收敛** | 同上 |
-| 数据 | 一次性修复脚本：恢复被软删的 `MetaDow_Vue`，并把 4 个被污染 API 客户端的 `ClientUri`/`RedirectUris`/`PostLogoutRedirectUris`/`Permissions` 收敛回配置。修复后 5 个客户端全部 `IsDeleted:false` 且无串味 | MongoDB `MetaDowIdentityServiceDb.OpenIddictApplications`（OpenIddict 数据落在 Identity 库，因 `AbpDbConnectionOptions` 把 `AbpOpenIddict` 映射到 `MetaDowIdentityServiceDb`） |
-| 护栏 | 新增 `SecretsConfigSafetyTests`：扫描全仓 `appsettings*.secrets.json`（含 `.example` 模板），**拒绝任何 JSON 数组**，并打印具体 JSON 路径。已用探针文件验证该用例确实会失败而非空跑 | `tests/Meta.Dow.Orchestration.Tests/` |
-
-**验证**：`curl -k https://localhost:7600/connect/authorize?client_id=MetaDow_Vue&...` 由错误响应恢复为
-`302 → /Account/Login`（正常登录跳转），**无需重启 AuthServer**；后端 `dotnet build -c Release` 0 错误；
-单元测试 23/23 通过。
-
-**长期规则**：secrets 覆盖文件里**永远不要出现 JSON 数组**。需要覆盖数组语义时改用对象键。
-
----
-
-### 8.7 登录后全线 401：网关把 JWT 受众写死成解决方案名（2026-10-10）
-
-**现象**：登录页能打开，登录也能成功取到令牌（库中可见），但随后控制台刷屏 401；
-页面弹出 `未认证或令牌无效` 与 `页面加载失败：Request failed with status code 401`。
-
-**定位（先证来源，再谈原因）**
-
-`未认证或令牌无效` 这个文案**全仓只出现在一个地方**——网关 `Meta.Dow.Gateway/Program.cs`
-的 `JwtBearerEvents.OnChallenge`。所以这组 401 必然由**网关**产生，而不是被代理的服务。
-
-**根因：受众（audience）写死错误**
-
-上一批"网关加固"里写了：
-
-```csharp
-options.Audience = configuration["AuthServer:Audience"] ?? "Meta.Dow";
-options.TokenValidationParameters.ValidateAudience = true;
-```
-
-但 OpenIddict 是把**「作用域所关联的资源名」**写进令牌的 `aud`。本仓库的
-`DbMigrator/appsettings.json` 与库中 `OpenIddictScopes` 一致地声明：
-
-| 作用域 | `Resources` |
-|:--|:--|
-| `MetaDowAdministration` | `["MetaDowAdministration"]` |
-| `MetaDowAuthServer` | `["MetaDowAuthServer"]` |
-| `MetaDowIdentityService` | `["MetaDowIdentityService"]` |
-| `MetaDowSaaS` | `["MetaDowSaaS"]` |
-
-而前端（`MetaDow_Vue`）实际申请的 scope 是
-`openid profile email offline_access MetaDowIdentityService MetaDowAdministration MetaDowSaaS`
-（见 `vue-demo/apps/web-antd/.env` 与库中 `OpenIddictAuthorizations.Scopes`）。
-
-⇒ 令牌的 `aud` **只可能**是上述服务名，**永远不含解决方案名 `Meta.Dow`**。
-开启 `ValidateAudience` 且要求 `Meta.Dow` ⇒ **每一个有效令牌都被判无效** ⇒ 所有需要认证的请求 401。
-
-> 注意：`MetaDowAuthServerModule` 里的 `options.AddAudiences("Meta.Dow")` 是给 **AuthServer 自身做
-> 令牌校验**用的"可接受受众"声明，它**不会**把 `Meta.Dow` 塞进签发的令牌里——两者极易混淆。
-
-**为什么现在才暴露**：前端 `/api/menu/*`、`/api/permission-management/*` 原先**没有显式路由**，
-会落进上一批新增的 `administration-fallback`（`{**catch-all}` + `AuthorizationPolicy: Default`）。
-登录成功后前端第一件事就是拉 `/api/menu/all`，于是必然撞上这条兜底路由，缺陷立刻显形。
-
-**修复**
-
-| 层 | 措施 | 位置 |
-|:--|:--|:--|
-| 网关 | **不再写死单一受众**。默认 `ValidateAudience = false`（仍校验签名/签发者/有效期），受众由下游各服务按自身受众把关；如需在网关强校验，用 `AuthServer:ValidAudiences` 显式列出允许值 | `Meta.Dow.Gateway/Program.cs` |
-| 网关配置 | `AuthServer.Audience` → `AuthServer.ValidAudiences: []`；补齐前端实际在用却缺路由的 `menu`、`permission-management` 两条路由（→ administration 集群） | `Meta.Dow.Gateway/appsettings.json` |
-
-**验证**：见 §8.7.1。
-
-**长期规则**：**同时前置多个 API 的网关，不要在网关写死单一 JWT 受众。** 受众是"每个 API 自己的事"，
-网关只负责签名/签发者/有效期的边缘把关。若要校验，必须列出**全部**允许受众。
-
-#### 8.7.1 验证记录（真机，2026-10-10 14:1x）
-
-`AppHost` 全栈重启后，用**真实令牌**经网关实测（只读探测，未改任何数据）：
-
-**令牌事实**（`POST https://localhost:7600/connect/token`，`client_id=MetaDow_Vue`，密码模式）：
-
-```
-aud = ['MetaDowAdministration', 'MetaDowIdentityService', 'MetaDowSaaS']
-iss = https://localhost:7600/
-```
-
-**网关实测**（`https://localhost:7500`，即前端 Vite `/api` 代理目标）：
-
-| 请求 | 无令牌 | 带令牌 |
-|:--|:--|:--|
-| `GET /api/menu/all` | 401 | **200** |
-| `GET /api/abp/application-configuration` | — | **200** |
-| `GET /api/permission-management/permissions?...` | — | **200** |
-| `GET /api/account/my-profile` | — | **200** |
-
-即：有效令牌放行、无令牌仍拦截 401，符合预期；上一版「有效令牌一律 401」已消除。
-
-**另：控制台 `[Vben Form] BREAKING CHANGE ... slotProps.componentProps` 提示不是缺陷**
-
-该提示来自上游模板自带的 Vite 插件 `internal/vite-config/src/plugins/form-field-slot-migration-warning.ts`，
-它在 `apply: 'serve'` 下**无条件**执行：启动时 `logger.warn` 一次，并向 `index.html` 注入一段
-`console.warn` 脚本（`transformIndexHtml`）。它**不扫描代码**，任何 app 都会看到。
-
-本仓 `apps/web-antd/src` 下 **零** `v-bind="slotProps"` 使用；且框架侧
-`form-field.vue` 的 `createFieldSlotScope()` 已同时提供顶层旧绑定与 `componentProps`（新 API），
-`form.vue` 具名插槽转发时把整个 scope 透出。=> **无需整改**，属上游模板的开发期提醒。
-若嫌噪音，可在 `internal/vite-config/src/plugins/index.ts:150` 移除该插件注册。
-
-#### 8.7.2 全站路由渲染巡检（真机 29 路由，2026-10-10 14:2x）
-
-用 `playwright-core`（复用 vue-demo 的 pnpm 仓库，不下载 Chromium）驱动本机 Chrome，
-登录后对**全部 29 个菜单路由**做逐页渲染巡检（含 3 个带真实 id 的设计器、资源编辑器、报表编辑器、资源运行时）。
-
-**结论：0 个功能错误。** 逐页判定维度：`console.error` / `pageerror` / `requestfailed` / HTTP ≥ 400，全部为 0；
-唯一被标记的 `/dashboard/workspace` 也 issues=0，只是 dev 首次硬刷新的启动遮罩超过巡检阈值（页面正常渲染）。
-
-**唯一的控制台输出是两类警告，均与本批次改动无关：**
-
-| 警告 | 出处 | 性质 |
-|:--|:--|:--|
-| `[Vben Form] BREAKING CHANGE ... slotProps.componentProps` | 上游模板自带 Vite 插件 `internal/vite-config/src/plugins/form-field-slot-migration-warning.ts`（`apply:'serve'` 无条件注入脚本 + 启动 `logger.warn`） | 提示，**不扫代码**；本仓 app 零 `v-bind="slotProps"` |
-| `Runtime directive used on component with non-element root node`<br>`Component inside <Transition> renders non-element root node that cannot be animated` | 本项目**路由错误边界包装器** `packages/effects/layouts/src/hooks/index.ts:115`：render 返回 `slots.default?.()`（vnode 数组 ⇒ **Fragment 根**），且 `Wrapper.name` 被设为路由组件名（故栈里显示 `at <OrchestrationForms>`） | 真实（轻微）缺陷，**每个路由页都触发**（未改动的 `/dashboard/workspace`、`/abp/*`、`/iam/*` 同样有） |
-
-**Fragment 根的实际影响**：`content.vue:57` 的 `v-show="!route.meta.iframeSrc"` 作用在该包装组件上，
-因根不是单一元素而**静默失效**（iframe 路由不会被隐藏）；`<Transition>` 的进出场动画对该页也不生效。功能不受影响。
-
-**修复方向（未实施，待确认）**：让包装器返回单一元素根，例如
-`return h('div', { class: 'h-full contents' }, slots.default?.());`
-—— 会为每个路由页增加一层包裹元素，需回归布局样式，故先记录不动。
-
----
-
-### 8.8 Aspire Dashboard 启动告警：浏览器 UI 状态解密失败（非缺陷，2026-10-10）
-
-**现象**（仅启动 AppHost 时出现，业务服务日志里没有）：
-
-```
-warn: Aspire.Hosting.Dashboard.Model.BrowserStorage.LocalBrowserStorage[0]
-Error when reading 'Aspire_Resources_CollapsedResourceNames_MetaDow' as List`1.
-System.Security.Cryptography.CryptographicException: The payload was invalid.
-   at ...ProtectedBrowserStorage.GetAsync[TValue](String purpose, String key)
-   at Aspire.Dashboard.Model.BrowserStorage.BrowserStorageBase.GetAsync[TValue](String key)
-```
-
-**来源**：`Aspire.Hosting.Dashboard` —— 即**内嵌在 AppHost 进程里的 Aspire 控制台**，不是任何一个业务 Host。
-`LocalBrowserStorage` 读写的是**浏览器 localStorage**（用途仅为记住"资源列表里哪些分组被折叠"这类 UI 偏好）。
-
-**机制（.NET Data Protection 语义，确定性）**
-
-`ProtectedBrowserStorage` 走的是 ASP.NET Core **Data Protection**：写入 localStorage 前
-`Protect(purpose, json)`，读取时 `Unprotect`。而 Data Protection 的密文是 **AES-CBC + HMAC** 的
-**认证加密**——HMAC 校验不过就直接抛 `CryptographicException: The payload was invalid`（这正是栈里的
-`CbcAuthenticatedEncryptor.DecryptImpl`）。
-
-验证失败只可能来自两件事：
-
-1. **密钥材料不同**——加密时的那个 DP 密钥已不在当前密钥环里；
-2. **ApplicationDiscriminator 不同**——官方文档原文：
-
-   > *"An identifier that uniquely discriminates this application from all other applications on the machine.
-   > **The discriminator value is implicitly included in all protected payloads** ... to isolate multiple logical
-   > applications that all happen to be using the same key material."*
-
-   即 discriminator 会被隐式混入**每一个**受保护负载。它一变，旧负载一律解不开。
-   默认 discriminator = 应用的 **ContentRootPath**；本项目业务侧则显式设为 `"Meta.Dow"`
-   （`MetaDowHostingModule.ConfigureDataProtection` 的 `SetApplicationName(MetaDowNames.MetaDow)`）。
-
-**本机实测取证**
-
-| 项 | 实测 |
-|:--|:--|
-| 密钥环目录 | `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`（**默认文件密钥环**，7 个 key） |
-| 最新 key | `key-a71cba2b…` 创建于 **2026-09-09**，有效至 2026-12-08（90 天周期内，**尚未过期、不会被轮换**） |
-| 历史 key | 2024-03 / 2024-06 / 2024-11 / 2025-08 / 2026-01 / 2026-04 —— 连 2 年前的都**仍在**，说明密钥环**未被清理** |
-| 结果 | 密钥环稳定 ⇒ 失败原因**不是**"密钥被删"，而是**加密时的 discriminator/用途与当前实例不同**（典型：升级 Aspire 前后、仓库路径变更、浏览器数据来自其它环境） |
-
-**影响**：**零功能影响**。它只是控制台自己的一条 UI 偏好读不出来，Aspire 会 catch 掉并回落到默认值；
-业务服务的 DP 是**独立**的（同一文件环但 discriminator = `Meta.Dow`，与 Dashboard 的互不干扰）。
-**与本次"全量缺陷清缴"无关**：AppHost 相对 HEAD 的唯一改动是 CPM 把 `Version` 属性挪进
-`Directory.Packages.props`，`Aspire.AppHost.Sdk/13.5.3` 与四个 `Aspire.Hosting.* 13.5.3` 版本**完全未变**。
-
-**处理**
-
-| 层 | 措施 |
-|:--|:--|
-| 真正修复（浏览器侧，一次性） | 打开控制台页面 → F12 Console 执行 `Object.keys(localStorage).filter(k=>k.startsWith('Aspire_')).forEach(k=>localStorage.removeItem(k))`，或"清除站点数据"。旧密文被清掉后，下次写入即用当前密钥，告警消失 |
-| 噪声抑制（仓库侧，已实施） | AppHost 两个 `appsettings*.json` 的 `Logging:LogLevel` 增加 `"Aspire.Hosting.Dashboard.Model.BrowserStorage": "Error"`：只压掉这一类**已在 Aspire 内部被 catch、仅剩日志输出**的 warning，**Error 级仍会打**，不影响真实故障可见性 |
-
-**注意**：不要为了"消除告警"去动 Data Protection 配置或删除 `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`——
-该密钥环是**机器级共享**的（业务服务的开发态 DP 也用它），删掉会让所有服务在开发态重新生成密钥并丢失既有保护负载。
-
----
-
-### 8.9 表单设计器「容器删不掉」（2026-10-10）
-
-**现象**：在表单设计器（`vue-demo` 的 VForm 设计器，即表单设计页中部画布）里，选中一个容器
-（如「栅格列」）后，**找不到任何删除入口**；想删掉误拖进来的栅格/表格/标签页也做不到，
-最后只能用「清空」把整张表单一起清掉。
+**现象**：在设计器里选中一个容器（如「栅格列」）后，**找不到任何删除入口**；误拖进来的栅格/表格/标签页删不掉，最后只能用「清空」把整张表单一起清掉。
 
 **根因（四处，均在 `vue-demo`）**
 
@@ -1211,17 +938,17 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 |:--|:--|:--|
 | 1 | 操作条（上移/下移/复制/删除）条件为 `selected && !widget.internal`。而 `grid-col`/`table-cell`/`tab-pane` 在模型里都标了 `internal: true` ⇒ 这三类容器**永远没有操作条** | `shared/vform-node.vue` |
 | 2 | 右侧属性面板的「移除组件」同样被 `v-if="!selected.internal"` 挡掉 | `shared/vform-designer.vue` |
-| 3 | **容器本身选不中**（更根本）：`.vf-col` / `.vf-cell` / `.vf-pane` 的 `@click` 都 `stopPropagation()` 后选中自己；`<Tabs>` 更是整块 `@click.stop` ⇒ 栅格/表格/标签页的**父容器**几乎没有可点区域，选不中自然删不掉 | `shared/vform-node.vue` |
+| 3 | **容器本身选不中**（更根本）：`.vf-col` / `.vf-cell` / `.vf-pane` 的 `@click` 都 `stopPropagation()` 后选中自己；`<Tabs>` 更是整块 `@click.stop` ⇒ 栅格/表格/标签页的**父容器**几乎没有可点区域 | `shared/vform-node.vue` |
 | 4 | 结构隐患：`removeWidget` 是纯递归删除，直接删内部单元格会留下 **0 列栅格 / 0 页签标签页 / 缺格表格** —— 这些空壳渲染不出任何可点面，画布上再也选不中 | `shared/vform-model.ts` |
 
 **修复**
 
 | 层 | 措施 | 位置 |
 |:--|:--|:--|
-| 容器抓手 | 容器节点左上角渲染「栅格 / 表格 / 标签页 / 卡片 / 子表单 / 树形」角标，点它即选中容器本身（不受子元素吞点击影响） | `shared/vform-node.vue` |
+| 容器抓手 | 容器节点左上角渲染「栅格 / 表格 / 标签页 / 卡片 / 子表单 / 树形」角标，点它即选中容器本身 | `shared/vform-node.vue` |
 | 内部单元格删除 | 选中的栅格列 / 表格单元格 / 标签页内联显示红色「删除」按钮 | `shared/vform-node.vue` |
 | 属性面板 | 去掉 `v-if="!selected.internal"`，容器也能从右侧一键移除 | `shared/vform-designer.vue` |
-| 安全删除 | 新增 `findParentWidget()` 与 `removeWidgetSafe()`：删栅格最后一列 / 标签页最后一个页签 / 表格最后一列时，**连整个容器一并删**，杜绝空壳 | `shared/vform-model.ts`（`removeSelected` 改用它） |
+| 安全删除 | 新增 `findParentWidget()` 与 `removeWidgetSafe()`：删栅格最后一列 / 标签页最后一个页签 / 表格最后一列时，**连整个容器一并删** | `shared/vform-model.ts`（`removeSelected` 改用它） |
 
 **验证（真机，Chrome + `playwright-core`，只读交互、未点「保存」）**
 
@@ -1241,3 +968,275 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 | 控制台 | **0 错误** ✅ |
 
 前端类型检查：`pnpm -F @vben/web-antd run typecheck` → **exit 0**。
+
+> 这条缺陷与后端 §4.1 有结构性呼应：**前端删容器留下"0 列空壳"，后端拍平又可能抽不出字段**。两侧都应以"空结构必须显式表达"为不变量。
+
+### 6.3 工程化加固与守卫（2026-10，本仓可核验部分）
+
+| 方向 | 内容 |
+|:---|:---|
+| **密钥治理** | 各 Host `appsettings.json` 移除明文 `SwaggerClientSecret` / `DefaultPassPhrase`，改由 git-ignored 的 `appsettings.secrets.json` 提供；提交 `*.example` 模板；`.gitignore` 覆盖 `**/appsettings.secrets.json`、`tempkey.jwk`、`tempkey.rsa` |
+| **证书** | AuthServer 从 `OpenIddict:Certificate:Path` 加载 OpenIddict **签名与加密证书**，不再依赖开发默认证书 |
+| **健康检查** | `MapDefaultEndpoints()` 在所有环境映射 `/health` 与 `/alive`（JSON 输出）；5 个 Host 的 `Program.cs` 均调用 |
+| **网关加固** | JWT Bearer 校验 + 默认「已认证」策略；限流 ~300 req/min（按客户端分区）；统一 401/429 错误体；`{**catch-all}` 要求认证；集群超时 30s |
+| **服务边界** | 移除 SaaS `Application` / `Application.Contracts` 对 Administration 的**编译期 `ProjectReference`**，改用 `Volo.Abp.Identity.Domain` 包 |
+| **分布式锁** | `ConfigureDistributedLocking` 提为公共扩展方法（无 Redis 时跳过）；`FlowScheduleHostedService` 触发前获取 `IAbpDistributedLock` |
+| **构建基建** | `global.json`（SDK 10.0.401）、`.editorconfig`、`Directory.Packages.props`（CPM）、`.dockerignore`；Dockerfile 重写；`Meta.Dow.slnx` 纳入 tests 目录 |
+| **包源治理** | 删除 4 个模板残留的服务级 `NuGet.Config`；根 `NuGet.config` 补 `<packageSourceMapping>` |
+| **CI** | `.github/workflows/ci.yml`：restore → build（Release）→ test，上传 trx |
+| **测试** | `tests/Meta.Dow.Orchestration.Tests`（xUnit，**62 个用例**，明细见 §2.4）；应用服务成员 `private` → `internal` + `InternalsVisibleTo` |
+| **文档** | `src/CLAUDE.md` 与代码对齐（Aspire 13.5.3 / MongoDB / `Meta.Dow.slnx` / CPM / CI） |
+| **前端对齐** | ⚠️ 未核验（前端在 vue-demo）：`orchestration.ts` 类型补齐、`resyncCatalogFromResourceApi`、版本列、连线优先级/默认分支面板、`form-schema.ts` 属性透传 |
+
+### 6.4 登录回归事故：OpenIddict 客户端被「数组按索引合并」抹除（2026-10-10）
+
+**现象**：前端跳到 AuthServer 后不再出现登录页，直接返回 OpenIddict 错误响应：
+
+```
+error: invalid_request
+error_description: The specified 'client_id' is invalid.
+error_uri: https://documentation.openiddict.com/errors/ID2052
+```
+
+**根因（配置合并语义 × 破坏性清理）**
+
+`.NET` 配置对 **JSON 数组是按索引合并**的，而不是整段替换、也不是拼接。密钥治理把 `ClientSecret` 从 `appsettings.json` 抽到 `appsettings.secrets.json` 时，secrets 文件里用**同一个 `"Clients"` 键**再写了一份数组，于是两份配置按索引逐字段"混血"：
+
+| 索引 | `appsettings.json` 原值 | `secrets.json` 覆盖 | 合并结果 |
+|:--|:--|:--|:--|
+| 0 | `MetaDow_Vue` + Vue 的 GrantTypes/Scopes/RedirectUris | `{ClientId: Administration_API, ClientSecret}` | **`Administration_API`**，但带着 Vue 的授权码/密码/刷新令牌、Vue 的 scope 与回调地址 |
+| 1 | `Administration_API` | `IdentityService_API` | `IdentityService_API` 带着 Administration_API 的重定向 |
+| 2 | `IdentityService_API` | `Projects_API` | `Projects_API` 带着 IdentityService_API 的重定向 |
+| 3 | `Projects_API` | `SaaS_API` | `SaaS_API` 带着 Projects_API 的重定向 |
+| 4 | `SaaS_API` | —（secrets 只有 4 项） | `SaaS_API` 保持原值 |
+
+结果：**`MetaDow_Vue` 不再是任何一个条目的 `ClientId`**，随后 `RemoveObsoleteClientsAsync`（"删掉配置里没登记的客户端"）把它**软删除**（MongoDB 实测 `IsDeleted: true`，`DeletionTime: 2026-10-10T13:33:09.713Z`），前端再带 `client_id=MetaDow_Vue` 请求 `/connect/authorize` 即被拒。
+
+**修复**
+
+| 层 | 措施 | 位置 |
+|:--|:--|:--|
+| 配置 | 密钥改放**独立的 `ClientSecrets` 对象键**（`{clientId: secret}`）。对象是**按 key** 合并的，不会错位；`Clients` 数组只保留在 `appsettings.json` 一处，成为唯一事实来源 | `DbMigrator/appsettings.secrets.json`(+`.example`) |
+| 种子器 | 新增 `LoadClients()` 把 `ClientSecrets:{clientId}` 合并进客户端定义 | `OpenIddictDataSeeder.cs` |
+| 种子器 | 新增 `ValidateClients()`：**先在内存校验完再碰数据库**（ClientId 非空/不重复、GrantTypes/Scopes 非空），不合法直接抛错中止 | 同上 |
+| 种子器 | 破坏性清理**显式开关** `PruneObsoleteClients`（默认 `false`），并逐个 ClientId 打 **Warning** 日志 | 同上 |
+| 种子器 | `ApplyClientSettings` 改为**配置即事实**：先 `Clear()` 掉 `Permissions`/`Requirements`/`RedirectUris`/`PostLogoutRedirectUris` 再按配置重建。原实现在旧值上累加，混血数据一旦写入就永远清不掉；改后重跑迁移可**自愈收敛** | 同上 |
+| 数据 | 一次性修复脚本：恢复被软删的 `MetaDow_Vue`，并把 4 个被污染 API 客户端的 `ClientUri`/`RedirectUris`/`PostLogoutRedirectUris`/`Permissions` 收敛回配置 | MongoDB `MetaDowIdentityServiceDb.OpenIddictApplications`（OpenIddict 数据落在 Identity 库，因 `AbpDbConnectionOptions` 把 `AbpOpenIddict` 映射到 `MetaDowIdentityServiceDb`） |
+| 护栏 | 新增 `SecretsConfigSafetyTests`：扫描全仓 `appsettings*.secrets.json`（含 `.example` 模板），**拒绝任何 JSON 数组**，并打印具体 JSON 路径 | `tests/Meta.Dow.Orchestration.Tests/SecretsConfigSafetyTests.cs` |
+
+**验证**：`curl -k https://localhost:7600/connect/authorize?client_id=MetaDow_Vue&...` 由错误响应恢复为 `302 → /Account/Login`；后端 `dotnet build -c Release` 0 错误；**单元测试 62/62 通过**。
+
+**长期规则**：secrets 覆盖文件里**永远不要出现 JSON 数组**。需要覆盖数组语义时改用对象键。
+
+### 6.5 登录后全线 401：网关把 JWT 受众写死成解决方案名（2026-10-10）
+
+**现象**：登录页能打开，登录也能成功取到令牌（库中可见），但随后控制台刷屏 401；页面弹出 `未认证或令牌无效` 与 `页面加载失败：Request failed with status code 401`。
+
+**定位（先证来源，再谈原因）**
+
+`未认证或令牌无效` 这个文案**全仓只出现在一个地方**——网关 `Meta.Dow.Gateway/Program.cs` 的 `JwtBearerEvents.OnChallenge`。所以这组 401 必然由**网关**产生，而不是被代理的服务。
+
+**根因：受众（audience）写死错误**
+
+上一批"网关加固"里写了：
+
+```csharp
+options.Audience = configuration["AuthServer:Audience"] ?? "Meta.Dow";
+options.TokenValidationParameters.ValidateAudience = true;
+```
+
+但 OpenIddict 是把**「作用域所关联的资源名」**写进令牌的 `aud`。本仓库 `DbMigrator/appsettings.json` 与库中 `OpenIddictScopes` 一致地声明：
+
+| 作用域 | `Resources` |
+|:--|:--|
+| `MetaDowAdministration` | `["MetaDowAdministration"]` |
+| `MetaDowAuthServer` | `["MetaDowAuthServer"]` |
+| `MetaDowIdentityService` | `["MetaDowIdentityService"]` |
+| `MetaDowSaaS` | `["MetaDowSaaS"]` |
+
+而前端（`MetaDow_Vue`）实际申请的 scope 是 `openid profile email offline_access MetaDowIdentityService MetaDowAdministration MetaDowSaaS`（见 `vue-demo/apps/web-antd/.env` 与库中 `OpenIddictAuthorizations.Scopes`）。
+
+⇒ 令牌的 `aud` **只可能**是上述服务名，**永远不含解决方案名 `Meta.Dow`**。开启 `ValidateAudience` 且要求 `Meta.Dow` ⇒ **每一个有效令牌都被判无效** ⇒ 所有需要认证的请求 401。
+
+> 注意：`MetaDowAuthServerModule` 里的 `options.AddAudiences("Meta.Dow")` 是给 **AuthServer 自身做令牌校验**用的"可接受受众"声明，它**不会**把 `Meta.Dow` 塞进签发的令牌里——两者极易混淆。
+
+**为什么现在才暴露**：前端 `/api/menu/*`、`/api/permission-management/*` 原先**没有显式路由**，会落进 catch-all（`{**catch-all}` + `AuthorizationPolicy: Default`）。登录成功后前端第一件事就是拉 `/api/menu/all`，于是必然撞上这条兜底路由，缺陷立刻显形。
+
+**修复**
+
+| 层 | 措施 | 位置 |
+|:--|:--|:--|
+| 网关 | **不再写死单一受众**。默认 `ValidateAudience = false`（仍校验签名/签发者/有效期），受众由下游各服务按自身受众把关；如需在网关强校验，用 `AuthServer:ValidAudiences` 显式列出允许值 | `Meta.Dow.Gateway/Program.cs` |
+| 网关配置 | `AuthServer.Audience` → `AuthServer.ValidAudiences: []`；补齐前端实际在用却缺路由的 `menu`、`permission-management` 两条路由（→ administration 集群） | `Meta.Dow.Gateway/appsettings.json` |
+
+#### 6.5.1 验证记录（真机，2026-10-10 14:1x）
+
+`AppHost` 全栈重启后，用**真实令牌**经网关实测（只读探测，未改任何数据）：
+
+**令牌事实**（`POST https://localhost:7600/connect/token`，`client_id=MetaDow_Vue`，密码模式）：
+
+```
+aud = ['MetaDowAdministration', 'MetaDowIdentityService', 'MetaDowSaaS']
+iss = https://localhost:7600/
+```
+
+**网关实测**（`https://localhost:7500`，即前端 Vite `/api` 代理目标）：
+
+| 请求 | 无令牌 | 带令牌 |
+|:--|:--|:--|
+| `GET /api/menu/all` | 401 | **200** |
+| `GET /api/abp/application-configuration` | — | **200** |
+| `GET /api/permission-management/permissions?...` | — | **200** |
+| `GET /api/account/my-profile` | — | **200** |
+
+即：有效令牌放行、无令牌仍拦截 401，符合预期。
+
+**长期规则**：**同时前置多个 API 的网关，不要在网关写死单一 JWT 受众。** 受众是"每个 API 自己的事"，网关只负责签名/签发者/有效期的边缘把关。若要校验，必须列出**全部**允许受众。
+
+#### 6.5.2 全站路由渲染巡检（真机 29 路由，2026-10-10 14:2x）
+
+> ⚠️ 未核验（前端在 vue-demo）：本次巡检针对前端，本仓无法复核。保留原文记录。
+
+用 `playwright-core`（复用 vue-demo 的 pnpm 仓库，不下载 Chromium）驱动本机 Chrome，登录后对**全部 29 个菜单路由**做逐页渲染巡检（含 3 个带真实 id 的设计器、资源编辑器、报表编辑器、资源运行时）。
+
+**结论：0 个功能错误。** 逐页判定维度：`console.error` / `pageerror` / `requestfailed` / HTTP ≥ 400，全部为 0；唯一被标记的 `/dashboard/workspace` 也 issues=0，只是 dev 首次硬刷新的启动遮罩超过巡检阈值（页面正常渲染）。
+
+**唯一的控制台输出是两类警告，均与批次改动无关：**
+
+| 警告 | 出处 | 性质 |
+|:--|:--|:--|
+| `[Vben Form] BREAKING CHANGE ... slotProps.componentProps` | 上游模板自带 Vite 插件 `internal/vite-config/src/plugins/form-field-slot-migration-warning.ts`（`apply:'serve'` 无条件注入脚本 + 启动 `logger.warn`） | 提示，**不扫代码**；本仓 app 零 `v-bind="slotProps"`，**无需整改** |
+| `Runtime directive used on component with non-element root node`<br>`Component inside <Transition> renders non-element root node that cannot be animated` | 项目**路由错误边界包装器** `packages/effects/layouts/src/hooks/index.ts:115`：render 返回 `slots.default?.()`（vnode 数组 ⇒ **Fragment 根**），且 `Wrapper.name` 被设为路由组件名 | 真实（轻微）缺陷，**每个路由页都触发** |
+
+**Fragment 根的实际影响**：`content.vue:57` 的 `v-show="!route.meta.iframeSrc"` 作用在该包装组件上，因根不是单一元素而**静默失效**（iframe 路由不会被隐藏）；`<Transition>` 的进出场动画对该页也不生效。功能不受影响。
+
+**修复方向（未实施，待确认）**：让包装器返回单一元素根，例如 `return h('div', { class: 'h-full contents' }, slots.default?.());` —— 会为每个路由页增加一层包裹元素，需回归布局样式，故先记录不动。
+
+### 6.6 Aspire Dashboard 启动告警：浏览器 UI 状态解密失败（非缺陷，2026-10-10）
+
+**现象**（仅启动 AppHost 时出现，业务服务日志里没有）：
+
+```
+warn: Aspire.Hosting.Dashboard.Model.BrowserStorage.LocalBrowserStorage[0]
+Error when reading 'Aspire_Resources_CollapsedResourceNames_MetaDow' as List`1.
+System.Security.Cryptography.CryptographicException: The payload was invalid.
+   at ...ProtectedBrowserStorage.GetAsync[TValue](String purpose, String key)
+```
+
+**来源**：`Aspire.Hosting.Dashboard` —— 即**内嵌在 AppHost 进程里的 Aspire 控制台**，不是任何一个业务 Host。`LocalBrowserStorage` 读写的是**浏览器 localStorage**（用途仅为记住"资源列表里哪些分组被折叠"这类 UI 偏好）。
+
+**机制（.NET Data Protection 语义，确定性）**
+
+`ProtectedBrowserStorage` 走的是 ASP.NET Core **Data Protection**：写入 localStorage 前 `Protect(purpose, json)`，读取时 `Unprotect`。而 Data Protection 的密文是 **AES-CBC + HMAC** 的**认证加密**——HMAC 校验不过就直接抛 `CryptographicException: The payload was invalid`（这正是栈里的 `CbcAuthenticatedEncryptor.DecryptImpl`）。
+
+验证失败只可能来自两件事：
+
+1. **密钥材料不同**——加密时的那个 DP 密钥已不在当前密钥环里；
+2. **ApplicationDiscriminator 不同**——官方文档原文：
+
+   > *"An identifier that uniquely discriminates this application from all other applications on the machine. **The discriminator value is implicitly included in all protected payloads** ... to isolate multiple logical applications that all happen to be using the same key material."*
+
+   即 discriminator 会被隐式混入**每一个**受保护负载。它一变，旧负载一律解不开。默认 discriminator = 应用的 **ContentRootPath**；本项目业务侧则显式设为 `"Meta.Dow"`（`MetaDowHostingModule.ConfigureDataProtection` 的 `SetApplicationName(MetaDowNames.MetaDow)`）。
+
+**本机实测取证**
+
+| 项 | 实测 |
+|:--|:--|
+| 密钥环目录 | `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`（**默认文件密钥环**，7 个 key） |
+| 最新 key | `key-a71cba2b…` 创建于 **2026-09-09**，有效至 2026-12-08（90 天周期内，**尚未过期、不会被轮换**） |
+| 历史 key | 2024-03 / 2024-06 / 2024-11 / 2025-08 / 2026-01 / 2026-04 —— 连 2 年前的都**仍在**，说明密钥环**未被清理** |
+| 结果 | 密钥环稳定 ⇒ 失败原因**不是**"密钥被删"，而是**加密时的 discriminator/用途与当前实例不同** |
+
+**影响**：**零功能影响**。它只是控制台自己的一条 UI 偏好读不出来，Aspire 会 catch 掉并回落到默认值；业务服务的 DP 是**独立**的（同一文件环但 discriminator = `Meta.Dow`）。
+
+**处理**
+
+| 层 | 措施 |
+|:--|:--|
+| 真正修复（浏览器侧，一次性） | 打开控制台页面 → F12 Console 执行 `Object.keys(localStorage).filter(k=>k.startsWith('Aspire_')).forEach(k=>localStorage.removeItem(k))`，或"清除站点数据" |
+| 噪声抑制（仓库侧，已实施） | AppHost 两个 `appsettings*.json` 的 `Logging:LogLevel` 增加 `"Aspire.Hosting.Dashboard.Model.BrowserStorage": "Error"`：只压掉这一类**已在 Aspire 内部被 catch、仅剩日志输出**的 warning，**Error 级仍会打** |
+
+**注意**：不要为了"消除告警"去动 Data Protection 配置或删除 `%LOCALAPPDATA%\ASP.NET\DataProtection-Keys`——该密钥环是**机器级共享**的（业务服务的开发态 DP 也用它），删掉会让所有服务在开发态重新生成密钥并丢失既有保护负载。
+
+---
+
+## 7. 参考链接
+
+- [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) —— OA 审批流：表单绑定、节点规则与运行时契约、W 系列缺陷、OA 侧规划
+- [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) —— 人审与逻辑编排的分工（§6）、资源发布运行时只读已发布 Schema（§5.13）
+- [`lowcode-form-preview.md`](./lowcode-form-preview.md) —— 表单预览
+- [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) —— 逻辑编排引擎（`ForEach`/`Parallel`/`SubFlow` 已实现；独立 `Sql`/`Switch` 未实现）
+- [`lowcode-report-management.md`](./lowcode-report-management.md) —— 报表与 `ActionDef`（§6）
+- [`iam-rbac-menu.md`](./iam-rbac-menu.md) —— 组织机构、数据权限、报表访问权限（§7）
+- 外部对标：[form-create](https://www.form-create.com/designer/)、[VForm3](https://www.vform666.com/vform3/)、[Formily](https://github.com/alibaba/formily)、[Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)
+- 钉钉 / 飞书审批（字段权限矩阵、按钮动态化、明细表行级公式）
+
+---
+
+## 8. 落地优先级总览（规划项）
+
+| 能力 | 优先级 | 关联代码 | 章节 |
+|------|--------|----------|------|
+| 字段校验 rules 协议（含双层校验） | P1 | `FormFieldDef.Rules` | §5.1 |
+| 级联取数 / 异步选项 / 计算 | P1 | `FormFieldDependencyDef.Action` | §5.2 |
+| 表单发布**历史快照**（真正冻结） | P1 | `FormDefinition` + `WorkflowInstance` | §5.4 |
+| 字段映射 `ColumnName` 的**运行时投影** | P1 | `ResourceCrudExecutor` | §5.5 |
+| 直属部门主管解析**排除发起人** | P1 | `WorkflowOrgResolver.ResolveDirectManagerAsync` | §4.6 |
+| 抄送通知消费端（站内/IM/邮件） | P1 | `WorkflowNotifier` 下游 | — |
+| 超时与催办 | P1 | `WfProcessNode` + `WorkflowTask` + 后台 Job | [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §5 |
+| 审批人去重（跨节点） | P1 | `ResolveAssigneesAsync` + `HistoryJson` | 同上 |
+| 流程版本迁移 `MigrationPlan` | P1 | `WorkflowDefinition` | 同上 |
+| 批量审批 | P1 | `WorkflowRuntimeAppService` + API | 同上 |
+| 子表行级权限/联动 | P2 | `table` 控件 `ControlProps` | §5.3 |
+| 多语言/布局预设 | P2 | `FormFieldDef` + `FormDef` | §5.6 |
+| 加签/减签/委办、撤回/自选审批人 | P2 | `CompleteWorkflowTaskDto.Action` | 同上 |
+| 模板库/导出导入 | P2 | `WorkflowDefinition` | 同上 |
+| 并行网关/汇合、子流程嵌套 | P3 | `WfProcessNode` fork/join、`callActivity` | 同上 |
+
+**落地顺序建议**：**先修 §4 的高危缺陷**（驳回语义、已发布定义可改写、补丁丢失、并发），再补 P1 能力。原因是：P1 能力都建立在"定义可信、流转可信"之上，而当前 §4 的高危项会让任何新增能力的效果不可观测。P2 再做加签/撤回/子表行级；P3 评估并行网关与子流程是否必须，否则继续自研轻量引擎不上 bpmn-js。
+
+---
+
+## 9. 修订记录（本次重构，2026-10-13）
+
+**代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误，62/62 单测通过。
+
+**文档结构变更**：按统一骨架重排为 9 章；**事实（§1/§3/§6）、缺陷（§4）、规划（§5）三向隔离**；删除旧的 §0 实现状态表与 §8 缺陷表的**重复内容**，收敛为 §2 唯一权威总表（含 OA 侧 W1–W9 逐条复核）；OA 侧细节迁移到 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) 并在 §4 仅留摘要与链接，两文互链不重复。
+
+### 9.1 删除/改写的「与代码矛盾的断言」
+
+| # | 原断言（旧版位置） | 代码真相 | `file:line` |
+|--:|--------------------|----------|-------------|
+| 1 | §0 结论：「§8.1/§8.2 所列 F1–F7、W1–W9 定义侧健壮性缺陷**已全部修复**」 | 降级为「主体落地，遗留项见 §4」。F3 未合并（§4.14）、F4 未真正冻结（§4.2）、F9/§5.5 `ColumnName` 无运行时消费（§4.4）、F13 重同步不重推 `Fields`（§4.11）、W2 仍 fail-open（§4.12②）、W6 `IsDefault` 不校验（§4.12③）、W7 可自审批（§4.6）、W8 未声明字段放行（§4.7）、W9 索引失败仅告警（§4.2） | `FormDefinitionAppService.cs:213-228`、`:182-206`；`WorkflowRuntimeAppService.cs:443-446`、`:983-986`；`SaaSMongoDbModule.cs:101-104` |
+| 2 | §8.5.1 F1：「`EnsureFlattenedFields` 改为以 Layout 为准的覆盖式同步……Layout 中已删除的字段从 `Fields` 中移除」 | **部分成立**：覆盖逻辑在，但被 `if (extracted.Count > 0)` 门控，抽出 0 字段时不覆盖（幽灵字段） | `FormDefinitionAppService.cs:224-227` |
+| 3 | §8.5.1 F3：「保留双模型但**消除漏拷贝根因**：两类的字段集按 F2 对齐为同一超集语义」 | **"消除根因"不成立**：两类仍是独立声明的类，属性逐条重复；新增属性仍需同改 `BuildField`/`CloneWidget`/`CloneField` 三处。当前只是"属性集已补齐、暂时不复发"。（本轮初稿曾误称 `FormWidgetDef` 缺 `VisibleOnDetail`，已更正——见 §4.14） | `ResourceSchema.cs:317-375` vs `:381-442`；`FormDefinitionAppService.cs:275-297`、`:426-454`、`:456-479` |
+| 4 | §5.5 / §8.5.1 F5：「提交 `record` 时按 `ColumnName` 投影到库」 | 属性存在，**运行时零消费点** | `ResourceSchema.cs:325`；全仓 8 处 `ColumnName` 无运行时读取 |
+| 5 | §8.5.1 F4：「发布生成**不可变快照**」+ §5.4「OA 启动时固化 `FormSnapshotJson`」 | 快照是**单份可变引用**、无历史版本；`FormSnapshotJson` **字段不存在**；`PublishedSchema=null` 时回落可变草稿 | `FormDefinition.cs:81-86`、`:89`；`WorkflowInstance.cs` 无 `FormSnapshotJson` |
+| 6 | §8.5.1 F5：「发布校验 `ValidateAgainstResourceAsync`（与绑定资源列对齐）」 | 校验存在但**三处 fail-open**（无 SourceResourceCode / 资源查不到 / 资源无列）+ 跳过明细字段 | `FormDefinitionAppService.cs:330-345`、`:348` |
+| 7 | §8.5.1 F6：「被 OA `FormRef`、报表 `ActionDef.FormKey`、资源表单引用时拒绝删除」 | `FormKey` 的比对**永远不命中**——`ActionDef.FormKey` 被赋成 `"create"`/`"update"`/`"detail"`（模式名）；资源内联表单 `AppResource.Form` **未被检查**；先查后删非原子 | `FormDefinitionAppService.cs:150`；`AppResource.cs:159`/`:165`/`:171`/`:280`；`SaaSMongoDbModule.cs:27-28` |
+| 8 | §8.5.1 F7：「`ResyncCatalogFromResourceAsync`……资源表结构变更后可重新对齐**字段目录与拍平字段**」 | **只刷新 `FieldCatalog`**，第 4 参传原样 `entity.Schema`，不重推 `Schema.Fields` | `FormDefinitionAppService.cs:196-203` |
+| 9 | §8.5.4 / §0：「并行网关/汇合、循环仍为规划」 | **误记**。循环 `ForEach` 与并行 `Parallel` 属**逻辑编排引擎**且**已实现**；未实现的是编排的独立 `Sql`/`Switch`，与人审侧的 fork/join、`callActivity` | `FlowExecutor.cs:759-773`（已实现）；`FlowExecutor.cs:791-792`（无 `sql`/`switch`） |
+| 10 | §8.5.3 测试：「新增 `tests/Meta.Dow.Orchestration.Tests`（xUnit，**23 个用例**）：Validator(11)/Flattening(7)/RecordPatch(4)/Secrets(1)」；§8.6「单元测试 **23/23** 通过」 | 实测 **62 个用例**（58 个测试特性 = 56 `[Fact]` + 2 `[Theory]`，+6 `[InlineData]`）；分文件 Validator 11 / Flattening 7 / RecordPatch 4 / Secrets 1 / **FlowExecutorControlFlowTests 39**（旧版完全漏记）；且**全部运行时路径零覆盖** | `tests/Meta.Dow.Orchestration.Tests/`（§2.4） |
+| 11 | §5.1 / §5.1.1：`List<FormFieldRuleDef> Rules`，含 `Kind`/`Len`/`Enum`/`Validator`/`Deps`/`Trigger`/`Severity` + `ValidateFlowKey`；§5.7.5 `ButtonDef` | 代码里 `Rules` 是**单个可空对象**（`FormFieldRuleDef` 仅 7 个属性）；`ButtonDef`/`ValidateFlowKey`/`modePermissions` 全仓**不存在** | `ResourceSchema.cs:287-302`、`:356`、`:426`；grep 无匹配 |
+| 12 | §5.2：`loadOptions`/`fetchValue`/`compute`/`cascade` 四个 Action | **不存在**，`Action` 只有 show/hide/enable/disable/require/optional/setValue（自由字符串，无枚举校验） | `ResourceSchema.cs:312` |
+| 13 | §2.2：前端渲染器与**后端校验器**根据 `dependencies` 实现动态显隐/禁用/必填 | **后端零求值点**；`Dependencies` 仅被拍平与克隆拷贝 | `FormDefinitionAppService.cs:295`、`:452`、`:473` |
+| 14 | §3.4：「补丁内容与 `instance.RecordJson` 进行**深度字段合并**」 | 实现是**顶层键覆盖** | `WorkflowRuntimeAppService.cs:1071-1074` |
+| 15 | §8.5.2 W6：「`ChooseNext` 多条件出边时按 `Priority` 排序取首个命中……**不再依赖数组顺序**」 | 全 `Priority=0` 时 `OrderBy` 稳定排序＝**数组顺序**；`IsDefault` 在校验器里**从未解析**；优先级查重只覆盖 `Priority>0` 的重复 | `WorkflowRuntimeAppService.cs:462`；`WorkflowDefinitionValidator.cs:156-178` |
+| 16 | §8.4 W2：「连线目标节点不存在时**显式报错**，不再回落为 `Complete("approved")`」 | 目标不存在确实报错；但**无出线节点**仍 `(null,false)` → `Complete("approved")` | `WorkflowRuntimeAppService.cs:443-446` → `:433` |
+| 17 | §0：「前端审批时间轴 Timeline ✅ **已落地**」 | 降级为 `⚠️ 未核验（前端在 vue-demo）`；本仓只能核验后端供数 `HistoryJson` | `AppBuilderDtos.cs:750-751` |
+| 18 | 全文 `file:///d:/Project/demo-microservice/...` 绝对链接 | **全部改为仓库相对路径**（`src/services/saas/...`），无盘符路径残留 | — |
+
+### 9.2 保留的原文内容
+
+- §1.3 初始缺陷诊断表（状态列按代码校正，原诊断与业务影响保留）；
+- §5.1–§5.8 全部协议设计稿（明确标注 ❌ 规划 + "与现有模型的三处冲突"提示），包括双层校验模型的信任边界论证、`ctx` 沙箱约束、按钮 before→flow→after 事件流、"对照钉钉/飞书"的对标段落；
+- §6.2 表单设计器「容器删不掉」的四处根因与真机 12 条验证记录；
+- §6.4 / §6.5 两起登录事故的完整复盘（现象 / 根因 / 数据取证 / 修复矩阵 / 验证记录 / 长期规则）——**真实复盘，按原样保留**；
+- §6.5.1 网关真机验证记录、§6.5.2 全站路由巡检结论（含 Fragment 根缺陷与"无需整改"判定）、§6.6 Aspire Dashboard 解密告警分析（含"不要删密钥环"的明确警告）。
+
+### 9.3 本次新增
+
+- §2 唯一权威能力总表（表单 15 项 + OA 8 项 + 编排 5 项 + 测试 5 行，每条带 `file:line`）；
+- §4 十六条缺陷（F 系列 4.1–4.16，其中 §4.1 幽灵字段、§4.3 联动零求值、§4.4 `ColumnName` 无消费、§4.5 校验 fail-open、§4.10 删除检查两处盲点、§4.11 重同步不完整、§4.12 三个绕过口、§4.14 F3 未合并、§4.15 `Rules` 单对象、§4.16 自由字符串无枚举校验为本次逐行核实所得）；
+- §3.2 拍平真实语义（含 `Title` 用字段名兜底的细节）、§3.3 发布链六步、§3.4 快照与版本；
+- OA 侧缺陷与规划迁移到 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)，本文只留摘要与链接，消除两文重复。

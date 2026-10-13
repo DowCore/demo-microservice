@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""把 docx/低代码逻辑编排-完善意见稿.md 构建为同目录的 .docx。
+"""把 docs/ 下的定稿 markdown 构建为 docx/ 下的 .docx。
 
 用法（使用 DSH 自带 python）：
     python docx/_build_docx.py
 
 约定：
-- 中间产物与最终文档都留在工作区内。
+- 源 markdown 是**定稿文档**，统一放在仓库 `docs/` 下，命名 `<主题>.md`（契约）或
+  `<主题>-review.md`（意见稿）；本目录只保留构建脚本与生成物。
+- 生成物（.docx）与校验结果（_checks.json）不入库，见根 `.gitignore`。
 - 中文字形需要显式设置 w:eastAsia，否则 Word 里可能回退到无中文字形的字体。
 """
 from __future__ import annotations
@@ -23,8 +25,17 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "低代码逻辑编排-完善意见稿.md"
+REPO = ROOT.parent
+# 源 markdown 已迁入仓库 docs/，这里的路径必须与之一致；
+# 2026-10-13 文档基线重构时旧文件 `docx/低代码逻辑编排-完善意见稿.md` 已删，故此处置新。
+SRC = REPO / "docs" / "lowcode-logic-orchestration-review.md"
 OUT = ROOT / "低代码逻辑编排-完善意见稿.docx"
+
+if not SRC.exists():
+    raise SystemExit(
+        f"源 markdown 不存在：{SRC}\n"
+        "文档基线重构后源文件已迁到 docs/，请确认 docs/lowcode-logic-orchestration-review.md 存在。"
+    )
 
 LATIN_FONT = "Segoe UI"
 EASTASIA_FONT = "Microsoft YaHei"

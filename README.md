@@ -64,7 +64,7 @@ src/
 tests/Meta.Dow.Orchestration.Tests/  xUnit 单元测试
 tools/                              mongo-dump.ps1、mongo-restore.ps1
 data/mongo/                         mongodump 落盘目录（见 §6）
-docs/                               9 篇方案与契约文档（见 §8）
+docs/                               12 篇方案与契约文档（见 §8）
 ```
 
 持久层是 `{Service}.MongoDB`，**不存在 `{Service}.EntityFrameworkCore`**。
@@ -247,7 +247,7 @@ git add data/mongo
 4. **Code 沙箱是真加固，不是摆设**。Jint 4.4.1，超时 8s、最多 20,000 条语句、递归上限 64，`fetch` / `eval` / `Function` 一律置为 `undefined`，全仓无 `AllowClr`（`CodeSandboxExecutor.cs:76-86`、`OrchestrationConsts.cs:20-21`）。
 5. **SQL 层防线清晰且顺序正确**。方言抽象覆盖 PostgreSQL / MySQL / SQL Server / Oracle（`SqlDialect.cs`），标识符经引用/白名单处理，值全部走参数（`ParameterizedSqlExecutor.cs`）；**租户谓词与用户条件树是并列 predicate，最后由 `string.Join(" AND ", predicates)` 拼接**（`FilterSqlBuilder.cs:59,121,146,152`），因此用户条件树里的 `OR` 逃不出租户边界。这个先后顺序是刻意设计，值得保留。
 6. **密钥治理有自动化护栏**。见 §6：忽略规则生效、模板形态由测试强制校验，且两起真实事故都有可复核的记录与回归测试。
-7. **文档体量大且带真实复盘**。`docs/` 9 篇、约 6,100 行，明确区分"事实契约"与"规划"；2026-10-10 OpenIddict 客户端索引合并事故的复盘写在 `OpenIddictDataSeeder.cs:52-62`，并被 `SecretsConfigSafetyTests` 固化成不变量。
+7. **文档体量大且带真实复盘**。`docs/` 12 篇、约 7,000 行，明确区分"事实契约"与"规划"；2026-10-10 OpenIddict 客户端索引合并事故的复盘写在 `OpenIddictDataSeeder.cs:52-62`，并被 `SecretsConfigSafetyTests` 固化成不变量。
 
 ### 缺点与风险
 
@@ -266,7 +266,7 @@ git add data/mongo
 | 维度 | 评分 | 理由与证据 |
 | --- | --- | --- |
 | 架构前沿性 | 7.5 / 10 | **加分**：技术选型新、本地编排出色（Aspire 13.5.3 一键拉起 5 服务 + 3 基础设施 + DbMigrator，启动顺序有依赖编排）。**扣分**：7/7 Dockerfile 不可用、CI 无镜像构建，工程化落地明显落后于选型 |
-| 文档与设计规范 | 7.0 / 10 | **加分**：`docs/` 9 篇约 6,100 行，显式区分"事实契约"与"规划"，含两起真实事故复盘与回归测试。**扣分**：本次核对发现本 README 自身有与代码相反的硬断言，`src/CLAUDE.md` 关于"分析器已启用"的说法也与 `Directory.Build.props` 不符——文档可信度不齐 |
+| 文档与设计规范 | 7.0 / 10 | **加分**：`docs/` 12 篇约 7,000 行，显式区分"事实契约"与"规划"，含两起真实事故复盘与回归测试。**扣分**：本次核对发现本 README 自身有与代码相反的硬断言，`src/CLAUDE.md` 关于"分析器已启用"的说法也与 `Directory.Build.props` 不符——文档可信度不齐 |
 | 低代码完整性 | 7.5 / 10 | **加分**：编排 / 表单 / 报表 / 审批四块都真实落地并用 `flowKey` 串接，节点类型与触发器覆盖广，出参 `promote`、试运行、版本发布、系统流程种子齐备。**扣分**：报表 DataScope 有旁路、表列 `Origin` 可被客户端改写、编排之外几乎没有测试 |
 | 微服务职责边界 | 4.5 / 10 | **加分**：四个服务 + 网关 + 认证服务的划分本身清楚，数据库名与服务名收敛在 `MetaDowNames`。**扣分**：SaaS 占全仓 78.0% 代码，编排/表单/报表/审批运行时全在同一个进程；4 个 `HttpApi.Client` 无任何调用方，服务间靠共享 Mongo 上下文；Projects 受众未注册，实际不可用 |
 | 工程协同 | 5.5 / 10 | **加分**：CPM 集中版本、`.editorconfig`、gitignore 密钥治理、一条可用的 CI 流水线（restore→build→test）。**扣分**：分析器未启用、无集成测试、Docker 路径坏死、前后端分仓且无自动契约同步（DSL 与节点配置两边手写） |
@@ -277,7 +277,7 @@ git add data/mongo
 
 ## 8 文档索引
 
-`docs/` 共 12 篇、约 7,300 行。多篇文件自带"事实契约 / 规划"章节标注，引用前请注意章节性质。这些文档正在被持续修订，**文件名是稳定标识**，标题与"文档性质"可能变化。
+`docs/` 共 12 篇、约 7,000 行。多篇文件自带"事实契约 / 规划"章节标注，引用前请注意章节性质。这些文档正在被持续修订，**文件名是稳定标识**，标题与"文档性质"可能变化。
 
 **低代码逻辑编排**
 - [低代码逻辑编排实现契约](docs/lowcode-logic-orchestration.md) —— 事实契约

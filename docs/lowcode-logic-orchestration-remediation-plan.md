@@ -2,7 +2,7 @@
 
 > 编制日期：2026-10-13
 > 依据文档：《逻辑编排能力盘点与主流实现对比》2026-10-12、《中台对标与系统目标评估》v2、《项目综合评估与估值》
-> 证据基准：`demo-microservice` @ `23d8e06`、`vue-demo` @ `5d6e69a`
+> 证据基准：`demo-microservice` @ `23d8e06`（规划编制时）→ 实施后 `267d375`（R1–R4 落地）、`588ff03`（文档基线重构）；`vue-demo` @ `5d6e69a`。后文「落地状态」章节以实施后的提交为准。
 > **本文档只谈逻辑编排这一块，且只写"怎么落地"。** 结论性评价见上列三份报告，本文不重复论证。
 
 ---
@@ -336,7 +336,7 @@ R4 解决"单节点内批量原子"，R11 解决"跨节点同源原子"，顺序
 
 | 检查项 | 要求 |
 |---|---|
-| 引擎单测 | 新增用例进 `tests/Meta.Dow.Orchestration.Tests`，且 `dotnet test` 全绿（当前基线 57/57） |
+| 引擎单测 | 新增用例进 `tests/Meta.Dow.Orchestration.Tests`，且 `dotnet test` 全绿（当前基线 62/62） |
 | 发布前校验 | 若新增 DSL 字段，`ValidateDsl` 必须有对应校验项（守优势 2） |
 | 契约同步 | `FlowDslModels.cs` + 前端 `dsl-graph.ts` 双向读写必须同步（避免 P1-1 双写漂移加剧） |
 | 文档 | `docs/lowcode-logic-orchestration.md` 对应章节更新（该文档是主方案，不能落后于代码） |

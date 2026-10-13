@@ -1,7 +1,7 @@
 # 逻辑编排补齐：实现前的能力取舍对比
 
 > 编制日期：2026-10-13
-> 配套：《Meta.Dow-逻辑编排补齐实施方案-2026-10-13.md》（本文是其前置的取舍论证）
+> 配套：[`lowcode-logic-orchestration-remediation-plan.md`](./lowcode-logic-orchestration-remediation-plan.md)（本文是其前置的取舍论证）
 > 目的：**每项改动落地前，先比对"现有实现 vs 主流参考"，明确抄什么、避什么，防止照搬造成倒退。**
 
 ---

@@ -878,7 +878,7 @@ Http 异步的实际行为（`:860-944`）：
 | §13 `POST /api/orchestration/instances:dry-run` | 实际为 `/api/orchestration/instances/dry-run` |
 | §13 `GET /api/orchestration/roles` | 路由不存在 |
 | §13 响应含 `meta.lookupMs/executeMs/persistMs/totalMs` | DTO 有，但手写 controller 不返回 |
-| §11.3 状态表"Switch/**Loop/ForEach**/Sql 未实现"、"Parallel 未实现" | ForEach/Loop 与 Parallel/WHEN **已实现**并有 35 个测试 |
+| §11.3 状态表"Switch/**Loop/ForEach**/Sql 未实现"、"Parallel 未实现" | ForEach/Loop 与 Parallel/WHEN **已实现**并有 39 个测试 |
 | §14 差距表把"系统参数/条件节点/节点 I/O/最终出参可见性/发布为 API/取值选择器"列为 P0 未做 | 均已实现 |
 | §15 阶段 3 `- [ ] Wait、SWITCH、WHEN` | WHEN 已实现 |
 | §5.9 "执行器尚未真正投递后台（规划 P1）" | 已投递（`Task.Run`），实现质量见 §14-11 |

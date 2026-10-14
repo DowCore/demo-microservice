@@ -1,10 +1,12 @@
+> **功能描述**见 [../oa.md](../oa.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # OA 审批流：表单绑定、节点规则与运行时契约
 
 > **文档性质**：混合——§3 是**事实契约**（描述代码真实行为），§4 是**已知缺陷清单**，§5 是**规划**（当前不可用）。三章严格隔离，不混写。
 > **代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误，62/62 单测通过。
 > **核对方式**：文中每条"已实现"结论均附 `相对路径:行号`，均经逐行 read 复核。
 > **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划） ｜ 🐞 已知缺陷
-> **关联文档**：[`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md)（表单契约与增强规格、F/W 缺陷全表）、[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)（人审与逻辑编排的分工）、[`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md)（编排引擎本身的控制流原语）
+> **关联文档**：[`form-contract.md`](./form-contract.md)（表单契约与增强规格、F/W 缺陷全表）、[`data-collection-contract.md`](./data-collection-contract.md)（人审与逻辑编排的分工）、[`logic-orchestration-contract.md`](./logic-orchestration-contract.md)（编排引擎本身的控制流原语）
 
 ---
 
@@ -19,7 +21,7 @@
 
 ### 1.2 这篇不管什么
 
-- **不写库**。审批流不直接读写业务数据；要算数、改状态、发消息时，挂一条已发布逻辑编排（`beforeFlowKey` / `afterFlowKey` / `assigneeFlowKey`）。这是本仓的硬边界（[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) §6）。
+- **不写库**。审批流不直接读写业务数据；要算数、改状态、发消息时，挂一条已发布逻辑编排（`beforeFlowKey` / `afterFlowKey` / `assigneeFlowKey`）。这是本仓的硬边界（[`data-collection-contract.md`](./data-collection-contract.md) §6）。
 - **不画审批人**。编排画布里不出现审批节点；人审在审批引擎，编排在逻辑引擎，两套引擎不混画。
 - **不是 BPMN 引擎**。没有 fork/join 并行网关、没有子流程嵌套（§5.1 / §5.2）。
 - 前端交互规格（`vue-demo` 里的设计器与时间轴渲染）**本仓无法核验**，凡涉及前端的结论都标注 `⚠️ 未核验（前端在 vue-demo）`。
@@ -44,7 +46,7 @@
 | [Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/) | 纵向节点：发起人 → 审批人 → 抄送 → 条件 → 结束；审批人上配人或签/会签 |
 | [lowflow-design](https://tsai996.github.io/lowflow-design/) | 同一类钉钉树，节点抽屉而不是 BPMN 画布 |
 | 钉钉 / 飞书审批模板 | 一个模板一张表单；节点配置办理人、会签或签、审批意见 |
-| 本仓库 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) §6 | 人审和逻辑编排分开。节点前后挂 FlowKey，编排画布里不画审批人 |
+| 本仓库 [`data-collection-contract.md`](./data-collection-contract.md) §6 | 人审和逻辑编排分开。节点前后挂 FlowKey，编排画布里不画审批人 |
 | 本仓库逻辑编排 | 节点前、节点后、选人，都调用已发布 `flowKey`，不在审批引擎里写 SQL |
 
 ---
@@ -392,10 +394,10 @@
 
 ## 7. 参考链接
 
-- [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) —— 表单/OA 增强规格、现状能力总表、F1–F7 与 W1–W9 全表、两起登录事故复盘
-- [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) —— 人审与逻辑编排的分工（§6）
-- [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) —— 逻辑编排引擎的控制流原语与节点全集
-- [`iam-rbac-menu.md`](./iam-rbac-menu.md) —— 组织机构与数据权限
+- [`form-contract.md`](./form-contract.md) —— 表单/OA 增强规格、现状能力总表、F1–F7 与 W1–W9 全表、两起登录事故复盘
+- [`data-collection-contract.md`](./data-collection-contract.md) —— 人审与逻辑编排的分工（§6）
+- [`logic-orchestration-contract.md`](./logic-orchestration-contract.md) —— 逻辑编排引擎的控制流原语与节点全集
+- [`identity-contract.md`](./identity-contract.md) —— 组织机构与数据权限
 - 外部对标：[Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)
 
 ---

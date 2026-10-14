@@ -1,9 +1,11 @@
+> **功能描述**见 [../logic-orchestration.md](../logic-orchestration.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # 低代码逻辑编排 —— 完善意见稿
 
 > **文档性质**：整改意见稿（Review & Remediation Proposal）。用于评审、排期与验收，不替代设计规格。
 > **代码基线**：`Meta.Dow.slnx` @ commit `91d75bd`（2026-10-14，P0 止血批次）。
 > **实测基线**：`dotnet build Meta.Dow.slnx -c Release` = **0 错误**；`dotnet test tests/Meta.Dow.Orchestration.Tests` = **91/91 通过**（P0 批次新增 29 例；此前基线的 165 警告为全量重建实测，随 NU 审计库波动）。
-> **配套阅读**：[实现契约](./lowcode-logic-orchestration.md)（真实行为）、[落地方案](./lowcode-logic-orchestration-remediation-plan.md)（R1–R12）、[主流对标分析](./lowcode-logic-orchestration-benchmark.md)（优势/不足与主流差异，全部不足项对照本文 S/C/E/G 编号）。
+> **配套阅读**：[实现契约](./logic-orchestration-contract.md)（真实行为）、[落地方案](./logic-orchestration-plan.md)（R1–R12）、[主流对标分析](./logic-orchestration-benchmark.md)（优势/不足与主流差异，全部不足项对照本文 S/C/E/G 编号）。
 > **评估范围**：`Meta.Dow.SaaS` 逻辑编排引擎（`/api/orchestration/*`、`/api/logic/*`），及其连带的**授权落点、租户隔离、发布治理与工程化门禁**——后者直接决定编排能力能否上生产。
 > **证据规则**：每条结论附 `相对路径:行号`，均可在上述 commit 复核。状态图例：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现 ｜ 🐞 缺陷。
 > **边界声明**：本文**不把规划当现状**。规划项见第 4.4 节；未能核验的内容见附录 B。
@@ -343,15 +345,15 @@
 
 | 文件 | 行数变化 | 主要动作 |
 |---|---|---|
-| `docs/lowcode-logic-orchestration.md` | 2,723 → 895 | 合并四处重复的节点规格为单一契约；四张互相矛盾的状态表并为一张；新增行为边界章（30 条）；规划隔离 |
-| `docs/lowcode-form-oa-enhancement.md` | 1,243 → 1,242 | 结构全换（8 章）；F/W 缺陷逐条复核定级；"已全部修复"降级为"主体落地，遗留项见 §…" |
-| `docs/lowcode-form-workflow-board.md` | 1,167 → 1,199 | 新增 18 条缺陷（C1–C18）与 10 条新发现；23 条失真断言清单入修订记录 |
-| `docs/lowcode-report-management.md` | 676 → 575 | 44 项能力权威表；纠正"列管道 transform→format→style→render"等 27 条失真 |
-| `docs/add-new-service.md` | 155 → 611 | 改写为可执行操作手册（每步含验证方法、真实端口与路由） |
-| `docs/iam-rbac-menu.md` | 344 → 445 | 数据范围如实降级为"已建模、未接线"；13 条缺陷 |
-| `docs/lowcode-oa-workflow.md` | 152 → 422 | 与 enhancement 分工；补草稿/快照不对称等缺陷 |
-| `docs/lowcode-report-config-ux.md` | 87 → 257 | 保持"前端交互规格"定位，未被误扩为后端契约 |
-| `docs/lowcode-form-preview.md` | 335 → 458 | 明确"本仓无预览管线，能力全在前端" |
+| `docs/detail/logic-orchestration-contract.md` | 2,723 → 895 | 合并四处重复的节点规格为单一契约；四张互相矛盾的状态表并为一张；新增行为边界章（30 条）；规划隔离 |
+| `docs/form-contract.md` | 1,243 → 1,242 | 结构全换（8 章）；F/W 缺陷逐条复核定级；"已全部修复"降级为"主体落地，遗留项见 §…" |
+| `docs/data-collection-contract.md` | 1,167 → 1,199 | 新增 18 条缺陷（C1–C18）与 10 条新发现；23 条失真断言清单入修订记录 |
+| `docs/report-contract.md` | 676 → 575 | 44 项能力权威表；纠正"列管道 transform→format→style→render"等 27 条失真 |
+| `docs/add-service.md` | 155 → 611 | 改写为可执行操作手册（每步含验证方法、真实端口与路由） |
+| `docs/identity-contract.md` | 344 → 445 | 数据范围如实降级为"已建模、未接线"；13 条缺陷 |
+| `docs/oa-contract.md` | 152 → 422 | 与 enhancement 分工；补草稿/快照不对称等缺陷 |
+| `docs/report-config-ux.md` | 87 → 257 | 保持"前端交互规格"定位，未被误扩为后端契约 |
+| `docs/form-preview.md` | 335 → 458 | 明确"本仓无预览管线，能力全在前端" |
 | `README.md` | 167 → 303 | 架构评价改为**有证据的评分**（7 维度各附加减分依据），并新增安全与可验证性两个维度 |
 
 **通用整改（本轮已落地）**：

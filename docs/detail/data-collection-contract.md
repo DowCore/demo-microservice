@@ -1,3 +1,5 @@
+> **功能描述**见 [../data-collection.md](../data-collection.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 资源 / 表设计 / 查询对象 / 表单 / 审批 / 报表 / 看板：事实契约与规划
 
 > **文档性质（混合，已按章拆开）**
@@ -86,11 +88,11 @@
 
 | 能力 | 主文档 | 解决什么 | 典型对象 |
 |------|--------|----------|----------|
-| **D. 逻辑编排** | [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) | 无阻塞业务逻辑：校验、算价、调 API、SQL、消息 | Start / IF / HTTP / Code / Sql |
+| **D. 逻辑编排** | [`logic-orchestration-contract.md`](./logic-orchestration-contract.md) | 无阻塞业务逻辑：校验、算价、调 API、SQL、消息 | Start / IF / HTTP / Code / Sql |
 | **A. 表单与资源页** | **本文** | 表结构、筛查、列表、新建/编辑表单 | TableDefinition / AppResource / ListView / FormDef / FilterDef |
 | **A′. 只读查询对象** | **本文** | 视图 / 存储过程登记与列表化 | DbQueryObject |
-| **A″. 通用报表** | **本文 + [`lowcode-report-management.md`](./lowcode-report-management.md)** | 查询表单、条件树、汇总、列展示 | ReportDefinition / FilterNode / KpiDef |
-| **B. 人审工作流（OA）** | **本文 + [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)** | 待办、会签/或签、驳回、转办、抄送 | WorkflowDefinition / WorkflowInstance / WorkflowTask |
+| **A″. 通用报表** | **本文 + [`report-contract.md`](./report-contract.md)** | 查询表单、条件树、汇总、列展示 | ReportDefinition / FilterNode / KpiDef |
+| **B. 人审工作流（OA）** | **本文 + [`oa-contract.md`](./oa-contract.md)** | 待办、会签/或签、驳回、转办、抄送 | WorkflowDefinition / WorkflowInstance / WorkflowTask |
 | **E. 看板/仪表** | **本文** | 列/泳道/卡片规则、多视图、轻量仪表 | Board / ColumnRule / Widget |
 
 三者可互相调用，但**模型与运行时分离**：
@@ -913,7 +915,7 @@ return new FilterSqlResult {
 - render 返回描述符白名单：`text` / `tag` / `link` / `image` / `progress` / `switch`(只读) / `dict`；`link.href` 只允许站内路由或字段值，禁止 `javascript:`。
 - **不首期开放任意 HTML / 任意 Vue SFC**。
 - `format` 与 `render` 同时存在时：先 format 成字符串再作为 render 的 `value`，或由 `render.input = raw|formatted` 决定。
-- ⚠️ 待统一：`lowcode-report-config-ux.md` 里 `renderFn` 的「返回 HTML」与本表「只返回描述符白名单」冲突，须以描述符白名单为准。
+- ⚠️ 待统一：`report-config-ux.md` 里 `renderFn` 的「返回 HTML」与本表「只返回描述符白名单」冲突，须以描述符白名单为准。
 
 ### 5.5 看板与仪表盘（P3+）
 
@@ -1137,13 +1139,13 @@ AppResource
 
 ### 7.4 本仓库文档
 
-- [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) — 逻辑编排（能力 D）：Condition 组合式、DataSource、`PublishedFlowInvoker`、节点库
-- [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) — OA 审批流节点规则与表单绑定
-- [`lowcode-report-management.md`](./lowcode-report-management.md) — 通用报表、查询表单/条件组、列汇总、按钮、菜单
-- [`lowcode-form-preview.md`](./lowcode-form-preview.md) — 表单库与预览；`FormDefinition` 与编排 `InputSchema` 的分工
-- [`lowcode-form-oa-enhancement.md`](./lowcode-form-oa-enhancement.md) — 表单/审批增强项（F1–F7、W1–W9）
-- [`lowcode-report-config-ux.md`](./lowcode-report-config-ux.md) — 报表配置交互（⚠️ `renderFn` 返回 HTML 与本仓「描述符白名单」冲突，见 §5.4）
-- [`iam-rbac-menu.md`](./iam-rbac-menu.md) — 权限与菜单
+- [`logic-orchestration-contract.md`](./logic-orchestration-contract.md) — 逻辑编排（能力 D）：Condition 组合式、DataSource、`PublishedFlowInvoker`、节点库
+- [`oa-contract.md`](./oa-contract.md) — OA 审批流节点规则与表单绑定
+- [`report-contract.md`](./report-contract.md) — 通用报表、查询表单/条件组、列汇总、按钮、菜单
+- [`form-preview.md`](./form-preview.md) — 表单库与预览；`FormDefinition` 与编排 `InputSchema` 的分工
+- [`form-contract.md`](./form-contract.md) — 表单/审批增强项（F1–F7、W1–W9）
+- [`report-config-ux.md`](./report-config-ux.md) — 报表配置交互（⚠️ `renderFn` 返回 HTML 与本仓「描述符白名单」冲突，见 §5.4）
+- [`identity-contract.md`](./identity-contract.md) — 权限与菜单
 
 ---
 
@@ -1154,7 +1156,7 @@ AppResource
 | 2026-09-18 | — | 初稿：开源对标 + 表单/工作流/看板规划，明确不实现 |
 | 2026-09-21 | — | 拍板并细化：P1 新建表即应用到库；查询/写入一律 `PublishedFlowInvoker`；前端 P1 即可组合查询；托管表默认 ABP 约定列 |
 | 2026-09-21 | — | 平台类型映射补齐 SQL Server / Oracle；查询 COUNT/分页/空值谓词/日期布尔绑定按引擎方言处理 |
-| 2026-09-21 | — | 运行时筛选改为查询表单 + 可视化条件组；通用报表规划见 `lowcode-report-management.md` |
+| 2026-09-21 | — | 运行时筛选改为查询表单 + 可视化条件组；通用报表规划见 `report-contract.md` |
 | 2026-10-13 | `267d375` | **按代码重写为「事实契约 + 规划」双段结构**（Release 0 错误、62/62 单测通过）。核实并改写/删除的失真断言如下 |
 
 ### 8.1 本次删除或改写的失真断言（原断言 → 代码真相 → 证据）

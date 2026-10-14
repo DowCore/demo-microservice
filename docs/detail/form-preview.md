@@ -1,3 +1,5 @@
+> **功能描述**见 [../form.md](../form.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # 表单库预览能力方案（Form Preview）
 
 > **文档性质（混合，已拆开）**：§2/§3/§4 是**后端事实契约**（逐条核到本仓代码）；§6 是**前端交互规格**（实现在前端仓 `D:\Project\vue-demo`，本仓无法核验）；§5 是**规划**（未实现）。
@@ -21,7 +23,7 @@
 
 - 不是后端契约文档：本仓不为「预览」设计 API（§5 只列规划）。
 - 不定义前端组件实现细节；`vue-demo` 的具体代码不在本仓，本文凡涉及前端之处均为**规格**而非**核验结论**。
-- 不覆盖表单设计器本身的编辑能力（见 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)）。
+- 不覆盖表单设计器本身的编辑能力（见 [`data-collection-contract.md`](./data-collection-contract.md)）。
 
 ### 1.3 关键判定：本仓无后端预览管线（必须先读）
 
@@ -445,9 +447,9 @@ forms/designer.vue       ──「预览」──► FormPreviewModal
 | form-js | https://github.com/bpmn-io/form-js |
 | Ant 表单页 | https://ant.design/docs/spec/research-form-cn |
 | Ant 详情页 | https://ant.design/docs/spec/detail-page-cn |
-| 本仓库表单规划 | [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) |
-| 本仓库报表配置交互规格 | [`lowcode-report-config-ux.md`](./lowcode-report-config-ux.md) |
-| 本仓库报表管理规划 | [`lowcode-report-management.md`](./lowcode-report-management.md) |
+| 本仓库表单规划 | [`data-collection-contract.md`](./data-collection-contract.md) |
+| 本仓库报表配置交互规格 | [`report-config-ux.md`](./report-config-ux.md) |
+| 本仓库报表管理规划 | [`report-contract.md`](./report-contract.md) |
 
 ---
 

@@ -1,3 +1,5 @@
+> **功能描述**见 [../report.md](../report.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 通用报表管理：事实契约与规划
 
 > **文档性质**：混合文档，**已按章拆开**。第 1–4、6 章是**事实契约**（只描述代码真实行为）；第 5 章是**规划**（未实现，与事实严格隔离）。
@@ -488,9 +490,9 @@ KPI 示例（**规划**）：`{ "title": "待审金额", "field": "Amount", "fn"
 
 ### 7.1 仓库内
 
-- [低代码表单与工作流看板](./lowcode-form-workflow-board.md)
-- [报表配置器 UX](./lowcode-report-config-ux.md)
-- [IAM 角色、菜单与权限](./iam-rbac-menu.md)
+- [低代码表单与工作流看板](./data-collection-contract.md)
+- [报表配置器 UX](./report-config-ux.md)
+- [IAM 角色、菜单与权限](./identity-contract.md)
 
 ### 7.2 开源对标
 
@@ -561,7 +563,7 @@ KPI 示例（**规划**）：`{ "title": "待审金额", "field": "Amount", "fn"
 
 | 抽查项 | 方法 | 结果 |
 |--------|------|------|
-| 代码基线 `267d375` | `git log -1` / `git rev-parse --short HEAD` | ✅ 一致；`docs/lowcode-report-management.md` 无未提交改动 |
+| 代码基线 `267d375` | `git log -1` / `git rev-parse --short HEAD` | ✅ 一致；`docs/report-contract.md` 无未提交改动 |
 | 条件树递归 + 括号 | 精读 `FilterSqlBuilder.CompileNode` | ✅ 多子节点 `"(" + join + ")"`（`:287`） |
 | 租户/数据范围不可被 OR 逃逸 | 精读 `Build` 的 `predicates` + `string.Join(" AND ")` | ✅ 独立谓词（`:152`） |
 | 深度上限 | 精读 `:228` + `OrchestrationConsts.cs:14` | ⚠️ 实际 4 层，文档原写 3 层（已改正） |

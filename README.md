@@ -64,7 +64,7 @@ src/
 tests/Meta.Dow.Orchestration.Tests/  xUnit 单元测试
 tools/                              mongo-dump.ps1、mongo-restore.ps1
 data/mongo/                         mongodump 落盘目录（见 §6）
-docs/                               12 篇方案与契约文档（见 §8）
+docs/                               按功能分层的描述；detail/ 为证据附录（见 §8）
 ```
 
 持久层是 `{Service}.MongoDB`，**不存在 `{Service}.EntityFrameworkCore`**。
@@ -277,26 +277,17 @@ git add data/mongo
 
 ## 8 文档索引
 
-`docs/` 共 13 篇、约 7,300 行。多篇文件自带"事实契约 / 规划"章节标注，引用前请注意章节性质。这些文档正在被持续修订，**文件名是稳定标识**，标题与"文档性质"可能变化。
+按功能读 [总览](docs/overview.md)。每篇都是同一结构：已实现、相对对标的不足、后续规划。行号在 `docs/detail/`。
 
-**低代码逻辑编排**
-- [低代码逻辑编排实现契约](docs/lowcode-logic-orchestration.md) —— 事实契约（§1 含系统目标：通用稳定型编排底座）
-- [低代码逻辑编排完善意见稿](docs/lowcode-logic-orchestration-review.md) —— 评审意见（缺陷清单 S/C/E/G + 整改批次与验收标准），与上篇契约互补、不重复
-- [逻辑编排补齐实施方案](docs/lowcode-logic-orchestration-remediation-plan.md) —— 落地计划（R1–R12 分批与验收标准，含已实施状态）
-- [逻辑编排补齐：实现前取舍对比](docs/lowcode-logic-orchestration-remediation-tradeoffs.md) —— 每项改动落地前"现有 vs 主流"的取舍论证
-- [逻辑编排能力盘点与主流实现对比](docs/lowcode-logic-orchestration-benchmark.md) —— 对标分析（优势/不足/主流差异，全部不足项对照 review 的 S/C/E/G 编号）
-- [添加新微服务](docs/add-new-service.md) —— 以 `src/services/projects` 为模板的接线操作手册
-
-**资源 / 表 / 表单 / 审批 / 报表**
-- [资源 / 表设计 / 查询对象 / 表单 / 审批 / 报表 / 看板：事实契约与规划](docs/lowcode-form-workflow-board.md)
-- [表单与 OA 审批：能力契约、行为边界与增强规划](docs/lowcode-form-oa-enhancement.md)
-- [表单库预览能力方案](docs/lowcode-form-preview.md) —— 混合（后端契约 + 前端规格 + 规划）
-- [OA 审批流：表单绑定、节点规则与运行时契约](docs/lowcode-oa-workflow.md)
-- [通用报表管理：事实契约与规划](docs/lowcode-report-management.md)
-- [报表配置器 UX 重设计](docs/lowcode-report-config-ux.md) —— 前端交互规格
-
-**身份与权限**
-- [身份与权限体系说明](docs/iam-rbac-menu.md)
+| 功能 | 描述 | 证据附录 |
+| --- | --- | --- |
+| 逻辑编排 | [logic-orchestration.md](docs/logic-orchestration.md) | [契约](docs/detail/logic-orchestration-contract.md)、[评审](docs/detail/logic-orchestration-review.md)、[方案](docs/detail/logic-orchestration-plan.md)、[取舍](docs/detail/logic-orchestration-tradeoffs.md)、[对标长文](docs/detail/logic-orchestration-benchmark.md) |
+| 数据集合定义 | [data-collection.md](docs/data-collection.md) | [契约](docs/detail/data-collection-contract.md) |
+| 表单 | [form.md](docs/form.md) | [契约](docs/detail/form-contract.md)、[预览规格](docs/detail/form-preview.md) |
+| 报表 | [report.md](docs/report.md) | [契约](docs/detail/report-contract.md)、[配置器 UX](docs/detail/report-config-ux.md) |
+| OA 人审 | [oa.md](docs/oa.md) | [契约](docs/detail/oa-contract.md) |
+| 身份与菜单 | [identity.md](docs/identity.md) | [契约](docs/detail/identity-contract.md) |
+| 工程手册 | [添加新微服务](docs/add-service.md) | — |
 
 前端固定为 Vue Vben Admin，工程与参考仓路径约定见 `.cursor/rules/frontend-vue-vben.mdc`；`MetaDow_Vue` OpenIddict 客户端（password / authorization_code / refresh_token）已注册。系统目标（通用稳定型逻辑编排底座）与架构红线见 `.cursor/rules/logic-orchestration.mdc`。
 

@@ -11,7 +11,7 @@ namespace Meta.Dow.Orchestration.Tests;
 /// 只调用纯静态的 <see cref="FlowExecutor.ValidateDsl"/> 与
 /// <see cref="NodeResiliencePolicy.IsTransientPostgresSqlState"/>，不需要构造执行器/数据库。
 ///
-/// 三组规则的动机（见 docs/lowcode-logic-orchestration-review.md §4）：
+/// 三组规则的动机（见 docs/detail/logic-orchestration-review.md §4）：
 /// 1. **P0-1 节点类型白名单（C2）**：dispatch 对未知类型抛 500，此前"发布成功、调用即 500"。
 ///    现在把这类错误提前到发布期。特别地 <c>Sql</c>/<c>Switch</c>/<c>Wait</c> 引擎没有分支，必须拒。
 /// 2. **P0-2 输出契约强制（S7）**：未声明契约时引擎曾回退输出整个 <c>ctx.Vars</c>（内部变量整包外泄）。

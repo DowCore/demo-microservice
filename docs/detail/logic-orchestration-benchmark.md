@@ -1,6 +1,8 @@
+> **功能描述**见 [../logic-orchestration.md](../logic-orchestration.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 逻辑编排：能力盘点与主流实现对比（2026-10-14 刷新版）
 
-> **文档性质**：对标分析（评审层文档）。与 `docs/lowcode-logic-orchestration-review.md`（缺陷清单）、`docs/lowcode-logic-orchestration-remediation-plan.md`（落地方案）配套阅读；**缺陷以 review 的 S/C/E/G 编号为单一真相源**，本文只做映射与归因，不重复定义缺陷。
+> **文档性质**：对标分析（评审层文档）。与 `docs/detail/logic-orchestration-review.md`（缺陷清单）、`docs/detail/logic-orchestration-plan.md`（落地方案）配套阅读；**缺陷以 review 的 S/C/E/G 编号为单一真相源**，本文只做映射与归因，不重复定义缺陷。
 > **证据基线**：`Meta.Dow.slnx` @ `91d75bd`（2026-10-14，P0 止血批次）。`dotnet build -c Release` **0 错误**；`tests/Meta.Dow.Orchestration.Tests` **91/91 通过**。每条结论附 `相对路径:行号`，行号对应上述 commit。
 > **P0 止血批次已落地（2026-10-14）**：C2 节点类型白名单、S7 输出契约强制、S12 `visibleTo` 取值收敛（含 `roleIds` 拒绝）、S6 子图角色透传、C13 PG/Oracle 瞬态分类、C16 `batchupdate` 双缺陷。§4.2 的存量清单已随之缩减。
 > **系统目标**：构造通用、稳定的逻辑编排底座 —— 其他低代码能力都在这个逻辑编排上实现（见契约文档 §1「系统目标」与 `.cursor/rules/logic-orchestration.mdc`）。
@@ -180,7 +182,7 @@ REST 发布（`LogicApiAppService.RunAsync`，含按角色过滤）｜ RabbitMQ 
 
 ## 4. 不足与可完善项（全量对照 review 编号）
 
-> 编号说明：S/C/E/G 为 `lowcode-logic-orchestration-review.md` §4 的缺陷编号；R 为 `remediation-plan.md` 的整改项；P0/P1/P2 为 review §5 的批次。全部缺陷均已对照当前代码实测（2026-10-13/14 复核）。
+> 编号说明：S/C/E/G 为 `logic-orchestration-review.md` §4 的缺陷编号；R 为 `remediation-plan.md` 的整改项；P0/P1/P2 为 review §5 的批次。全部缺陷均已对照当前代码实测（2026-10-13/14 复核）。
 
 ### 4.1 已修复项回顾（R1–R4 @ 2026-10-13；P0 止血批次 @ `91d75bd` 2026-10-14，勿再当缺陷报）
 

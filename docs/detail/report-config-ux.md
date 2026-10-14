@@ -1,10 +1,12 @@
+> **功能描述**见 [../report.md](../report.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # 报表配置器 UX 重设计（R1.5）
 
 > **文档性质**：**前端交互规格**（配置器怎么用、怎么摆）。本文**不是后端契约**——只描述交互与信息架构，凡涉及后端能力的断言都附 `相对路径:行号` 作为「可实现性证据」，其余一律是前端规格。
 > **代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误、单测 62/62 通过。
 > **核对方式**：后端结论附 `相对路径:行号`；前端结论标 ⚠️ 未核验（前端在 `D:\Project\vue-demo`，不在本仓）。
 > **图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划） ｜ 🐞 已知缺陷
-> **后端契约以 [`lowcode-report-management.md`](./lowcode-report-management.md) 为准**，本文不重复、不扩写。
+> **后端契约以 [`report-contract.md`](./report-contract.md) 为准**，本文不重复、不扩写。
 
 ---
 
@@ -17,9 +19,9 @@
 
 ### 1.2 不管什么
 
-- **不是后端契约**：不定义 API、不定义领域模型、不承诺服务端行为。存储与查询契约见 [`lowcode-report-management.md`](./lowcode-report-management.md)。
-- 不写运行时页面的完整设计（另见 `lowcode-report-management.md` §10）。
-- 不覆盖表单设计器本身的编辑能力（见 [`lowcode-form-preview.md`](./lowcode-form-preview.md) §6）。
+- **不是后端契约**：不定义 API、不定义领域模型、不承诺服务端行为。存储与查询契约见 [`report-contract.md`](./report-contract.md)。
+- 不写运行时页面的完整设计（另见 `report-contract.md` §10）。
+- 不覆盖表单设计器本身的编辑能力（见 [`form-preview.md`](./form-preview.md) §6）。
 
 ### 1.3 一个必须先划清的界线
 
@@ -227,7 +229,7 @@
 - 右：按真实表单预览。
 
 详情页只读；编辑/新增按可见性过滤。后续再接分区、主从、独立 Form 资源。
-字段属性与 `FormFieldDef` 一致（见 [`lowcode-form-preview.md`](./lowcode-form-preview.md) §3.4）；「按真实表单预览」的实现路径与交互细则见同文 §6。
+字段属性与 `FormFieldDef` 一致（见 [`form-preview.md`](./form-preview.md) §3.4）；「按真实表单预览」的实现路径与交互细则见同文 §6。
 
 ### 6.6 明确不做
 
@@ -241,9 +243,9 @@
 
 | 类型 | 链接 |
 |------|------|
-| 后端契约与规划（R1/R2/R3） | [`lowcode-report-management.md`](./lowcode-report-management.md) |
-| 表单库预览能力方案 | [`lowcode-form-preview.md`](./lowcode-form-preview.md) |
-| 表单库 / 资源 CRUD 规划 | [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) |
+| 后端契约与规划（R1/R2/R3） | [`report-contract.md`](./report-contract.md) |
+| 表单库预览能力方案 | [`form-preview.md`](./form-preview.md) |
+| 表单库 / 资源 CRUD 规划 | [`data-collection-contract.md`](./data-collection-contract.md) |
 | NocoBase | https://github.com/nocobase/nocobase |
 | Amis | https://github.com/baidu/amis |
 | Ant Design 列表页 | https://ant.design/docs/spec/research-list-cn |
@@ -254,4 +256,4 @@
 
 | 日期 | 修订 | 说明 |
 |------|------|------|
-| 2026-10-13 | 定位校正 + 事实核对（基线 `267d375`） | 明确本文是**前端交互规格**而非后端契约（§1），并指向 `lowcode-report-management.md`；新增 §2 能力总表、§3 后端可实现性证据、§4 缺陷清单、§5 规划；原文 §1–§6 内容全部保留为 §6，仅修正与后端实际能力矛盾之处（`OrGroup` 无消费点、`AdvancedFilter` 无消费点、`between` 半开区间、非文本列 contains 被改写为 eq、`pageSize` 上限 200、列管道仅前端执行）；前端内容统一标 ⚠️ 未核验 |
+| 2026-10-13 | 定位校正 + 事实核对（基线 `267d375`） | 明确本文是**前端交互规格**而非后端契约（§1），并指向 `report-contract.md`；新增 §2 能力总表、§3 后端可实现性证据、§4 缺陷清单、§5 规划；原文 §1–§6 内容全部保留为 §6，仅修正与后端实际能力矛盾之处（`OrGroup` 无消费点、`AdvancedFilter` 无消费点、`between` 半开区间、非文本列 contains 被改写为 eq、`pageSize` 上限 200、列管道仅前端执行）；前端内容统一标 ⚠️ 未核验 |

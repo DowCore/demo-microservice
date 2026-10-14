@@ -1,3 +1,5 @@
+> **功能描述**见 [../logic-orchestration.md](../logic-orchestration.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 低代码逻辑编排 — 实现契约
 
 > **文档性质**：**事实契约**。本文描述代码的**真实行为**，不是规划书。
@@ -60,9 +62,9 @@
 
 | 类别 | 代表 | 关注点 | 本仓是否有 |
 |------|------|--------|-----------|
-| A. 审批流 / BPM | Flowable、钉钉审批 | 人工待办、会签、Bookmark | 有，但**是另一套引擎**：见 `./lowcode-oa-workflow.md` |
+| A. 审批流 / BPM | Flowable、钉钉审批 | 人工待办、会签、Bookmark | 有，但**是另一套引擎**：见 `./oa-contract.md` |
 | B. 自动化 / iPaaS | Zapier、n8n | 触发器 + 海量 SaaS 连接器 | ❌ 刻意不做 |
-| C. 通用低代码页面搭建 | 宜搭表单页 | 页面/组件/数据绑定 | 有表单库，见 `./lowcode-form-workflow-board.md` |
+| C. 通用低代码页面搭建 | 宜搭表单页 | 页面/组件/数据绑定 | 有表单库，见 `./data-collection-contract.md` |
 | **D. 代码逻辑编排（本文）** | LiteFlow、宜搭「逻辑编排」、微搭「逻辑流」 | **if / 顺序 / 并行 / 循环 / 调内部服务** | ✅ 本文主题 |
 
 **边界一句话**：编排引擎只负责「业务怎么跑」；**何时启动**由触发层负责（§7.3）。
@@ -862,9 +864,9 @@ Http 异步的实际行为（`:860-944`）：
 | LogicFlow | https://github.com/didi/LogicFlow |
 | n8n（仅借鉴调试，非产品形态） | https://github.com/n8n-io/n8n |
 | Elsa（.NET 工作流，非主线） | https://docs.elsaworkflows.io/getting-started/concepts |
-| 本仓 IAM | [iam-rbac-menu.md](./iam-rbac-menu.md) |
-| 本仓表单/OA/报表 | [lowcode-form-oa-enhancement.md](./lowcode-form-oa-enhancement.md)、[lowcode-form-workflow-board.md](./lowcode-form-workflow-board.md)、[lowcode-report-management.md](./lowcode-report-management.md) |
-| 本仓编排配套 | [完善意见稿](./lowcode-logic-orchestration-review.md)、[落地方案](./lowcode-logic-orchestration-remediation-plan.md)、[取舍对比](./lowcode-logic-orchestration-remediation-tradeoffs.md)、[主流对标分析](./lowcode-logic-orchestration-benchmark.md) |
+| 本仓 IAM | [identity-contract.md](./identity-contract.md) |
+| 本仓表单/OA/报表 | [form-contract.md](./form-contract.md)、[data-collection-contract.md](./data-collection-contract.md)、[report-contract.md](./report-contract.md) |
+| 本仓编排配套 | [完善意见稿](./logic-orchestration-review.md)、[落地方案](./logic-orchestration-plan.md)、[取舍对比](./logic-orchestration-tradeoffs.md)、[主流对标分析](./logic-orchestration-benchmark.md) |
 
 ---
 

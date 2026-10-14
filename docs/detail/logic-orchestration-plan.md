@@ -1,3 +1,5 @@
+> **功能描述**见 [../logic-orchestration.md](../logic-orchestration.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 逻辑编排：差距补齐实施方案
 
 > 编制日期：2026-10-13
@@ -339,7 +341,7 @@ R4 解决"单节点内批量原子"，R11 解决"跨节点同源原子"，顺序
 | 引擎单测 | 新增用例进 `tests/Meta.Dow.Orchestration.Tests`，且 `dotnet test` 全绿（**当前基线 91/91**，2026-10-14 P0 批次后；本模板 2026-10-13 编制时基线为 62/62） |
 | 发布前校验 | 若新增 DSL 字段，`ValidateDsl` 必须有对应校验项（守优势 2） |
 | 契约同步 | `FlowDslModels.cs` + 前端 `dsl-graph.ts` 双向读写必须同步（避免 P1-1 双写漂移加剧） |
-| 文档 | `docs/lowcode-logic-orchestration.md` 对应章节更新（该文档是主方案，不能落后于代码） |
+| 文档 | `docs/detail/logic-orchestration-contract.md` 对应章节更新（该文档是主方案，不能落后于代码） |
 | 种子示例 | 涉及新语义的，在 `ControlFlowDemoSeedContributor` 加一条演示流程 |
 | 前端类型 | `pnpm --filter @vben/web-antd typecheck` 0 诊断 |
 
@@ -462,5 +464,5 @@ R9（SWITCH 互译）、R10（MaxSteps 错误区分）、R11（txMode）、R12�
 
 - 评审 §5.1 的 **P0-5 ~ P0-14** 本批未动（含默认口令 `1q2w3E*`、破坏性 DDL 门禁、Http 节点 SSRF 防护等，见 review §4.1 S1–S5）。
 - **G2（测试覆盖实质为零）未改善**：本批 29 例仍全部是纯单元测试（断言 `ValidateDsl` 的拒绝/放行），脚手架 `null!` 注入导致的**运行时路径零覆盖**依然存在。
-- `FlowExecutor.cs` 因本批净增约 190 行，§2–§13 的旧行号已整体下移（见 `lowcode-logic-orchestration.md` 头部时点声明），**替换为符号名检索前不要按旧行号跳转**。
+- `FlowExecutor.cs` 因本批净增约 190 行，§2–§13 的旧行号已整体下移（见 `logic-orchestration-contract.md` 头部时点声明），**替换为符号名检索前不要按旧行号跳转**。
 

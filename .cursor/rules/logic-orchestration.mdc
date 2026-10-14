@@ -44,10 +44,8 @@ alwaysApply: true
 **已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` / `Wait` 节点（现在是发布失败，不是调用 500）；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；异步节点结果回收（R5，`Task.Run` + `CancellationToken.None` 仍在）；发布缓存跨进程失效（C3/E8）；单流程调用权限码（S14/E10）；未知 DSL 字段报错（仍静默忽略）；评审 P0-5～P0-14（约定列 Origin、破坏性 DDL、默认口令、SSRF、OA 驳回语义等）。Code 沙箱是 **Jint**，不是 Roslyn。
 
 **权威清单**（改动前必读）：
-- 事实契约 `docs/lowcode-logic-orchestration.md`（§2 能力总表 / §14 行为边界 / §15 规划）
-- 评审意见 `docs/lowcode-logic-orchestration-review.md`（S1–S19 / C1–C26 / E1–E10 / G1–G9 + P0/P1/P2 批次）
-- 落地方案 `docs/lowcode-logic-orchestration-remediation-plan.md`（R1–R12 与依赖序）
-- 主流对标 `docs/lowcode-logic-orchestration-benchmark.md`
+- 功能入口 `docs/overview.md`，各功能描述在 `docs/logic-orchestration.md`、`docs/data-collection.md`、`docs/form.md`、`docs/report.md`、`docs/oa.md`、`docs/identity.md`
+- 证据附录在 `docs/detail/`：编排契约 `logic-orchestration-contract.md`（§2 / §14 / §15）、评审 `logic-orchestration-review.md`、方案 `logic-orchestration-plan.md`、对标 `logic-orchestration-benchmark.md`
 
 # 文档纪律（三层模型，禁止混写目标态与现状）
 

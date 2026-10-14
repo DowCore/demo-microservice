@@ -28,13 +28,13 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 # 源 markdown 已迁入仓库 docs/，这里的路径必须与之一致；
 # 2026-10-13 文档基线重构时旧文件 `docx/低代码逻辑编排-完善意见稿.md` 已删，故此处置新。
-SRC = REPO / "docs" / "lowcode-logic-orchestration-review.md"
+SRC = REPO / "docs" / "detail" / "logic-orchestration-review.md"
 OUT = ROOT / "低代码逻辑编排-完善意见稿.docx"
 
 if not SRC.exists():
     raise SystemExit(
         f"源 markdown 不存在：{SRC}\n"
-        "文档基线重构后源文件已迁到 docs/，请确认 docs/lowcode-logic-orchestration-review.md 存在。"
+        "评审稿已迁到 docs/detail/logic-orchestration-review.md，请确认该文件存在。"
     )
 
 LATIN_FONT = "Segoe UI"

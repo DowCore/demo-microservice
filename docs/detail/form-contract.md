@@ -1,10 +1,12 @@
+> **功能描述**见 [../form.md](../form.md)。本文件是该功能的证据附录（契约 / 评审 / 方案），不单独作为阅读入口。
+
 # Meta.Dow 表单与 OA 审批：能力契约、行为边界与增强规划
 
 > **文档性质**：混合，已拆分——§1 定位与边界、§3 契约与实现细节、§6 操作说明为**事实契约**；§5 为**规划**（当前不可用）；§4 为**已知缺陷**。三部分严格隔离，不混写。
 > **代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误，62/62 单测通过。
 > **核对方式**：文中每条"已实现"结论均附 `相对路径:行号`，均经逐行 read 复核；§9 列出本次改写的失真断言全表。
 > **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划） ｜ 🐞 已知缺陷 ｜ ⚠️ 未核验（前端在 vue-demo）
-> **关联文档**：[`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)（OA 侧契约、缺陷与规划，与本文**不重复**）、[`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md)、[`lowcode-form-preview.md`](./lowcode-form-preview.md)、[`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md)、[`lowcode-report-management.md`](./lowcode-report-management.md)
+> **关联文档**：[`oa-contract.md`](./oa-contract.md)（OA 侧契约、缺陷与规划，与本文**不重复**）、[`data-collection-contract.md`](./data-collection-contract.md)、[`form-preview.md`](./form-preview.md)、[`logic-orchestration-contract.md`](./logic-orchestration-contract.md)、[`report-contract.md`](./report-contract.md)
 > **前后端边界**：前端 `vue-demo`（Vben Admin / Ant Design Vue）**不在本仓**，凡涉前端的结论一律标注 `⚠️ 未核验（前端在 vue-demo）`。
 
 ---
@@ -23,8 +25,8 @@
 ### 1.2 这篇不管什么
 
 - **不描述前端渲染**。表单渲染器、设计器交互、审批时间轴的实际渲染，全部在 `vue-demo`，本仓只能核验后端供数契约。
-- **不描述逻辑编排引擎的控制流原语**。`FlowExecutor` 的 `ForEach`/`Parallel`/`SubFlow` 等属于编排引擎，见 [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md)。**特别注意**：OA 侧与人审侧的"并行/循环"是**两回事**——编排侧的并行与循环**已实现**（见 §2 表），而 **OA 人审侧**的 fork/join、`callActivity` 确实未实现。
-- **不描述报表定义**。见 [`lowcode-report-management.md`](./lowcode-report-management.md)。
+- **不描述逻辑编排引擎的控制流原语**。`FlowExecutor` 的 `ForEach`/`Parallel`/`SubFlow` 等属于编排引擎，见 [`logic-orchestration-contract.md`](./logic-orchestration-contract.md)。**特别注意**：OA 侧与人审侧的"并行/循环"是**两回事**——编排侧的并行与循环**已实现**（见 §2 表），而 **OA 人审侧**的 fork/join、`callActivity` 确实未实现。
+- **不描述报表定义**。见 [`report-contract.md`](./report-contract.md)。
 
 ### 1.3 初始缺陷诊断与重构目标（保留原文，状态已按代码校正）
 
@@ -69,7 +71,7 @@
 
 ### 2.2 OA 定义链（W1–W9 逐条复核）
 
-> 完整运行时契约见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §3，本文不重复。
+> 完整运行时契约见 [`oa-contract.md`](./oa-contract.md) §3，本文不重复。
 
 | # | 原缺陷 | 状态 | 证据 `file:line` | 遗留问题 |
 |--:|--------|:----:|------------------|----------|
@@ -93,7 +95,7 @@
 | 独立 `Sql` 节点 | ❌ | 节点 dispatch 无 `sql` 分支（`FlowExecutor.cs:791-792` 对未知类型抛错）；SQL 经 Code 节点 `db.*` 间接实现 |
 | 独立 `Switch` 节点 | ❌ | 同上 |
 
-> **历史误记更正**：旧版 §8.5.4 把"并行网关/合流、循环"写成"仍为规划"，那是**逻辑编排引擎**的能力，且**已实现**。真正未实现的是 **OA 人审侧**的 fork/join 与 `callActivity`（见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §5），以及编排引擎的独立 `Sql`/`Switch` 节点。
+> **历史误记更正**：旧版 §8.5.4 把"并行网关/合流、循环"写成"仍为规划"，那是**逻辑编排引擎**的能力，且**已实现**。真正未实现的是 **OA 人审侧**的 fork/join 与 `callActivity`（见 [`oa-contract.md`](./oa-contract.md) §5），以及编排引擎的独立 `Sql`/`Switch` 节点。
 
 ### 2.4 测试覆盖真相（实测）
 
@@ -261,7 +263,7 @@ internal static void EnsureFlattenedFields(FormDef schema)
 
 ### 3.5 字段权限矩阵与补丁过滤
 
-契约与行为见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §3.5（避免重复）。此处只补两条经常被误读的点：
+契约与行为见 [`oa-contract.md`](./oa-contract.md) §3.5（避免重复）。此处只补两条经常被误读的点：
 
 - `FilterRecordPatch` 对 `read`/`hide` 是**静默忽略**（不报错、不提示），调用方无法从响应中看出补丁被丢弃（`WorkflowRuntimeAppService.cs:975-978`）；
 - `MergeRecordPatch` 是**顶层键覆盖**（`:1063-1081`），不是深度合并——嵌套对象会被整段替换。
@@ -334,19 +336,19 @@ internal static void EnsureFlattenedFields(FormDef schema)
 
 **机理**：`WorkflowOrgResolver.cs:64-72` 遍历 OU 成员，命中角色即 `return member.UserName`（`:70`），**全程未与入参 `userName` 比对**。
 
-**后果**：审批链失去制衡。**规避**：组织架构上确保发起人不是本部门 `manager` 角色成员。（此条同时记录在 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.6——OA 侧文档为主，此处仅留存根。）
+**后果**：审批链失去制衡。**规避**：组织架构上确保发起人不是本部门 `manager` 角色成员。（此条同时记录在 [`oa-contract.md`](./oa-contract.md) §4.6——OA 侧文档为主，此处仅留存根。）
 
 #### 4.7 【中】字段权限矩阵 fail-open 的两处
 
-见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.5（主文档）。摘要：**未声明权限的字段默认放行**（`WorkflowRuntimeAppService.cs:983-986`）；**模式级 baseline 层不存在**——旧版 §5.8.3 设计的"模式级 baseline ∩ 节点级 ∪ 按钮白名单"三层叠加，代码里只有节点级一层。
+见 [`oa-contract.md`](./oa-contract.md) §4.5（主文档）。摘要：**未声明权限的字段默认放行**（`WorkflowRuntimeAppService.cs:983-986`）；**模式级 baseline 层不存在**——旧版 §5.8.3 设计的"模式级 baseline ∩ 节点级 ∪ 按钮白名单"三层叠加，代码里只有节点级一层。
 
 #### 4.8 【高】驳回被静默当成通过（会签/比例节点）
 
-见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.1（主文档，含完整机理与行号）。摘要：`WorkflowRuntimeAppService.cs:274` 的 `!input.Pass` 分支内层 `if (ShouldRejectNode(...))`（`:276`）在 `all`/`sequential`/`single` 下恒为 true、在 `any`/`ratio` 下可能为 false；为 false 时**不 return**，落到 `task.Approve(...)`（`:299`）并记 `approve` 轨迹（`:301`）。
+见 [`oa-contract.md`](./oa-contract.md) §4.1（主文档，含完整机理与行号）。摘要：`WorkflowRuntimeAppService.cs:274` 的 `!input.Pass` 分支内层 `if (ShouldRejectNode(...))`（`:276`）在 `all`/`sequential`/`single` 下恒为 true、在 `any`/`ratio` 下可能为 false；为 false 时**不 return**，落到 `task.Approve(...)`（`:299`）并记 `approve` 轨迹（`:301`）。
 
 #### 4.9 【高】审批表单补丁在异常路径上静默丢失
 
-见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.9（主文档）。摘要：补丁先写内存（`:161`），Mongo 无变更跟踪且 `TransactionBehavior=Disabled`（`SaaSMongoDbModule.cs:27-28`），任何在 `_instances.UpdateAsync` 之前的 `throw`（`:293` 意见必填、`:297` `EnforceRequiredFields`、`:551` 无办理人、`:630` 未知办理人类型）都会让本次补丁与轨迹整段丢失。
+见 [`oa-contract.md`](./oa-contract.md) §4.9（主文档）。摘要：补丁先写内存（`:161`），Mongo 无变更跟踪且 `TransactionBehavior=Disabled`（`SaaSMongoDbModule.cs:27-28`），任何在 `_instances.UpdateAsync` 之前的 `throw`（`:293` 意见必填、`:297` `EnforceRequiredFields`、`:551` 无办理人、`:630` 未知办理人类型）都会让本次补丁与轨迹整段丢失。
 
 #### 4.10 【中】删除引用检查的两个盲点
 
@@ -375,11 +377,11 @@ internal static void EnsureFlattenedFields(FormDef schema)
 | ② 【高】 | **无出线节点仍 fail-open** | `ChooseNext` 在无出线时返回 `(null, false)`；`EnterAsync` 的 `while` 收到 null 退出，落到 `Complete("approved")` | `WorkflowRuntimeAppService.cs:443-446` → `:386` / `:433` |
 | ③ 【中】 | 优先级/默认分支语义不完整 | 全 `Priority=0` 时 `OrderBy` 稳定排序＝**数组顺序**；`IsDefault` 在校验器里**完全没解析**；优先级查重只查 `Priority>0` | `WorkflowRuntimeAppService.cs:462-475`；`WorkflowDefinitionValidator.cs:156-178` |
 
-①②组合即为最危险路径：先正常发布，再 `PUT` 删掉某节点全部出线；此后新实例走到该节点即**无人审批「已通过」**。详见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.2。
+①②组合即为最危险路径：先正常发布，再 `PUT` 删掉某节点全部出线；此后新实例走到该节点即**无人审批「已通过」**。详见 [`oa-contract.md`](./oa-contract.md) §4.2。
 
 #### 4.13 【高】并发无保护
 
-见 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §4.10。摘要：`WorkflowInstance.cs:10` 与 `WorkflowTask.cs:10` 均**无 `ConcurrencyStamp`**；`AppendHistory`（`WorkflowInstance.cs:76-85`）是 JSON 读改写；`CompleteAsync` 的状态检查（`:134`）与变更（`:299-300`）之间无互斥 → 双重推进、轨迹互相覆盖。
+见 [`oa-contract.md`](./oa-contract.md) §4.10。摘要：`WorkflowInstance.cs:10` 与 `WorkflowTask.cs:10` 均**无 `ConcurrencyStamp`**；`AppendHistory`（`WorkflowInstance.cs:76-85`）是 JSON 读改写；`CompleteAsync` 的状态检查（`:134`）与变更（`:299-300`）之间无互斥 → 双重推进、轨迹互相覆盖。
 
 #### 4.14 【低】`FormFieldDef` 与 `FormWidgetDef` 仍是两个近乎重复的类（F3 未真正合并）
 
@@ -588,7 +590,7 @@ async (value, row, ctx) => {
 - OA `WorkflowInstance` 启动时除 `ProcessSnapshotJson` 外，再固化 `FormSnapshotJson = form.GetEffectiveSchema()`（与流程快照同生命周期）；
 - 运行时渲染/校验**只读** `FormSnapshotJson`，草稿编辑不影响在途单；
 - `FormDefinition` 保留历史发布版本列表（而非单份覆盖），使 `FormSchemaVersion` 可回放；
-- 与 [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) §5.13"资源发布运行时只读已发布 Schema"对齐。
+- 与 [`data-collection-contract.md`](./data-collection-contract.md) §5.13"资源发布运行时只读已发布 Schema"对齐。
 
 ### 5.5 表单与资源的字段映射契约（`ColumnName` 的**运行时**部分）⚠️ 半成品
 
@@ -768,7 +770,7 @@ public List<ButtonDef> Buttons { get; set; } = [];
 
 ### 5.8 报表按钮与表单关联的缺陷与补充（`ActionDef` 与 `ButtonDef` 割裂）❌
 
-> §5.7.5 把 `ButtonDef` 统一到 `FormDef.Buttons` / `ListView.Buttons` / `WfProcessNode.Buttons`。但 [`lowcode-report-management.md`](./lowcode-report-management.md) §6 的 `ActionDef` 字段（`scene`/`scope`/`open`/`fieldsMode`/`payload`/`after`/`batchLimit`）与 `ButtonDef` 字段**并未真正对齐**，且"按钮打开表单"这条主链路有多处缺陷。本节保留为设计稿。
+> §5.7.5 把 `ButtonDef` 统一到 `FormDef.Buttons` / `ListView.Buttons` / `WfProcessNode.Buttons`。但 [`report-contract.md`](./report-contract.md) §6 的 `ActionDef` 字段（`scene`/`scope`/`open`/`fieldsMode`/`payload`/`after`/`batchLimit`）与 `ButtonDef` 字段**并未真正对齐**，且"按钮打开表单"这条主链路有多处缺陷。本节保留为设计稿。
 
 #### 5.8.1 缺陷清单（12 项，设计侧）
 
@@ -868,7 +870,7 @@ public bool CloseAfterSubmit { get; set; } = true;
 
 ```
 报表按钮点击
-  → ① 报表访问权限：App.Report.{code}（已落地，见 iam-rbac-menu §7）
+  → ① 报表访问权限：App.Report.{code}（已落地，见 [identity-contract.md](./identity-contract.md) §7）
   → ② 按钮权限：ButtonDef.Permission（前端 VisibleExpr 先过滤，后端 flowKey 内 [Authorize] 二次确认）
   → ③ 打开表单：按 FormMode 取 modePermissions baseline
   → ④ 若 audit 模式：叠加 WfProcessNode.FieldPermissions
@@ -1162,12 +1164,12 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 
 ## 7. 参考链接
 
-- [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) —— OA 审批流：表单绑定、节点规则与运行时契约、W 系列缺陷、OA 侧规划
-- [`lowcode-form-workflow-board.md`](./lowcode-form-workflow-board.md) —— 人审与逻辑编排的分工（§6）、资源发布运行时只读已发布 Schema（§5.13）
-- [`lowcode-form-preview.md`](./lowcode-form-preview.md) —— 表单预览
-- [`lowcode-logic-orchestration.md`](./lowcode-logic-orchestration.md) —— 逻辑编排引擎（`ForEach`/`Parallel`/`SubFlow` 已实现；独立 `Sql`/`Switch` 未实现）
-- [`lowcode-report-management.md`](./lowcode-report-management.md) —— 报表与 `ActionDef`（§6）
-- [`iam-rbac-menu.md`](./iam-rbac-menu.md) —— 组织机构、数据权限、报表访问权限（§7）
+- [`oa-contract.md`](./oa-contract.md) —— OA 审批流：表单绑定、节点规则与运行时契约、W 系列缺陷、OA 侧规划
+- [`data-collection-contract.md`](./data-collection-contract.md) —— 人审与逻辑编排的分工（§6）、资源发布运行时只读已发布 Schema（§5.13）
+- [`form-preview.md`](./form-preview.md) —— 表单预览
+- [`logic-orchestration-contract.md`](./logic-orchestration-contract.md) —— 逻辑编排引擎（`ForEach`/`Parallel`/`SubFlow` 已实现；独立 `Sql`/`Switch` 未实现）
+- [`report-contract.md`](./report-contract.md) —— 报表与 `ActionDef`（§6）
+- [`identity-contract.md`](./identity-contract.md) —— 组织机构、数据权限、报表访问权限（§7）
 - 外部对标：[form-create](https://www.form-create.com/designer/)、[VForm3](https://www.vform666.com/vform3/)、[Formily](https://github.com/alibaba/formily)、[Workflow-Vue3](https://stavinli.github.io/Workflow-Vue3/dist/index.html#/)、[lowflow-design](https://tsai996.github.io/lowflow-design/)
 - 钉钉 / 飞书审批（字段权限矩阵、按钮动态化、明细表行级公式）
 
@@ -1183,7 +1185,7 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 | 字段映射 `ColumnName` 的**运行时投影** | P1 | `ResourceCrudExecutor` | §5.5 |
 | 直属部门主管解析**排除发起人** | P1 | `WorkflowOrgResolver.ResolveDirectManagerAsync` | §4.6 |
 | 抄送通知消费端（站内/IM/邮件） | P1 | `WorkflowNotifier` 下游 | — |
-| 超时与催办 | P1 | `WfProcessNode` + `WorkflowTask` + 后台 Job | [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) §5 |
+| 超时与催办 | P1 | `WfProcessNode` + `WorkflowTask` + 后台 Job | [`oa-contract.md`](./oa-contract.md) §5 |
 | 审批人去重（跨节点） | P1 | `ResolveAssigneesAsync` + `HistoryJson` | 同上 |
 | 流程版本迁移 `MigrationPlan` | P1 | `WorkflowDefinition` | 同上 |
 | 批量审批 | P1 | `WorkflowRuntimeAppService` + API | 同上 |
@@ -1201,7 +1203,7 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 
 **代码基线**：`Meta.Dow.slnx` @ `267d375`（2026-10-13）：Release 构建 0 错误，62/62 单测通过。
 
-**文档结构变更**：按统一骨架重排为 9 章；**事实（§1/§3/§6）、缺陷（§4）、规划（§5）三向隔离**；删除旧的 §0 实现状态表与 §8 缺陷表的**重复内容**，收敛为 §2 唯一权威总表（含 OA 侧 W1–W9 逐条复核）；OA 侧细节迁移到 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md) 并在 §4 仅留摘要与链接，两文互链不重复。
+**文档结构变更**：按统一骨架重排为 9 章；**事实（§1/§3/§6）、缺陷（§4）、规划（§5）三向隔离**；删除旧的 §0 实现状态表与 §8 缺陷表的**重复内容**，收敛为 §2 唯一权威总表（含 OA 侧 W1–W9 逐条复核）；OA 侧细节迁移到 [`oa-contract.md`](./oa-contract.md) 并在 §4 仅留摘要与链接，两文互链不重复。
 
 ### 9.1 删除/改写的「与代码矛盾的断言」
 
@@ -1239,4 +1241,4 @@ System.Security.Cryptography.CryptographicException: The payload was invalid.
 - §2 唯一权威能力总表（表单 15 项 + OA 8 项 + 编排 5 项 + 测试 5 行，每条带 `file:line`）；
 - §4 十六条缺陷（F 系列 4.1–4.16，其中 §4.1 幽灵字段、§4.3 联动零求值、§4.4 `ColumnName` 无消费、§4.5 校验 fail-open、§4.10 删除检查两处盲点、§4.11 重同步不完整、§4.12 三个绕过口、§4.14 F3 未合并、§4.15 `Rules` 单对象、§4.16 自由字符串无枚举校验为本次逐行核实所得）；
 - §3.2 拍平真实语义（含 `Title` 用字段名兜底的细节）、§3.3 发布链六步、§3.4 快照与版本；
-- OA 侧缺陷与规划迁移到 [`lowcode-oa-workflow.md`](./lowcode-oa-workflow.md)，本文只留摘要与链接，消除两文重复。
+- OA 侧缺陷与规划迁移到 [`oa-contract.md`](./oa-contract.md)，本文只留摘要与链接，消除两文重复。

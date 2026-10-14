@@ -1,8 +1,9 @@
 # 低代码逻辑编排 —— 完善意见稿
 
 > **文档性质**：整改意见稿（Review & Remediation Proposal）。用于评审、排期与验收，不替代设计规格。
-> **代码基线**：`Meta.Dow.slnx` @ commit `267d375`（2026-10-13）。
-> **实测基线**：`dotnet build Meta.Dow.slnx -c Release` = **0 错误 / 162 警告**；`dotnet test tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **代码基线**：`Meta.Dow.slnx` @ commit `0c4f7eb`（2026-10-14，与 `267d375` 之间无代码改动，行号一致有效）。
+> **实测基线**：`dotnet build Meta.Dow.slnx -c Release`（全量重建）= **0 错误 / 165 警告**（267d375 记 162，差值为 NU 审计类随漏洞库波动）；`dotnet test tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **配套阅读**：[实现契约](./lowcode-logic-orchestration.md)（真实行为）、[落地方案](./lowcode-logic-orchestration-remediation-plan.md)（R1–R12）、[主流对标分析](./lowcode-logic-orchestration-benchmark.md)（优势/不足与主流差异，全部不足项对照本文 S/C/E/G 编号）。
 > **评估范围**：`Meta.Dow.SaaS` 逻辑编排引擎（`/api/orchestration/*`、`/api/logic/*`），及其连带的**授权落点、租户隔离、发布治理与工程化门禁**——后者直接决定编排能力能否上生产。
 > **证据规则**：每条结论附 `相对路径:行号`，均可在上述 commit 复核。状态图例：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现 ｜ 🐞 缺陷。
 > **边界声明**：本文**不把规划当现状**。规划项见第 4.4 节；未能核验的内容见附录 B。

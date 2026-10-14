@@ -277,13 +277,14 @@ git add data/mongo
 
 ## 8 文档索引
 
-`docs/` 共 12 篇、约 7,000 行。多篇文件自带"事实契约 / 规划"章节标注，引用前请注意章节性质。这些文档正在被持续修订，**文件名是稳定标识**，标题与"文档性质"可能变化。
+`docs/` 共 13 篇、约 7,300 行。多篇文件自带"事实契约 / 规划"章节标注，引用前请注意章节性质。这些文档正在被持续修订，**文件名是稳定标识**，标题与"文档性质"可能变化。
 
 **低代码逻辑编排**
-- [低代码逻辑编排实现契约](docs/lowcode-logic-orchestration.md) —— 事实契约
+- [低代码逻辑编排实现契约](docs/lowcode-logic-orchestration.md) —— 事实契约（§1 含系统目标：通用稳定型编排底座）
 - [低代码逻辑编排完善意见稿](docs/lowcode-logic-orchestration-review.md) —— 评审意见（缺陷清单 S/C/E/G + 整改批次与验收标准），与上篇契约互补、不重复
 - [逻辑编排补齐实施方案](docs/lowcode-logic-orchestration-remediation-plan.md) —— 落地计划（R1–R12 分批与验收标准，含已实施状态）
 - [逻辑编排补齐：实现前取舍对比](docs/lowcode-logic-orchestration-remediation-tradeoffs.md) —— 每项改动落地前"现有 vs 主流"的取舍论证
+- [逻辑编排能力盘点与主流实现对比](docs/lowcode-logic-orchestration-benchmark.md) —— 对标分析（优势/不足/主流差异，全部不足项对照 review 的 S/C/E/G 编号）
 - [添加新微服务](docs/add-new-service.md) —— 以 `src/services/projects` 为模板的接线操作手册
 
 **资源 / 表 / 表单 / 审批 / 报表**
@@ -297,7 +298,7 @@ git add data/mongo
 **身份与权限**
 - [身份与权限体系说明](docs/iam-rbac-menu.md)
 
-前端固定为 Vue Vben Admin，工程与参考仓路径约定见 `.cursor/rules/frontend-vue-vben.mdc`；`MetaDow_Vue` OpenIddict 客户端（password / authorization_code / refresh_token）已注册。
+前端固定为 Vue Vben Admin，工程与参考仓路径约定见 `.cursor/rules/frontend-vue-vben.mdc`；`MetaDow_Vue` OpenIddict 客户端（password / authorization_code / refresh_token）已注册。系统目标（通用稳定型逻辑编排底座）与架构红线见 `.cursor/rules/logic-orchestration.mdc`。
 
 ## 9 说明
 

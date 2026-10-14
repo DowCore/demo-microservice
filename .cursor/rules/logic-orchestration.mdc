@@ -1,0 +1,61 @@
+---
+description: 系统目标与逻辑编排架构红线 —— 构造通用稳定型编排底座，其他低代码能力都在其上实现
+alwaysApply: true
+---
+
+# 系统目标（最高优先级，所有改动的判定标准）
+
+本系统的目标是**构造通用、稳定的逻辑编排底座**。目标态：
+
+- **逻辑编排（D 类 / LiteFlow 语系）= 主方案**；
+- 表单、报表、OA 审批、资源 CRUD、表设计器、触发层 = **功能性实现**（编排的载体），不是独立产品。
+
+改动任何编排代码前，先回答：**这个改动让底座更通用、更稳定，还是让某个功能绕开底座？**
+后者默认拒绝；确有必要时必须显式说明理由并在文档中登记。
+
+# 架构红线（不可违背）
+
+1. **不做第二个引擎**。调度只有 `RunSegmentAsync` 一个原语（主链 / ForEach 循环体 / Parallel 分支共用同一 stepper）。禁止并行实现第二套调度。
+2. **单点包裹**。超时、弹性、审计等横切语义一律包在**唯一**分发点（`ExecuteNodeAsync` → `DispatchNodeAsync`、资源 op 分派处），禁止散落到各 case 内部 —— 否则新增节点必然漏包。
+3. **「DSL 声明了但引擎未消费」是最坏一类缺陷**（配了不生效且无提示）。新增 DSL 字段必须同步实现消费；短期不实现的，`ValidateDsl` 必须对非空值抛异常 —— **宁可发布失败，不要静默失效**。
+4. **资产寄存器模型 ≠ 应用容器模型**。表单 / 报表 / 流程是**全局资产**，应用（SysMenu 树）只靠 code 引用；**绝不把资产内联进应用** —— 放弃 code 引用即退化核心差异化。
+5. **删除逻辑可编排**。记录删除一律走资源 `DeleteFlowKey` 流程；批量删除 / 性能优化**不得绕过它直接打表**。
+6. **图态与执行态分离**。画布存 `GraphJson`，引擎只读 `DslJson` 并自带校验；**引擎不信任前端**。
+7. **出参角色可见性不可破坏**。`FinalOutputAssembler` × `OutputVisibilityFilter.IsVisible` 按 `roles`+`permissions` 在**接口层**过滤字段；子图（SubFlow / ForEach / Parallel）不得旁路（当前已知缺陷 S6，改动必须向"透传角色快照"方向收敛，禁止加深）。
+8. **版本快照 + 缓存失效 + `FlowUsage` 调用影响索引三者闭环**。改动其一必须保持三者一致。
+
+# 稳定性优先级约定
+
+以下对外边界**已承诺可靠性语义**，其上的"静默失效"一律按 P0 处理：
+
+- REST 发布：`POST /api/logic/{flowKey}`；
+- MQ 触发：RabbitMQ / Kafka / MQTT 三个 `BackgroundService`；
+- `async` 节点（当前 fire-and-forget 是已知缺陷 C1）；
+- 批量写（batchcreate / batchupdate / batchdelete）。
+
+# 当前实现状态（2026-10-14，HEAD `0c4f7eb`；引用前实测复核）
+
+**已实现（勿再当未实现）**：统一调度器 `RunSegmentAsync`；ForEach / Parallel / SubFlow 控制流；R1 HTTP 非安全方法禁重试（`ServiceDefaults/Extensions.cs:43` `DisableForUnsafeHttpMethods()`）；R2 节点级 `timeoutMs`（`ExecuteNodeAsync` 单点包裹，默认 30s / 上限 600s）；R3 非 HTTP 写弹性 `NodeResiliencePolicy.cs` + DSL `retryOnWrite`（声明即校验）；R4 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey。
+
+**已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` / `Wait` 节点；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；异步节点结果回收（R5）；发布缓存跨进程失效（C3/E8）；单流程调用权限码（S14/E10）；未知 DSL 字段报错（当前静默忽略）；子图角色透传（S6）。
+
+**权威清单**（改动前必读）：
+- 事实契约 `docs/lowcode-logic-orchestration.md`（§2 能力总表 / §14 行为边界 / §15 规划）
+- 评审意见 `docs/lowcode-logic-orchestration-review.md`（S1–S19 / C1–C26 / E1–E10 / G1–G9 + P0/P1/P2 批次）
+- 落地方案 `docs/lowcode-logic-orchestration-remediation-plan.md`（R1–R12 与依赖序）
+- 主流对标 `docs/lowcode-logic-orchestration-benchmark.md`
+
+# 文档纪律（三层模型，禁止混写目标态与现状）
+
+- **事实契约** `docs/<主题>.md`：只写代码真实行为，每条附 `路径:行号`；规划隔离到独立章节。
+- **评审意见** `docs/<主题>-review.md`：缺陷清单（S 安全 / C 正确性 / E 引擎能力 / G 工程化）+ 批次 + 验收标准。
+- **落地方案** `docs/<主题>-remediation-plan.md` / `-remediation-tradeoffs.md`。
+- 定稿 md 一律放 `docs/`；`docx/` 只是本地构建目录（产物不入库）。
+- **计数类断言（篇数 / 行数 / 测试数 / 警告数）引用前必须实测**；换基线必须同步全文。
+- 与 `src/CLAUDE.md` 冲突时以本规则为准。`src/CLAUDE.md` §Code Quality 关于「Analyzers are enabled」的说法**是错的**（`src/Directory.Build.props` 未启用任何分析器），修复前勿引用该文件。
+
+# 工程门禁
+
+- 构建：`dotnet build Meta.Dow.slnx -c Release`（CPM 在 `Directory.Packages.props`）。
+- 测试：`dotnet test tests/Meta.Dow.Orchestration.Tests`（当前基线 **62/62**）。
+- 本仓**无提交钩子**；提交 = commit + push，推送后以 `git ls-remote origin refs/heads/main` 为准核对（本机 push 存在"服务端已收、客户端假失败"，勿盲目重推）。

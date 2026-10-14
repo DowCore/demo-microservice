@@ -1,7 +1,8 @@
 # Meta.Dow 低代码逻辑编排 — 实现契约
 
 > **文档性质**：**事实契约**。本文描述代码的**真实行为**，不是规划书。
-> **代码基线**：`Meta.Dow.slnx` @ commit `267d375`（2026-10-13）。实测 `dotnet build Meta.Dow.slnx -c Release` = **0 错误 / 162 警告**；`tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **代码基线**：`Meta.Dow.slnx` @ commit `0c4f7eb`（2026-10-14，与 `267d375` 之间**无代码改动**）。实测 `dotnet build Meta.Dow.slnx -c Release`（全量重建）= **0 错误 / 165 警告**；`tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **警告数说明**：`267d375`（2026-10-13）实测记 162 警告；165 与 162 的差值来自 NU1902/NU1903 审计类警告随 NuGet 漏洞库波动（restore 实测存在该类警告），与代码无关。
 > **核对方式**：文中每条结论都可在 `相对路径:行号` 处复核。行号对应上述 commit，代码变动后需重新核对。
 > **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划，见 §15） ｜ 🐞 已知缺陷（见 §14）
 > **重构说明**：本文由 2026-10-13 的代码核对重构而成，取代此前把「目标态规格」与「现状事实」混写的版本。旧版中大量重复四遍的节点规格已合并为 §3–§9 的单一契约；规划内容统一收进 §15，与契约严格隔离。旧版全文见 git 历史。
@@ -31,6 +32,17 @@
 ---
 
 ## 1. 定位与边界
+
+### 系统目标（本系统的北极星）
+
+**构造通用、稳定的逻辑编排底座 —— 其他低代码能力都在这个逻辑编排上实现。**
+
+- 逻辑编排（D 类 / LiteFlow 语系）= **主方案**；
+- 表单、报表、OA 审批、资源 CRUD、表设计器、触发层 = **功能性实现**（编排的载体，不是独立产品）；
+- 改动判定标准：任何改动先回答「它让底座更通用、更稳定，还是让某个功能绕开底座？」—— 后者默认拒绝，确有必要须显式登记理由。
+
+该目标已固化为 Cursor 规则：后端 `.cursor/rules/logic-orchestration.mdc`（架构红线、稳定性优先级、文档纪律），
+前端设计器侧 `vue-demo/.cursor/rules/logic-orchestration-designer.mdc`（图态/执行态分离、校验对齐、沙箱两层模型）。
 
 ### 1.1 是什么
 
@@ -840,6 +852,7 @@ Http 异步的实际行为（`:860-944`）：
 | Elsa（.NET 工作流，非主线） | https://docs.elsaworkflows.io/getting-started/concepts |
 | 本仓 IAM | [iam-rbac-menu.md](./iam-rbac-menu.md) |
 | 本仓表单/OA/报表 | [lowcode-form-oa-enhancement.md](./lowcode-form-oa-enhancement.md)、[lowcode-form-workflow-board.md](./lowcode-form-workflow-board.md)、[lowcode-report-management.md](./lowcode-report-management.md) |
+| 本仓编排配套 | [完善意见稿](./lowcode-logic-orchestration-review.md)、[落地方案](./lowcode-logic-orchestration-remediation-plan.md)、[取舍对比](./lowcode-logic-orchestration-remediation-tradeoffs.md)、[主流对标分析](./lowcode-logic-orchestration-benchmark.md) |
 
 ---
 

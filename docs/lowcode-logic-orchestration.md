@@ -1,9 +1,12 @@
 # Meta.Dow 低代码逻辑编排 — 实现契约
 
 > **文档性质**：**事实契约**。本文描述代码的**真实行为**，不是规划书。
-> **代码基线**：`Meta.Dow.slnx` @ commit `0c4f7eb`（2026-10-14，与 `267d375` 之间**无代码改动**）。实测 `dotnet build Meta.Dow.slnx -c Release`（全量重建）= **0 错误 / 165 警告**；`tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **代码基线**：`Meta.Dow.slnx` @ commit `91d75bd`（2026-10-14，**P0 止血批次**：S6/S7/S12/C2 已修，C13/C16 已修）。实测 `dotnet build Meta.Dow.slnx -c Release` = **0 错误**；`tests/Meta.Dow.Orchestration.Tests` = **91/91 通过**（本批次新增 29 例）。
 > **警告数说明**：`267d375`（2026-10-13）实测记 162 警告；165 与 162 的差值来自 NU1902/NU1903 审计类警告随 NuGet 漏洞库波动（restore 实测存在该类警告），与代码无关。
 > **核对方式**：文中每条结论都可在 `相对路径:行号` 处复核。行号对应上述 commit，代码变动后需重新核对。
+> ⚠️ **行号时点（2026-10-14）**：**§14.0 已按 `91d75bd` 重新核对**；**其余章节的 `FlowExecutor.cs:NNNN` 仍对应 `0c4f7eb`**
+> ——本轮 P0 批次在 `FlowExecutor.cs` 净增约 190 行（插入点 `~220`/`~288`/`~319`/`~448`/`~561`/`~603`/`~637`/`~1480`/`~1603`/`~1732`/`~1872`/`~1907`/`~2417`），
+> 故旧行号已整体下移（`~448` 前三处 +0～+21；`~448`–`~1480` +21～+35；`~1907`–`~2417` +45；`~2417` 之后 +61～+188）。**引用前请按符号名检索**；§2–§13 的行号补正值待后续批次统一刷新。
 > **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划，见 §15） ｜ 🐞 已知缺陷（见 §14）
 > **重构说明**：本文由 2026-10-13 的代码核对重构而成，取代此前把「目标态规格」与「现状事实」混写的版本。旧版中大量重复四遍的节点规格已合并为 §3–§9 的单一契约；规划内容统一收进 §15，与契约严格隔离。旧版全文见 git 历史。
 
@@ -685,16 +688,27 @@ Http 异步的实际行为（`:860-944`）：
 
 ## 14. 行为边界与已知缺陷
 
-> 按后果排序。每条给出机理与代码位置，便于修复与写回归测试。**这些是当前代码的真实行为**，请勿当作已修。
+> 按后果排序。每条给出机理与代码位置，便于修复与写回归测试。**本节只列当前代码仍存在的真实行为**。
+> ⚠️ **编号与 review §4 一一对应，空缺编号即已修复**——已修项统一收进 §14.0（保留编号仅为对照，不再视为缺陷）。
+
+### 14.0 已修复（基线 `91d75bd`，2026-10-14 P0 止血批次）
+
+| 原编号 | 缺陷 | 修复方式 | 落点 |
+|---|---|---|---|
+| 1 | 无契约时外泄整个 `ctx.Vars`（S7） | 新增 `ValidateOutputContract`：根级 `outputs` 或**每个** End 的 `finalOutputs` 至少其一，否则发布被拒；运行期 `FinishOutputsAsync` 仍有兜底（`isDryRun` 试运行保留全量视图供设计期调试） | `FlowExecutor.cs` `ValidateDsl` 末尾 / `FinishOutputsAsync` |
+| 2 | 子图旁路 `visibleTo`（S6） | `filterOutputsByRole` / `currentUser` 由 `ExecuteNodeAsync` 经 `DispatchNodeAsync` 下沉到 SubFlow / ForEach / Parallel 控制体，替换原先硬编码的 `false` / `null` | `FlowExecutor.cs`（`ExecuteSubFlowAsync` / `ExecuteForEachAsync` / `ExecuteParallelAsync` / `RunControlBodyAsync` 签名 + 3 处 `ExecuteAsync` 调用点） |
+| 3 | `visibleTo.mode` 拼错即全可见（S12） | 未知 mode 改为发布期报错（只接受 `all` / `none` / `roles` / `permissions`） | `FlowExecutor.cs` `ValidateVisibleTo` |
+| 4 | `roleIds` 永不匹配（S12） | `visibleTo.roleIds` 显式拒绝并提示改用 `roleNames`（`ICurrentUser` 只暴露角色名） | `FlowExecutor.cs` `ValidateVisibleTo` |
+| 12 | 发布成功、调用即 500（C2） | 新增 `SupportedNodeKinds` 白名单，与 dispatch case 逐一对应；`Sql` / `Switch` / `Wait` 及拼错类型发布期拒绝；移除 `Switch` 的出边豁免 | `FlowExecutor.cs` `ValidateDsl` / `ValidateOutEdgeCardinality` |
+| 20 | PG 死锁/断连与 Oracle 全部错误码不重试（C13） | PG 改按 `SqlState` **字符串**分类（`08` 前缀 + `40001`/`40P01`/`53xxx`/`55P03`/`57P01~03`）；补 Oracle 错误码分支 | `NodeResiliencePolicy.cs` `IsTransientPostgresSqlState` / `IsTransientDbError` |
+| — | `batchupdate` 抛 Missing SQL parameter + 戳比对恒不匹配（C16） | 合并 `filter.Args`；戳语义对齐单条 `UpdateAsync`（SET 写新戳 / WHERE 比旧戳，旧戳缺省 NULL 时跳过并发校验） | `ResourceCrudExecutor.cs` `BatchWriteAsync` |
+
+> 回归测试：`tests/Meta.Dow.Orchestration.Tests/FlowExecutorDslValidationTests.cs`（29 例）。
 
 ### 14.1 数据暴露类
 
 | # | 严重度 | 现象 | 机理 | 位置 | 后果 / 规避 |
 |---|---|---|---|---|---|
-| 1 | **高** | 未配最终契约时响应外泄内部变量 | 无 `finalOutputs`/`outputs` 时 `data` = 整个 `ctx.Vars`，`visibleFields` = 全部键，**零过滤**；`omittedFieldCount` 恒 0 | `FlowExecutor.cs:446-453` | 内部中间值整包出站且计数为 0 掩盖。**规避：所有已发布流程必须配置 `finalOutputs`** |
-| 2 | **高** | 子图内角色可见性被旁路 | SubFlow 与 ForEach/Parallel 体以 `filterOutputsByRole:false, currentUser:null` 执行 ⇒ `bypass=true` | `:1518-1527`、`:1943-1952`、`:455` | 子图 `finalOutputs.visibleTo` 无效，受限字段冒泡到父输出。违反 §1.3 原则 4 |
-| 3 | **高** | `visibleTo.mode` 拼错即全可见 | `IsVisible` 末尾 `return true` | `OutputVisibilityFilter.cs:95` | 配置错误静默降级为"公开"。应改为报错 |
-| 4 | **中** | `roleIds` 永不匹配 | `roleIds` 与**角色名**集合比较 | `:81-84` | 只填 `roleIds` 的字段恒不可见（fail-closed，但功能失效） |
 | 5 | **中** | `group.header[].visibleTo.permissions` 永不生效 | `CollectPermissionNames` 不遍历 `group.header` | `FinalOutputAssembler.cs:870-898` | 权限模式表头对所有人被丢弃 |
 | 6 | **中** | 旧字段 `responseVariable` 绕过可见性 | 直写 `vars`，不经 `outputs`/`visibleTo` | `FlowExecutor.cs:1181-1185`、`:1296-1329`、`:1335-1353`、`:2217-2219` | 旧 DSL 流程可把受限值直接放进输出 |
 
@@ -712,7 +726,6 @@ Http 异步的实际行为（`:860-944`）：
 | # | 严重度 | 现象 | 机理 | 位置 |
 |---|---|---|---|---|
 | 11 | **高** | 异步节点结果与失败全部丢失 | `Task.Run` + `CancellationToken.None`；不写 outputs/实例/JobId；失败仅日志；状态仍 `AsyncQueued` | `FlowExecutor.cs:860-944`、`:880` |
-| 12 | **高** | 发布成功但调用即 500 | 无类型白名单；`Switch` 被校验豁免却无 dispatch；`Logic+kind=Sql` 无 case | `:791-792`、`:2599-2603`、`ValidateDsl` 无白名单 |
 | 13 | **高** | 异步不受节点超时约束，`failWhen` 不生效 | `CancellationToken.None`；异步分支不调 `CheckFailWhen` | `:911-942`、`:723-731` |
 | 14 | **高** | 已下线流程仍可被调用 | 缓存失效只挂 `PublishAsync`；`Disable`/`Delete` 不失效；进程内缓存跨副本不共享，10 分钟 TTL | `PublishedFlowCache.cs:38/104-112`；`FlowDefinitionAppService.cs:290` |
 | 15 | **中** | 条件算子缺失 | `in`/`notIn`/`between` 未实现 → 抛 `Unsupported condition op` | `FlowExecutor.cs:2297-2310` |
@@ -720,7 +733,6 @@ Http 异步的实际行为（`:860-944`）：
 | 17 | **中** | 条件节点可静默走错边 | 只有边 `combine`、无 `node.items` 时掉进 legacy 分支，`combine` 被忽略 | `:505-508` vs `:548-553` |
 | 18 | **中** | `strategy` 语义与命名不符 | 非 `firstMatch` 时"最后一条命中生效"；取值不校验 | `:511-537` |
 | 19 | **中** | 跨节点写库非原子 | 无 `txMode`；`db.execute` 每次新建连接自动提交，仅 `db.batch` 有事务 | 无字段；`ParameterizedSqlExecutor.cs:153-178` |
-| 20 | **中** | PG 死锁/连接中断与 Oracle 全部错误码不重试 | `SqlState` 走 `int.TryParse`；Oracle 无错误码 | `NodeResiliencePolicy.cs:173/175/182-190` |
 | 21 | **中** | `aggregate` 与 `map` 同配时 map 静默失效 | `Aggregate` 分支先 return | `FinalOutputAssembler.cs:240-243` |
 | 22 | **中** | `transform`/`from` 模板/`outputs` 字面量/`inputs` 类型强制全部不生效 | 字段已声明但无消费点 | `FlowDslModels.cs:425`；`FlowContextResolver.cs:338-378` |
 | 23 | **中** | `timeoutMs` 对 Code 无效 | 沙箱硬顶 8s，校验却允许 600s | `OrchestrationConsts.cs:20/49` |

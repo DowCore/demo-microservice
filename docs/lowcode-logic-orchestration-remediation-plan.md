@@ -2,7 +2,7 @@
 
 > 编制日期：2026-10-13
 > 依据文档：《逻辑编排能力盘点与主流实现对比》2026-10-12、《中台对标与系统目标评估》v2、《项目综合评估与估值》
-> 证据基准：`demo-microservice` @ `23d8e06`（规划编制时）→ 实施后 `267d375`（R1–R4 落地）、`588ff03`（文档基线重构）；`vue-demo` @ `5d6e69a`。后文「落地状态」章节以实施后的提交为准。
+> 证据基准：`demo-microservice` @ `23d8e06`（规划编制时）→ 实施后 `267d375`（R1–R4 落地）、`588ff03`（文档基线重构）、`91d75bd`（P0 止血批次）；`vue-demo` @ `5d6e69a`。后文「落地状态」章节以实施后的提交为准。
 > **本文档只谈逻辑编排这一块，且只写"怎么落地"。** 结论性评价见上列三份报告，本文不重复论证。
 
 ---
@@ -336,7 +336,7 @@ R4 解决"单节点内批量原子"，R11 解决"跨节点同源原子"，顺序
 
 | 检查项 | 要求 |
 |---|---|
-| 引擎单测 | 新增用例进 `tests/Meta.Dow.Orchestration.Tests`，且 `dotnet test` 全绿（当前基线 62/62） |
+| 引擎单测 | 新增用例进 `tests/Meta.Dow.Orchestration.Tests`，且 `dotnet test` 全绿（**当前基线 91/91**，2026-10-14 P0 批次后；本模板 2026-10-13 编制时基线为 62/62） |
 | 发布前校验 | 若新增 DSL 字段，`ValidateDsl` 必须有对应校验项（守优势 2） |
 | 契约同步 | `FlowDslModels.cs` + 前端 `dsl-graph.ts` 双向读写必须同步（避免 P1-1 双写漂移加剧） |
 | 文档 | `docs/lowcode-logic-orchestration.md` 对应章节更新（该文档是主方案，不能落后于代码） |
@@ -419,3 +419,48 @@ R5（async 持久化）、R6（幂等键运行时落地）、R7（Paused/ResumeF
 R9（SWITCH 互译）、R10（MaxSteps 错误区分）、R11（txMode）、R12（前端设计器测试）。
 其中 **R6 是 R3 的 `retryOnWrite` 真正实用的前置** —— 当前校验层已强制要求声明幂等键，但
 "键在运行时如何真正做到去重"属 R6 范围，本次仅落地了**声明即校验**这一半。
+
+---
+
+# 落地状态（2026-10-14 补充：P0 止血批次）
+
+> 本节记录 **P0-1 ~ P0-4** 与评审 **C13 / C16** 的落地结果，对应提交 `91d75bd`。
+> 与上一节（R1–R4）不同的是：R1–R4 是**能力补齐**，本批是**止血**——修的是「配了不生效 / 静默通过 / 越权可见」这类必须在上生产前堵死的缺口。
+
+## 已完成：P0-1 ~ P0-4（评审 S6 / S7 / S12 / C2）
+
+| 项 | 状态 | 落点 | 语义 |
+|---|:---:|---|---|
+| **P0-1** 节点类型白名单 | ✅ | `FlowExecutor.cs`：新增 `SupportedNodeKinds`（**32 种**）+ `ValidateDsl` 内白名单循环 | 与 `DispatchNodeAsync` 的 case 列表**一一对应**；`sql` / `switch` / `wait` **故意不在表内**——它们能被发布成功却无分发分支，调用即 500。改为**发布前拒绝**（宁可发布失败，不要静默） |
+| **P0-2** 输出契约强制 | ✅ | `FlowExecutor.cs`：新增 `ValidateOutputContract` + `KnownVisibleToModes` + `ValidateVisibleTo`；`FinishOutputsAsync` 无契约分支在非 dryRun 时抛异常 | 流程**必须显式声明输出契约**（根 `outputs` 或每个 `End.finalOutputs`）；dryRun 保留全量 `ctx.Vars` 便于调试。同时把 `visibleTo` 取值在**发布前**收敛为白名单 |
+| **P0-3** 非 Condition 多出边失效 | ✅ | `FlowExecutor.cs`：`ValidateOutEdgeCardinality` 的 `multiOutAllowed` **只保留 `Condition`**（移除 `Switch`） | SWITCH 的事实语义是「Condition 多出边 + `combine`」，不存在独立 `switch` 节点；原先允许 `Switch` 多出边等于放行一个**无分发分支**的配置 |
+| **P0-4** 子图角色透传 | ✅ | `FlowExecutor.cs`：`filterOutputsByRole` / `currentUser` 贯通 `RunSegmentAsync` → `ExecuteNodeAsync` → `DispatchNodeAsync` → `ExecuteSubFlowAsync` / `ExecuteForEachAsync` / `ExecuteParallelAsync` / `RunControlBodyAsync`；3 处硬编码 `false, null` 调用点改为透传 | 修的是**出参角色可见性在子图旁路**：子流程/循环/并行体内的节点原先一律不走 `OutputVisibilityFilter`，等于把差异化能力在子图上关掉 |
+
+## 已完成：C13 / C16（补丁未含，本次一并实现）
+
+| 项 | 状态 | 落点 | 语义 |
+|---|:---:|---|---|
+| **C13** PG/Oracle 瞬态分类失效 | ✅ | `NodeResiliencePolicy.cs`：PG 改为**字符串前缀判断** `IsTransientPostgresSqlState`（`08*` + `40001/40P01/53200/53300/53400/55P03/57P01/57P02/57P03`）；补 Oracle 码 `60/8177/3113/3114/12170/12541/12571/12547/12537/1033/1089` | 旧实现 `int.TryParse(pg.SqlState, out s)` —— PG 的 SQLSTATE 是**字母数字**（如 `40001` ok，但 `08P01` 解析失败 → 0），必然误判非瞬态。Oracle 同理。这是「重试策略在非 SQL Server 上静默失效」 |
+| **C16** 批量更新的乐观锁与过滤参数 | ✅ | `ResourceCrudExecutor.cs` `BatchOp.Update`：按表列探测 `ConcurrencyStamp`，逐条写 `pNewStamp` / 读旧戳到 `pOldStamp`，`filter.Args` **在列参数之后**合并；SQL 追加 `SET …=@pNewStamp` 与 `WHERE (…IS NULL OR …=@pOldStamp)` | 与单条 `UpdateAsync`（`:459-486`）语义对齐：**写新戳、比旧戳**。旧批量路径既不写戳也不比戳 → 乐观锁在批量入口被绕过，且 `filter.Args` 丢失导致过滤条件不生效 |
+
+## 本批纪律（写进代码审查清单）
+
+1. **白名单必须与分派表一一对应**：`SupportedNodeKinds` 与 `DispatchNodeAsync` 的 case 列表互为镜像，新增节点必须同时改两处 + 加校验测试。
+2. **契约与可见性在发布前收敛**：「DSL 声明了但引擎未消费」「无契约即全量外泄」两类都改为**发布期拒绝**，不留运行时惊喜。
+3. **子图不得旁路横切语义**：新增承载子图的执行函数时，`filterOutputsByRole` / `currentUser` **必须**作为参数贯通，否则角色可见性在子图失效。
+4. **瞬态分类不得依赖数值转换**：跨厂商错误码一律按**字符串**匹配，且策略文件必须对每种驱动各留一条单测。
+
+## 验证结果（`91d75bd`）
+
+```
+后端：dotnet build Meta.Dow.slnx -c Release      → 0 error
+      dotnet test tests/Meta.Dow.Orchestration.Tests → 91 passed / 0 failed
+      （P0 批次新增 29 例：白名单 5 + 契约 5 + visibleTo 6 + PG SQLSTATE 11 + 存量夹具补齐 2）
+```
+
+## 未做（P0 批次的范围外，仍在评审 §5 排期）
+
+- 评审 §5.1 的 **P0-5 ~ P0-14** 本批未动（含默认口令 `1q2w3E*`、破坏性 DDL 门禁、Http 节点 SSRF 防护等，见 review §4.1 S1–S5）。
+- **G2（测试覆盖实质为零）未改善**：本批 29 例仍全部是纯单元测试（断言 `ValidateDsl` 的拒绝/放行），脚手架 `null!` 注入导致的**运行时路径零覆盖**依然存在。
+- `FlowExecutor.cs` 因本批净增约 190 行，§2–§13 的旧行号已整体下移（见 `lowcode-logic-orchestration.md` 头部时点声明），**替换为符号名检索前不要按旧行号跳转**。
+

@@ -1,8 +1,8 @@
 # 低代码逻辑编排 —— 完善意见稿
 
 > **文档性质**：整改意见稿（Review & Remediation Proposal）。用于评审、排期与验收，不替代设计规格。
-> **代码基线**：`Meta.Dow.slnx` @ commit `0c4f7eb`（2026-10-14，与 `267d375` 之间无代码改动，行号一致有效）。
-> **实测基线**：`dotnet build Meta.Dow.slnx -c Release`（全量重建）= **0 错误 / 165 警告**（267d375 记 162，差值为 NU 审计类随漏洞库波动）；`dotnet test tests/Meta.Dow.Orchestration.Tests` = **62/62 通过**。
+> **代码基线**：`Meta.Dow.slnx` @ commit `91d75bd`（2026-10-14，P0 止血批次）。
+> **实测基线**：`dotnet build Meta.Dow.slnx -c Release` = **0 错误**；`dotnet test tests/Meta.Dow.Orchestration.Tests` = **91/91 通过**（P0 批次新增 29 例；此前基线的 165 警告为全量重建实测，随 NU 审计库波动）。
 > **配套阅读**：[实现契约](./lowcode-logic-orchestration.md)（真实行为）、[落地方案](./lowcode-logic-orchestration-remediation-plan.md)（R1–R12）、[主流对标分析](./lowcode-logic-orchestration-benchmark.md)（优势/不足与主流差异，全部不足项对照本文 S/C/E/G 编号）。
 > **评估范围**：`Meta.Dow.SaaS` 逻辑编排引擎（`/api/orchestration/*`、`/api/logic/*`），及其连带的**授权落点、租户隔离、发布治理与工程化门禁**——后者直接决定编排能力能否上生产。
 > **证据规则**：每条结论附 `相对路径:行号`，均可在上述 commit 复核。状态图例：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现 ｜ 🐞 缺陷。
@@ -45,7 +45,7 @@
 | 运行保障（超时/重试/异步/持久化） | **3.5 / 10** | 异步结果与失败全部丢失、无持久化执行、重试分类在 PG/Oracle 上失效 |
 | 授权与字段可见性 | **4.5 / 10** | 设计不错但存在旁路面与 fail-open 兜底 |
 | 多租户隔离 | **6.5 / 10** | 租户谓词次序正确、缓存键含租户；扣分在缺列静默失效与 `sys.resource.query` 旁路 |
-| 可验证性 / 测试 | **3.0 / 10** | 62 个用例全为纯单测且 39 个集中在控制流，脚手架 `null!` 注入使运行时路径零覆盖 |
+| 可验证性 / 测试 | **3.0 / 10** | 用例数在 `0c4f7eb` 时点为 62、`91d75bd` 后为 91 —— 但**新增 29 例仍全部是纯单测**（只断言 `ValidateDsl` 的拒绝/放行），脚手架 `null!` 注入导致的**运行时路径零覆盖**没有改变 ⇒ **分数不因数量增长而上调** |
 | 文档与知识治理 | **7.0 / 10** | 重构后已分离"事实契约 / 行为边界 / 规划"；仍缺 schema、变更日志、错误码表 |
 
 **综合：约 5.4 / 10** —— 骨架可用的早期实现，尚未达到生产就绪。
@@ -57,8 +57,8 @@
 ### 2.1 方法
 
 1. **读约束**：`.cursor/rules/frontend-vue-vben.mdc`、`.workbuddy/memory/*`、`src/CLAUDE.md`。
-2. **读文档**：`docs/` 9 篇（重构前 6,882 行 / 重构后 6,104 行）+ `README.md`。
-3. **读代码**：263 个 `.cs` 文件 / **36,886 行**（不含 `bin`/`obj`；口径为**文件总行数**，含空行与注释——见 §2.2 的计量说明）；重点通读 `FlowExecutor.cs`(2,962)、`FlowDslModels.cs`(528)、`FlowContextResolver.cs`(732)、`FinalOutputAssembler.cs`(926)、`CodeSandboxExecutor.cs`(472)、`ResourceCrudExecutor.cs`(1251)、`FilterSqlBuilder.cs`(537) 等。
+2. **读文档**：`docs/` 9 篇（重构前 6,882 行 / 重构后 6,104 行）+ `README.md`。<br>⚠️ **2026-10-14 实测已为 13 篇 / 7,364 行**（新增 benchmark 篇与契约/评审/规划三篇的补齐）。
+3. **读代码**：263 个 `.cs` 文件 / **36,886 行**（不含 `bin`/`obj`；口径为**文件总行数**，含空行与注释——见 §2.2 的计量说明）；重点通读 `FlowExecutor.cs`(2,962)、`FlowDslModels.cs`(528)、`FlowContextResolver.cs`(732)、`FinalOutputAssembler.cs`(926)、`CodeSandboxExecutor.cs`(472)、`ResourceCrudExecutor.cs`(1251)、`FilterSqlBuilder.cs`(537) 等。<br>⚠️ **2026-10-14 实测（`src` + `tests`）：264 个 `.cs` 文件 / 37,467 行；`FlowExecutor.cs` 3,146 行**（P0 批次净增约 190 行 + 新增测试文件）。
 4. **实测**：Release 构建与单测各执行一次，取真实退出码与计数。
 5. **交叉验证**：关键结论由多路独立核对互证；本文引用的每条行号均经复核。
 
@@ -129,6 +129,8 @@
 ## 4. 缺陷清单
 
 > 编号规则：`S`=安全与租户隔离，`C`=正确性与一致性，`E`=编排引擎能力与语义，`G`=工程化。严重度：**严重 / 高 / 中 / 低**。
+> **状态标记（2026-10-14，commit `91d75bd`）**：标 **✅** 的条目**已修复**，其「机理」栏描述的是**修复前**状态（保留以便对照）；
+> 未标记者为**现存缺陷**。本批次修复：**S6 ✅ / S7 ✅ / S12 ✅ / C2 ✅ / C13 ✅ / C16 ✅**。
 
 ### 4.1 安全与租户隔离（S）
 
@@ -139,13 +141,13 @@
 | S3 | **严重** | 默认管理员口令是公开值 | `1q2w3E*` 既在启动说明里，又作为新租户回退口令硬编码；同文件还有模板残留邮箱与 `NotImplementedException` 的错误路径 | `.../TenantCreatedEventHandler.cs:33`、`:35`、`:47-50`、`README.md` | 每个新租户管理员可被直接登录。**建议**：首次随机口令 + 强制改密；修掉坏的错误处理路径 |
 | S4 | **高** | 只读权限可被 `WITH` 前缀绕过 | `EnsureSqlWrite` 把 `select` **和 `with`** 都当读；`db.query` 完全不检查写权限 | `.../CodeSandboxExecutor.cs:402-413`、`:239-245` | `WITH x AS (…) DELETE FROM t` 无需 `Sql.Write`。**建议**：统一写判定（首个 DML 关键字 + 禁止 DML 出现在 `db.query`） |
 | S5 | **高** | Http 节点无 SSRF 防护 | url 由节点配置 + 模板拼出，headers 任意可设；全仓无 host 白名单/私网/回环拦截 | `.../FlowExecutor.cs:956`、`:1011-1053` | 任意流程作者可驱动 SaaS 主机访问内网与云元数据端点。**建议**：出站 host 白名单 + 私网/链路本地拦截 |
-| S6 | **高** | 字段可见性在子图被整体旁路 | SubFlow 与 ForEach/Parallel 体以 `filterOutputsByRole:false, currentUser:null` 执行 ⇒ `bypass=true` | `.../FlowExecutor.cs:1518-1527`、`:1943-1952`、`:455` | 子图 `finalOutputs.visibleTo` 失效，受限字段冒泡到父输出。**建议**：把调用方角色快照透传进子图 |
-| S7 | **高** | 无最终契约时输出内部变量 | 无 `finalOutputs`/`outputs` 时 `data` = 整个 `ctx.Vars`、`visibleFields` = 全部键、**零过滤**，且 `omittedFieldCount` 恒 0 | `.../FlowExecutor.cs:446-453` | 中间值整包外泄且计数掩盖。**建议**：无契约即报错（呼应"契约优先"原则），至少也要走 `visibleTo` |
+| S6 ✅ | **高** | 字段可见性在子图被整体旁路 | SubFlow 与 ForEach/Parallel 体以 `filterOutputsByRole:false, currentUser:null` 执行 ⇒ `bypass=true` | `.../FlowExecutor.cs:1518-1527`、`:1943-1952`、`:455` | 子图 `finalOutputs.visibleTo` 失效，受限字段冒泡到父输出。**建议**：把调用方角色快照透传进子图 |
+| S7 ✅ | **高** | 无最终契约时输出内部变量 | 无 `finalOutputs`/`outputs` 时 `data` = 整个 `ctx.Vars`、`visibleFields` = 全部键、**零过滤**，且 `omittedFieldCount` 恒 0 | `.../FlowExecutor.cs:446-453` | 中间值整包外泄且计数掩盖。**建议**：无契约即报错（呼应"契约优先"原则），至少也要走 `visibleTo` |
 | S8 | **高** | 报表数据范围可整体绕过 | `/api/logic/{flowKey}` 仅需 `Instances.Run` 且 `skipValidation:true`；`sys.resource.query` 可自带 `resourceCode/filter/summaryFields` | `.../LogicApiAppService.cs:35`、`:61` | 跳过 `Reports.Execute` 与 DataScope。**注**：跨租户仍被独立顶层谓词挡住，被绕的是**报表/资源级授权** |
 | S9 | **高** | IAM 行级数据范围零落地 | `DataPermissionQueryableExtensions` 全仓**无调用点**；`DataScopeResolver` 只被"我的"接口消费 | `src/shared/Meta.Dow.Shared/Meta.Dow/DataPermission/DataPermissionQueryableExtensions.cs:10` | 数据范围目前是**配置界面**而非执行约束。**建议**：要么接线，要么从产品口径中移除，避免"看起来有" |
 | S10 | **高** | 敏感信息进日志 | `IdentityModelEventSource.ShowPII = true` 无条件开启（**4 个进程**：3 个 Host + AuthServer；Projects Host 未开启） | `.../SaaSHttpApiHostModule.cs:74`、`.../AdministrationHttpApiHostModule.cs:96`、`.../IdentityServiceHttpApiHostModule.cs:101`、`.../MetaDowAuthServerModule.cs:138` | 令牌/claims/PII 写入日志与 Seq。**建议**：改为按环境开关 |
 | S11 | **中** | 网关 12 条路由不挂授权策略 | 13 条路由中仅 `administration-fallback` 挂 `AuthorizationPolicy: Default` | `src/gateway/Meta.Dow.Gateway/appsettings.json:83-89`、`Program.cs:76-78` | 授权完全下沉，任一下游漏配即匿名可达。**建议**：业务路由显式挂策略 |
-| S12 | **中** | `visibleTo` 未知 mode 兜底放行 | `IsVisible` 末尾 `return true`；`roleIds` 与**角色名**比较 | `.../OutputVisibilityFilter.cs:95`、`:81` | 拼错 mode 即变公开；`roleIds` 恒不匹配。**建议**：未知 mode 报错；`roleIds` 改与角色 Id 比较或删除 |
+| S12 ✅ | **中** | `visibleTo` 未知 mode 兜底放行 | `IsVisible` 末尾 `return true`；`roleIds` 与**角色名**比较 | `.../OutputVisibilityFilter.cs:95`、`:81` | 拼错 mode 即变公开；`roleIds` 恒不匹配。**建议**：未知 mode 报错；`roleIds` 改与角色 Id 比较或删除 |
 | S13 | **中** | `group.header[].visibleTo.permissions` 永不生效 | 判定侧会读它，收集侧 `CollectPermissionNames` **从不遍历 `group.header`** | `.../FinalOutputAssembler.cs:334` vs `:870-898` | 权限模式表头对所有人被丢弃。**建议**：补齐收集 |
 | S14 | **中** | 无单条逻辑调用权限 | 只有 `Orchestration.Instances.Run` | `.../LogicApiAppService.cs:35` | 持该权限者可调用**全部**已发布流程。**建议**：补 `Orchestration.Logic.{flowKey}` |
 | S15 | **中** | MQTT 触发器多副本重复执行 | client id 含随机 Guid，且无分布式锁 | `.../MqttMessageTriggerHostedService.cs:225` | 扩容即重复触发。**建议**：固定 client id + `IAbpDistributedLock` |
@@ -159,7 +161,7 @@
 | 编号 | 严重度 | 现象 | 机理 | 证据 |
 |---|---|---|---|---|
 | C1 | **高** | 异步节点结果与失败**全部丢失** | `Task.Run(..., CancellationToken.None)`；不写 outputs/实例/JobId；失败仅 `LogWarning`；节点状态仍 `AsyncQueued`，实例随后判 Succeeded；异步分支不调 `CheckFailWhen` | `.../FlowExecutor.cs:911-942`、`:880`、`:723-731` |
-| C2 | **高** | 发布成功但调用即 500 | 无节点 type/kind 白名单；`Switch` 被校验豁免却无 dispatch；`Logic+kind=Sql` 无 case | `.../FlowExecutor.cs:791-792`、`:2599-2603`、`ValidateDsl` 无白名单 |
+| C2 ✅ | **高** | 发布成功但调用即 500 | 无节点 type/kind 白名单；`Switch` 被校验豁免却无 dispatch；`Logic+kind=Sql` 无 case | `.../FlowExecutor.cs:791-792`、`:2599-2603`、`ValidateDsl` 无白名单 |
 | C3 | **高** | 已下线流程仍可被调用 | 缓存失效只挂 `PublishAsync`；`Disable`/`Delete` 不失效；进程内缓存跨副本不共享（TTL 10 分钟） | `.../PublishedFlowCache.cs:38`、`:104-112`；`.../FlowDefinitionAppService.cs:290` |
 | C4 | **高** | 跨节点写库非原子 | 无 `txMode`；`db.execute` 每句自动提交；未知 DSL 字段被静默忽略 ⇒ 使用方以为已开启 | DSL 无该字段；`.../ParameterizedSqlExecutor.cs:153-178` |
 | C5 | **高** | OA：驳回被静默当成通过 | `ShouldRejectNode` 对 any/ratio 会签恒 false，`!input.Pass` 分支不 return，落到 `task.Approve(...)` | `.../WorkflowRuntimeAppService.cs`（`ShouldRejectNode` 与 `CompleteAsync`） |
@@ -170,10 +172,10 @@
 | C10 | **中** | `entry` 只配 `combine` 恒真 | `items` 为空直接 `return true`；发布校验也只在 `items.Count>0` 时查 `combine` | `.../FlowExecutor.cs:2264-2269`、`:2481-2484` |
 | C11 | **中** | 条件节点可静默走错边 | 只有边 `combine`、无 `node.items` 时掉进 legacy 分支，`combine` 被忽略 | `.../FlowExecutor.cs:505-508` vs `:548-553` |
 | C12 | **中** | `strategy` 语义与命名不符 | 非 `firstMatch` 时"最后一条命中生效"；取值不校验 | `.../FlowExecutor.cs:511-537` |
-| C13 | **中** | PG/Oracle 重试分类失效 | `SqlState` 走 `int.TryParse`，`40P01`/`08xxx` 解析失败 → 0 → 不重试；Oracle 无错误码 | `.../NodeResiliencePolicy.cs:173`、`:175`、`:182-190` |
+| C13 ✅ | **中** | PG/Oracle 重试分类失效 | `SqlState` 走 `int.TryParse`，`40P01`/`08xxx` 解析失败 → 0 → 不重试；Oracle 无错误码 | `.../NodeResiliencePolicy.cs:173`、`:175`、`:182-190` |
 | C14 | **中** | 缺 `TenantId` 列时静默不加谓词 | 有列且无租户值时是 `TenantId IS NULL`；**无列时完全不加谓词**且无日志 | `.../FilterSqlBuilder.cs:54-65` |
 | C15 | **中** | `aggregate` 与 `map` 同配时 map 静默失效 | `Aggregate` 分支先 return | `.../FinalOutputAssembler.cs:240-243` |
-| C16 | **中** | `batchupdate` 恒 0 行 | 未把 `filter.Args` 合并进每条 item（delete 分支并了）→ 抛 Missing SQL parameter；新戳既当新值又当旧值比对 | `.../ResourceCrudExecutor.cs:645-672` vs `:689` |
+| C16 ✅ | **中** | `batchupdate` 恒 0 行 | 未把 `filter.Args` 合并进每条 item（delete 分支并了）→ 抛 Missing SQL parameter；新戳既当新值又当旧值比对 | `.../ResourceCrudExecutor.cs:645-672` vs `:689` |
 | C17 | **中** | 条件组实际允许 4 层 | 常量 `MaxFilterGroupDepth=3`，判据是 `depth > 3`，根 depth=0 | `.../FilterSqlBuilder.cs:228`、`.../OrchestrationConsts.cs:14` |
 | C18 | **中** | `summaryFields` 无白名单且覆盖设计器配置 | 客户端数组一旦非空即完全覆盖；随后只放行物理列；未知函数静默回落 `sum` | `.../ResourceCrudExecutor.cs:931-962`、`:964-972` |
 | C19 | **中** | 非文本列的 `contains`/`startswith` 静默改 `eq` | 类型不是 String/Text/Enum 时改写算子 | `.../FilterSqlBuilder.cs:322-327` |
@@ -205,7 +207,7 @@
 | 编号 | 严重度 | 问题 | 证据 |
 |---|---|---|---|
 | G1 | **高** | **7/7 Dockerfile 不可构建**：阶段名为 `build`/`final`，终阶却写 `COPY --from=publish`（Docker 会按外部镜像名解析并失败）；CI 无 `docker build` 步骤 ⇒ 缺陷永不暴露 | 例：`src/gateway/Meta.Dow.Gateway/Dockerfile:11`；`.github/workflows/ci.yml` |
-| G2 | **高** | **测试覆盖实质为零**：62 个用例（56 `[Fact]` + 2 `[Theory]`，其中 6 个 `[InlineData]`）全部为纯单元测试，39 个集中在编排控制流；脚手架把 `httpClientFactory`/`permissionChecker`/`dataSourceResolver`/`codeSandboxExecutor`/`publishedFlowCache`/`resourceCrudExecutor` 以 `null!` 注入 ⇒ HTTP/SQL/Code/子流程/资源 CRUD 一旦触达必然 NRE | `tests/Meta.Dow.Orchestration.Tests/` |
+| G2 | **高** | **测试覆盖实质为零**：`0c4f7eb` 时点 62 个用例（56 `[Fact]` + 2 `[Theory]`，其中 6 个 `[InlineData]`）全部为纯单元测试，39 个集中在编排控制流；脚手架把 `httpClientFactory`/`permissionChecker`/`dataSourceResolver`/`codeSandboxExecutor`/`publishedFlowCache`/`resourceCrudExecutor` 以 `null!` 注入 ⇒ HTTP/SQL/Code/子流程/资源 CRUD 一旦触达必然 NRE。**`91d75bd` 后用例增至 91，但新增 29 例同为纯单测，本条缺陷未缓解** | `tests/Meta.Dow.Orchestration.Tests/` |
 | G3 | **中** | **分析器未启用**：`src/Directory.Build.props` 只有 `LangVersion`/`Nullable`/`TreatWarningsAsErrors=false` + 2 个 global using；全仓无分析器包引用；`.editorconfig` 无 error 级规则 ⇒ 162 个警告无门禁 | `src/Directory.Build.props`、`.editorconfig` |
 | G4 | **中** | Release 无 Console 日志 sink（只写文件）⇒ 容器内日志不可采集 | `src/shared/Meta.Dow.Hosting.Shared/.../MetaDowLogging.cs:11-18` |
 | G5 | **中** | 无集成测试宿主（无 Mongo/网关/认证链路测试）；Dockerfile、网关路由、OpenIddict 受众一致性均无校验 | `tests/` 仅 1 个纯单测工程 |
@@ -219,6 +221,11 @@
 ## 5. 整改批次与验收标准
 
 ### 5.1 P0 —— 止血（建议 3~5 个工作日，均为小改动）
+
+> **落地状态（2026-10-14，commit `91d75bd`）**：**P0-1 ✅ / P0-2 ✅ / P0-3 ✅ / P0-4 ✅**（均已补单测，测试 62 → 91 全绿）；
+> 另把 P1-10（C16 `batchupdate` 双缺陷）与 P1-11（C13 PG/Oracle 瞬态分类）**同批带走 ✅**。
+> **P0-5 ～ P0-14 未做**（约定列强制、破坏性 DDL 门禁、默认口令、Dockerfile、网关策略、ShowPII、OA 驳回语义/并发戳、已发布禁改写等）。
+> 回归测试：`tests/Meta.Dow.Orchestration.Tests/FlowExecutorDslValidationTests.cs`（29 例）。
 
 | 序号 | 事项 | 验收标准 |
 |---|---|---|

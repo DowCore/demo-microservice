@@ -525,7 +525,7 @@ docker build -f src/services/ordering/host/Meta.Dow.Ordering.HttpApi.Host/Docker
 
    ```powershell
    dotnet build Meta.Dow.slnx -c Release        # 期望 0 错误
-   dotnet test Meta.Dow.slnx -c Release         # 期望 62/62 通过
+   dotnet test Meta.Dow.slnx -c Release         # 期望全部通过（2026-10-14 基线 91/91）
    ```
 
 2. 起全栈：`dotnet run --project src/apps/Meta.Dow.AppHost`（Dashboard `https://localhost:17166`）。

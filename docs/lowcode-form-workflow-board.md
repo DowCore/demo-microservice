@@ -856,6 +856,8 @@ return new FilterSqlResult {
 
 `tests/Meta.Dow.Orchestration.Tests` 只有 5 个测试类（62 个用例）：`FlowExecutorControlFlowTests`（984 行）、`WorkflowDefinitionValidatorTests`（245）、`FormSchemaFlatteningTests`（169）、`SecretsConfigSafetyTests`（109）、`WorkflowRecordPatchTests`（68）。
 
+> ⚠️ **2026-10-14 更新（`91d75bd`）**：该工程已增至 **6 个测试类 / 91 个用例** —— P0 止血批次新增 `FlowExecutorDslValidationTests`（314 行、29 例，断言节点白名单/输出契约/`visibleTo`/PG SQLSTATE），并给存量夹具补了输出契约。**新增用例仍是纯单测**，下文"没有任何测试覆盖…"的判断不变。
+
 **没有任何测试**覆盖：`FilterSqlBuilder`、`SqlDialect`、DataScope、租户过滤、`ResourceCrudExecutor`、`SqlDdlExecutor`/DDL diff。
 
 > 结论：本文第 3.7 / 3.8 章描述的是一批**只靠人工核对保证**的安全不变量（租户谓词位置、参数化、标识符白名单、批量事务）。§C1 / C6 / C7 / C9 这些缺陷正是缺乏该层测试的直接后果。补测试是 §5.7 的第一优先项。

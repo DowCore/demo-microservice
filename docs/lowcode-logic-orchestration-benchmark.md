@@ -1,7 +1,8 @@
 # Meta.Dow 逻辑编排：能力盘点与主流实现对比（2026-10-14 刷新版）
 
 > **文档性质**：对标分析（评审层文档）。与 `docs/lowcode-logic-orchestration-review.md`（缺陷清单）、`docs/lowcode-logic-orchestration-remediation-plan.md`（落地方案）配套阅读；**缺陷以 review 的 S/C/E/G 编号为单一真相源**，本文只做映射与归因，不重复定义缺陷。
-> **证据基线**：`Meta.Dow.slnx` @ `0c4f7eb`（2026-10-14）。`dotnet build -c Release`（全量重建）0 错误 / 165 警告；`tests/Meta.Dow.Orchestration.Tests` 62/62 通过。每条结论附 `相对路径:行号`，行号对应上述 commit。
+> **证据基线**：`Meta.Dow.slnx` @ `91d75bd`（2026-10-14，P0 止血批次）。`dotnet build -c Release` **0 错误**；`tests/Meta.Dow.Orchestration.Tests` **91/91 通过**。每条结论附 `相对路径:行号`，行号对应上述 commit。
+> **P0 止血批次已落地（2026-10-14）**：C2 节点类型白名单、S7 输出契约强制、S12 `visibleTo` 取值收敛（含 `roleIds` 拒绝）、S6 子图角色透传、C13 PG/Oracle 瞬态分类、C16 `batchupdate` 双缺陷。§4.2 的存量清单已随之缩减。
 > **系统目标**：构造通用、稳定的逻辑编排底座 —— 其他低代码能力都在这个逻辑编排上实现（见契约文档 §1「系统目标」与 `.cursor/rules/logic-orchestration.mdc`）。
 > **与 2026-10-12 版的关系**：取代工作区旧报告 `Meta.Dow-逻辑编排能力盘点与主流实现对比-2026-10-12.md`；旧版基于 `23d8e06`（R1–R4 实施前），其「运行保障期全部为零」的结论已过时，本文按当前代码重测。
 
@@ -181,26 +182,23 @@ REST 发布（`LogicApiAppService.RunAsync`，含按角色过滤）｜ RabbitMQ 
 
 > 编号说明：S/C/E/G 为 `lowcode-logic-orchestration-review.md` §4 的缺陷编号；R 为 `remediation-plan.md` 的整改项；P0/P1/P2 为 review §5 的批次。全部缺陷均已对照当前代码实测（2026-10-13/14 复核）。
 
-### 4.1 已修复项回顾（R1–R4，2026-10-13 落地，勿再当缺陷报）
+### 4.1 已修复项回顾（R1–R4 @ 2026-10-13；P0 止血批次 @ `91d75bd` 2026-10-14，勿再当缺陷报）
 
 | 项 | 修复内容 | 残留关联缺陷 |
 |---|---|---|
 | R1 | HTTP 非安全方法禁重试（`DisableForUnsafeHttpMethods`）+ 弹性参数显式化 | 节点级 HTTP 重试策略仍无（属 R8/运行保障 P1） |
 | R2 | `timeoutMs` 单点包裹 + Parallel 三级继承 + 取值校验 | `async` 分支不受包裹（并入 C1）；MaxSteps 硬编码（R10） |
-| R3 | `NodeResiliencePolicy` 读写分离 + `retryOnWrite` 声明校验 | C13（PG/Oracle 分类失效）、R6（幂等运行时去重） |
-| R4 | 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey | C16（batchupdate 双缺陷）；跨节点事务仍无（E4/R11） |
+| R3 | `NodeResiliencePolicy` 读写分离 + `retryOnWrite` 声明校验 | R6（幂等运行时去重）；**C13 已在本批次修掉** |
+| R4 | 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey | 跨节点事务仍无（E4/R11）；**C16 已在本批次修掉** |
+| **P0 止血批次** | **C2** 节点类型白名单 ｜ **S7** 输出契约强制（`ValidateOutputContract`）｜ **S12** `visibleTo` mode 收敛 + `roleIds` 拒绝 ｜ **S6** 子图角色透传；同批带走 **C13**（PG/Oracle 分类）、**C16**（`batchupdate` 双缺陷） | 均 ✅（回归测试 `FlowExecutorDslValidationTests` 29 例）；残留：**C1**（异步结果回收，根治属 R5）、P0-5～P0-14 未做 |
 
-### 4.2 存量 P0 级（止血类，小改动，全部未修）
+### 4.2 存量 P0 级（止血类）
+
+> **2026-10-14 更新**：原表中的 C2 / S7 / S6 / S12 / C16 / C13 已随 P0 止血批次修复，移入 §4.1。以下为**仍未修**项。
 
 | 编号 | 缺陷 | 代码证据（2026-10-14 复核） |
 |---|---|---|
-| C2 | 无节点 type/kind 白名单 → `sql`/`switch`/拼错类型发布成功、调用即 500 | dispatch 无 `case "sql"`/`case "switch"`；`ValidateDsl` 无白名单（`FlowExecutor.cs:640-793`、`2388` 起） |
-| S7 | 无最终契约时 `data` = 整个 `ctx.Vars`、零过滤 | `FlowExecutor.cs:446-453`（实测当前代码） |
-| S6 | 子图以 `filterOutputsByRole:false, currentUser:null` 执行 → `visibleTo` 整体旁路 | `FlowExecutor.cs:1522-1523, 1920-1921, 1947-1948` |
-| S12 | `visibleTo` 未知 mode 兜底放行（`return true`）；`roleIds` 与角色名比较恒不匹配 | `OutputVisibilityFilter.cs:95, 81` |
-| C16 | `batchupdate` 未合并 `filter.Args`（delete 分支并了）→ 抛 Missing SQL parameter；新戳既当新值又当旧值 → 恒 0 行 | `ResourceCrudExecutor.cs:645-672` vs `:689` |
-| C13 | PG `SqlState` 走 `int.TryParse`（`40P01`/`08xxx` 解析失败 → 不重试）；Oracle 无任何错误码分支 | `NodeResiliencePolicy.cs:173-190` |
-| C1 | `async` 节点 `Task.Run(..., CancellationToken.None)`：不写 outputs/JobId、失败仅日志、节点永停 `AsyncQueued` 而实例判 Succeeded、不受 timeoutMs 包裹、不调 `failWhen` | `FlowExecutor.cs:901-930, 723-731` |
+| C1 | `async` 节点 `Task.Run(..., CancellationToken.None)`：不写 outputs/JobId、失败仅日志、节点永停 `AsyncQueued` 而实例判 Succeeded、不受 timeoutMs 包裹、不调 `failWhen` | `FlowExecutor.cs:901-930, 723-731`（0c4f7eb 时点） |
 | S1–S5 | 表列 `Origin` 客户端可控；破坏性 DDL 门禁缺失；默认口令 `1q2w3E*` 硬编码；`WITH` 绕过只读；Http 节点无 SSRF 防护 | 见 review §4.1，2026-10-13 全部实测确认存活 |
 
 ### 4.3 存量 P1 级（运行保障欠账）

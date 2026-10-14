@@ -206,6 +206,8 @@
 
 `tests/Meta.Dow.Orchestration.Tests/` 共 **62 个用例**（`dotnet test -c Release` 实测 62/62 通过）。口径：**58 个测试特性**（56 个 `[Fact]` + 2 个 `[Theory]`），其中 2 个 `[Theory]` 带 **6 个 `[InlineData]`** 展开为 6 个用例，**无 `MemberData`/`ClassData`** ⇒ 56 + 6 = 62。
 
+> ⚠️ **2026-10-14 更新（`91d75bd`）**：当前为 **91/91 通过**（新增 `FlowExecutorDslValidationTests` 29 例：节点白名单 5 + 输出契约 5 + `visibleTo` 6 + PG SQLSTATE 11 + 存量夹具补齐 2）。下表为 `267d375` 时点的分类型口径，**未含新增类**。
+
 | 测试类 | 测试特性 | 用例数 | 覆盖内容 |
 |--------|--------:|-------:|----------|
 | `FlowExecutorControlFlowTests` | 33 `[Fact]` + 2 `[Theory]`（6 `[InlineData]`） | **39** | **逻辑编排引擎**的出边基数/可达性校验、ForEach、Parallel、四条种子演示流程端到端 |

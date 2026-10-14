@@ -58,6 +58,9 @@ public class FlowExecutorControlFlowTests
         const string dsl =
             """
             {
+              "outputs": [
+                { "name": "x", "type": "number", "from": "x", "visibleTo": { "mode": "all" } }
+              ],
               "nodes": [
                 { "id": "start", "type": "Start" },
                 { "id": "c", "type": "Condition", "items": [{ "no": 1, "left": "input.x", "op": "gt", "right": 1 }] },
@@ -105,6 +108,9 @@ public class FlowExecutorControlFlowTests
         const string dsl =
             """
             {
+              "outputs": [
+                { "name": "x", "type": "number", "from": "x", "visibleTo": { "mode": "all" } }
+              ],
               "nodes": [
                 { "id": "start", "type": "Start" },
                 { "id": "end", "type": "End" },
@@ -508,6 +514,9 @@ public class FlowExecutorControlFlowTests
         const string dsl =
             """
             {
+              "outputs": [
+                { "name": "affected", "type": "number", "from": "affected", "visibleTo": { "mode": "all" } }
+              ],
               "nodes": [
                 { "id": "start", "type": "Start" },
                 {
@@ -560,6 +569,9 @@ public class FlowExecutorControlFlowTests
         const string dsl =
             """
             {
+              "outputs": [
+                { "name": "id", "type": "string", "from": "id", "visibleTo": { "mode": "all" } }
+              ],
               "nodes": [
                 { "id": "start", "type": "Start" },
                 {
@@ -938,7 +950,13 @@ public class FlowExecutorControlFlowTests
           "nodes": [
             { "id": "s", "type": "Start" },
             { "id": "t", "type": "Throw", "ref": "t", "failCode": "Test:BranchBoom", "failMessage": "branch boom" },
-            { "id": "e", "type": "End" }
+            {
+              "id": "e",
+              "type": "End",
+              "finalOutputs": [
+                { "name": "branchFailed", "type": "boolean", "from": "branchFailed", "visibleTo": { "mode": "all" } }
+              ]
+            }
           ],
           "edges": [
             { "source": "s", "target": "t" },

@@ -642,6 +642,10 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
                     throw new UserFriendlyException("batchupdate 找不到可更新的列。");
                 }
 
+                // 仅当表确有 ConcurrencyStamp 列时才引入戳参数 —— 参数执行器是严格模式，
+                // SQL 里没出现的参数会直接报 "Unexpected SQL parameter"。
+                var hasStamp = table.Columns.Any(c => c.Name == "ConcurrencyStamp");
+
                 foreach (var item in items)
                 {
                     var record = item as JsonObject
@@ -654,22 +658,41 @@ public class ResourceCrudExecutor : IResourceCrudExecutor, ITransientDependency
                         args["p" + Sanitize(col.Name)] = ResolveColumnValue(record, col);
                     }
 
-                    args["pConcurrencyStamp"] = NewStamp();
+                    if (hasStamp)
+                    {
+                        // 乐观并发与单条 UpdateAsync 同语义：**SET 写新戳、WHERE 比旧戳**。
+                        // 旧戳取自该项的 concurrencyStamp；未提供时绑定 NULL（下方谓词容忍 -> 不做并发校验）。
+                        args["pNewStamp"] = NewStamp();
+                        args["pOldStamp"] = ReadString(record, "concurrencyStamp");
+                    }
+
                     args["pLastModificationTime"] = DateTime.UtcNow.ToString("O");
                     args["pLastModifierId"] = _currentUser.Id?.ToString();
                     args["pId"] = id;
+
+                    // C16 修复①：合并 filter.Args，否则 WHERE 里的 @pXxx 缺参
+                    // 会抛 "Missing SQL parameter"（delete 分支原本已合并，update 漏了）。
+                    // 放在列参数之后合并，确保租户谓词参数不被用户列值覆盖。
+                    foreach (var prop in filter.Args)
+                    {
+                        args[prop.Key] = prop.Value?.DeepClone();
+                    }
+
                     paramList.Add(args);
                 }
 
-                // 乐观并发：ConcurrencyStamp 变化后旧版本不再匹配 —— 与单条 update 语义一致
-                var stampSql = table.Columns.Any(c => c.Name == "ConcurrencyStamp")
-                    ? $" AND {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pConcurrencyStamp")}"
+                // C16 修复②：原先 SET 与 WHERE 用的是同一个「新戳」参数 -> WHERE 恒不匹配、恒 0 行。
+                // 现在 SET 写 pNewStamp，WHERE 比 pOldStamp；pOldStamp 为 NULL 时跳过并发校验
+                // （与单条 update「未传戳则不校验」的可选语义一致）。
+                var stampSet = hasStamp
+                    ? $", {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pNewStamp")}"
                     : "";
-                var stampSet = table.Columns.Any(c => c.Name == "ConcurrencyStamp")
-                    ? $", {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pConcurrencyStamp")}"
+                var stampWhere = hasStamp
+                    ? $" AND ({SqlDialect.ParamName(provider, "pOldStamp")} IS NULL" +
+                      $" OR {SqlDialect.QuoteIdent(provider, "ConcurrencyStamp")} = {SqlDialect.ParamName(provider, "pOldStamp")})"
                     : "";
                 var sql =
-                    $"UPDATE {t} SET {setSql}{stampSet} WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "pId")}";
+                    $"UPDATE {t} SET {setSql}{stampSet} WHERE {filter.WhereSql} AND {pk} = {SqlDialect.ParamName(provider, "pId")}{stampWhere}";
                 return await RunBatchAsync(op, dataSource, sql, paramList, items.Count, isDryRun, cancellationToken);
             }
 

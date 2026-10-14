@@ -217,7 +217,9 @@ public class FlowExecutor : ITransientDependency
                 isDryRun,
                 callStack,
                 cancellationToken,
-                result.Nodes
+                result.Nodes,
+                filterOutputsByRole: filterOutputsByRole,
+                currentUser: currentUser
             );
 
             if (!outcome.Ok)
@@ -285,7 +287,9 @@ public class FlowExecutor : ITransientDependency
         HashSet<string> callStack,
         CancellationToken cancellationToken,
         List<NodeExecutionRecord> sink,
-        int maxSteps = DefaultMaxSteps
+        int maxSteps = DefaultMaxSteps,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var outcome = new SegmentOutcome();
@@ -316,7 +320,15 @@ public class FlowExecutor : ITransientDependency
                 return outcome;
             }
 
-            var record = await ExecuteNodeAsync(node, ctx, isDryRun, callStack, cancellationToken);
+            var record = await ExecuteNodeAsync(
+                node,
+                ctx,
+                isDryRun,
+                callStack,
+                cancellationToken,
+                filterOutputsByRole,
+                currentUser
+            );
             sink.Add(record);
 
             if (string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase))
@@ -446,6 +458,15 @@ public class FlowExecutor : ITransientDependency
         var schema = ResolveFinalSchema(dsl, endNode);
         if (schema.Count == 0)
         {
+            // P0-2（评审 S7）：无契约不再整包输出 ctx.Vars —— 那是安全边界。
+            // 试运行保留全量视图（设计期调试需要），正式执行一律拒绝。
+            if (!isDryRun)
+            {
+                throw new UserFriendlyException(
+                    $"流程 '{dsl.Key}' 未声明输出契约（End.finalOutputs 或根级 outputs），已拒绝输出中间变量。"
+                );
+            }
+
             result.OutputDataJson = ctx.Vars.ToJsonString(JsonOptions);
             result.VisibleFields = ctx.Vars.Select(x => x.Key).ToList();
             result.ContractFieldCount = result.VisibleFields.Count;
@@ -558,7 +579,9 @@ public class FlowExecutor : ITransientDependency
         FlowRuntimeContext ctx,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var sw = Stopwatch.StartNew();
@@ -600,7 +623,17 @@ public class FlowExecutor : ITransientDependency
 
             try
             {
-                await DispatchNodeAsync(type, node, ctx, record, isDryRun, callStack, nodeToken);
+                await DispatchNodeAsync(
+                    type,
+                    node,
+                    ctx,
+                    record,
+                    isDryRun,
+                    callStack,
+                    nodeToken,
+                    filterOutputsByRole,
+                    currentUser
+                );
             }
             catch (OperationCanceledException) when (
                 nodeCts is not null && !cancellationToken.IsCancellationRequested)
@@ -634,7 +667,9 @@ public class FlowExecutor : ITransientDependency
         NodeExecutionRecord record,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         switch (type)
@@ -751,7 +786,7 @@ public class FlowExecutor : ITransientDependency
                 case "logiccomponent":
                 case "component":
                 {
-                    await ExecuteSubFlowAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    await ExecuteSubFlowAsync(node, ctx, record, isDryRun, callStack, cancellationToken, filterOutputsByRole, currentUser);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -759,7 +794,7 @@ public class FlowExecutor : ITransientDependency
                 case "foreach":
                 case "loop":
                 {
-                    await ExecuteForEachAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    await ExecuteForEachAsync(node, ctx, record, isDryRun, callStack, cancellationToken, filterOutputsByRole, currentUser);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -767,7 +802,7 @@ public class FlowExecutor : ITransientDependency
                 case "parallel":
                 case "when":
                 {
-                    await ExecuteParallelAsync(node, ctx, record, isDryRun, callStack, cancellationToken);
+                    await ExecuteParallelAsync(node, ctx, record, isDryRun, callStack, cancellationToken, filterOutputsByRole, currentUser);
                     CheckFailWhen(node, ctx);
                     break;
                 }
@@ -1477,7 +1512,9 @@ public class FlowExecutor : ITransientDependency
         NodeExecutionRecord record,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var subKey = (node.SubFlowKey ?? node.Url ?? "").Trim();
@@ -1519,8 +1556,8 @@ public class FlowExecutor : ITransientDependency
             snap.DslJson,
             bodyJson,
             isDryRun,
-            filterOutputsByRole: false,
-            currentUser: null,
+            filterOutputsByRole: filterOutputsByRole,
+            currentUser: currentUser,
             cancellationToken,
             skipValidation: true,
             callStack
@@ -1600,7 +1637,9 @@ public class FlowExecutor : ITransientDependency
         NodeExecutionRecord record,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var itemsNode = FlowContextResolver.ResolvePathNode(node.ItemsPath, ctx);
@@ -1715,7 +1754,7 @@ public class FlowExecutor : ITransientDependency
             var bodyJson = (JsonObject)bodyInputs.DeepClone();
             bodyJson[itemVar] = array[index]?.DeepClone();
             bodyJson[indexVar] = JsonValue.Create(index);
-            return RunControlBodyAsync(node, node.Id, node.LoopBody, node.SubFlowKey, bodyJson, isDryRun, callStack, cancellationToken);
+            return RunControlBodyAsync(node, node.Id, node.LoopBody, node.SubFlowKey, bodyJson, isDryRun, callStack, cancellationToken, filterOutputsByRole, currentUser);
         }
     }
 
@@ -1729,7 +1768,9 @@ public class FlowExecutor : ITransientDependency
         NodeExecutionRecord record,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var branches = node.Branches ?? [];
@@ -1869,7 +1910,9 @@ public class FlowExecutor : ITransientDependency
                     branchInputs,
                     isDryRun,
                     callStack,
-                    branchToken
+                    branchToken,
+                    filterOutputsByRole,
+                    currentUser
                 );
                 return new BranchOutcome(branchRef, outcome.Ok, outcome.Output, outcome.Error, branch.Optional);
             }
@@ -1904,7 +1947,9 @@ public class FlowExecutor : ITransientDependency
         JsonObject bodyInput,
         bool isDryRun,
         HashSet<string> callStack,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool filterOutputsByRole = false,
+        Volo.Abp.Users.ICurrentUser? currentUser = null
     )
     {
         var bodyJson = bodyInput.ToJsonString(JsonOptions);
@@ -1917,8 +1962,8 @@ public class FlowExecutor : ITransientDependency
                 JsonSerializer.Serialize(subDsl, JsonOptions),
                 bodyJson,
                 isDryRun,
-                filterOutputsByRole: false,
-                currentUser: null,
+                filterOutputsByRole: filterOutputsByRole,
+                currentUser: currentUser,
                 cancellationToken: cancellationToken,
                 skipValidation: true,
                 callStack: scopeStack
@@ -1944,8 +1989,8 @@ public class FlowExecutor : ITransientDependency
             snap.DslJson,
             bodyJson,
             isDryRun,
-            filterOutputsByRole: false,
-            currentUser: null,
+            filterOutputsByRole: filterOutputsByRole,
+            currentUser: currentUser,
             cancellationToken: cancellationToken,
             skipValidation: true,
             callStack: scopeStack
@@ -2415,6 +2460,22 @@ public class FlowExecutor : ITransientDependency
             throw new UserFriendlyException("DSL node Ref（引用名）must be unique.");
         }
 
+        // P0-1（评审 S/C2）：节点类型白名单。dispatch 对未知类型一律抛 500，
+        // 这里把"发布成功、调用即炸"提前变成发布期错误。
+        foreach (var node in dsl.Nodes)
+        {
+            var kind = ResolveNodeKind(node).Trim().ToLowerInvariant();
+            if (!SupportedNodeKinds.Contains(kind))
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}' 的类型不受支持：'{node.Type}'" +
+                    (string.IsNullOrWhiteSpace(node.Kind) ? "" : $"（有效类型 '{kind}'）") +
+                    "。受支持类型：" + string.Join(", ", SupportedNodeKinds.OrderBy(x => x, StringComparer.Ordinal)) +
+                    "。多路分支请用 Condition（多出边 + combine / isDefault）。"
+                );
+            }
+        }
+
         dsl.Edges ??= [];
         var ids = dsl.Nodes.Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var edge in dsl.Edges)
@@ -2542,6 +2603,81 @@ public class FlowExecutor : ITransientDependency
                 }
             }
         }
+
+        ValidateOutputContract(dsl);
+    }
+
+    /// <summary>
+    /// 输出契约与字段可见性校验（P0-2 / P0-3，评审 S7 / S12）。
+    ///
+    /// P0-2：无最终契约时引擎不再回退输出全部中间变量（那是安全边界）——
+    /// 根级 <c>outputs</c> 或**每个** End 节点的 <c>finalOutputs</c> 至少声明其一，
+    /// 否则发布被拒。运行期 <see cref="FinishOutputsAsync"/> 仍有兜底报错。
+    ///
+    /// P0-3：<c>visibleTo.mode</c> 只接受 all/none/roles/permissions（拼错即拒）；
+    /// <c>roleIds</c> 不受支持（ICurrentUser 只暴露角色名，配了恒不匹配 → 显式拒绝而非静默失效）。
+    /// </summary>
+    private static void ValidateOutputContract(FlowDslDocument dsl)
+    {
+        var endNodes = dsl.Nodes
+            .Where(x => string.Equals(x.Type, "End", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var hasRootOutputs = dsl.Outputs is { Count: > 0 };
+        if (!hasRootOutputs && endNodes.Any(e => e.FinalOutputs is not { Count: > 0 }))
+        {
+            throw new UserFriendlyException(
+                "流程必须声明输出契约：根级 outputs，或每个 End 节点的 finalOutputs。" +
+                "未声明时引擎不再回退输出全部中间变量（契约优先，防内部变量整包外泄）。"
+            );
+        }
+
+        foreach (var output in dsl.Outputs)
+        {
+            ValidateVisibleTo($"outputs.{output.Name}", output.VisibleTo);
+        }
+
+        foreach (var end in endNodes)
+        {
+            foreach (var output in end.FinalOutputs ?? [])
+            {
+                ValidateVisibleTo($"End('{end.Id}').finalOutputs.{output.Name}", output.VisibleTo);
+            }
+        }
+
+        // 注：节点级 outputs（FlowNodeBindingDsl）不承载 visibleTo —— 出参可见性只在
+        // 「契约层」（根级 outputs / End.finalOutputs）定义，故此处无需校验节点绑定。
+    }
+
+    private static readonly HashSet<string> KnownVisibleToModes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "all",
+        "none",
+        "roles",
+        "permissions"
+    };
+
+    private static void ValidateVisibleTo(string owner, FlowVisibleToDsl? visibleTo)
+    {
+        if (visibleTo == null)
+        {
+            return;
+        }
+
+        var mode = (visibleTo.Mode ?? "").Trim();
+        if (!KnownVisibleToModes.Contains(mode))
+        {
+            throw new UserFriendlyException(
+                $"{owner} 的 visibleTo.mode '{visibleTo.Mode}' 不受支持（受支持：all / none / roles / permissions）。"
+            );
+        }
+
+        if (visibleTo.RoleIds is { Count: > 0 })
+        {
+            throw new UserFriendlyException(
+                $"{owner} 的 visibleTo.roleIds 不受支持：运行期只有角色名（ICurrentUser.Roles），roleIds 恒不匹配。请改用 roleNames。"
+            );
+        }
     }
 
     private static bool Compare(object? left, object? right, string op)
@@ -2596,10 +2732,11 @@ public class FlowExecutor : ITransientDependency
     /// </summary>
     private static void ValidateOutEdgeCardinality(FlowDslDocument dsl)
     {
+        // Switch 曾在此白名单里，但它没有 dispatch 分支（发布成功、调用即 500）——
+        // 节点类型白名单（P0-1）现在直接拒绝该类型，多出边仅 Condition 合法。
         var multiOutAllowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "Condition",
-            "Switch"
+            "Condition"
         };
 
         var outgoing = dsl.Edges
@@ -2654,6 +2791,53 @@ public class FlowExecutor : ITransientDependency
 
         return type;
     }
+
+    /// <summary>
+    /// 节点类型白名单（P0-1，评审 C2）。与 <see cref="DispatchNodeAsync"/> 的 case 清单**逐一对应**：
+    /// 新增 dispatch 分支时必须同步加这里；否则发布期会拒绝该类型。
+    /// 注意：<c>sql</c> / <c>switch</c> / <c>wait</c> 刻意不在名单里 —— 引擎没有对应分支，
+    /// 配了就是"发布成功、调用即 500"，宁可发布失败。
+    /// </summary>
+    public static readonly HashSet<string> SupportedNodeKinds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // 流程骨架
+        "start",
+        "end",
+        // 简单动作
+        "log",
+        "assign",
+        "setvariable",
+        "mask",
+        "throw",
+        "assert",
+        "condition",
+        // 集成
+        "http",
+        "httpcall",
+        "code",
+        "rabbitmqpublish",
+        "rabbitpublish",
+        "broadcast",
+        // 复用与控制流（统一调度器）
+        "subflow",
+        "logiccomponent",
+        "component",
+        "foreach",
+        "loop",
+        "parallel",
+        "when",
+        // 资源 CRUD（含 R4 批量三入口）
+        "resourcequery",
+        "resourceget",
+        "resourcecreate",
+        "resourceupdate",
+        "resourcedelete",
+        "resourcecrud",
+        "resourcebatchcreate",
+        "resourcebatchupdate",
+        "resourcebatchdelete",
+        "resourcebatch"
+    };
 
     /// <summary>
     /// 判定节点类型是否属于「写操作」且可通过 retryOnWrite 开启重试。

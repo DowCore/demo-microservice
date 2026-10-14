@@ -165,13 +165,20 @@ public class NodeResiliencePolicy : INodeResiliencePolicy, ITransientDependency
 
     private static bool IsTransientDbError(System.Data.Common.DbException ex)
     {
-        // 统一按「连接/超时/死锁/序列化冲突」这类可重试错误码判断，跨库取并集。
+        // PostgreSQL 的 SqlState 是 5 位**字母数字**串（40001 / 40P01 / 08006），
+        // 不能走 int.TryParse —— "40P01" 会解析失败退化成 0，导致死锁/序列化冲突/断连永不重试。
+        // 这里单独按字符串前缀分类，不走数值通道。
+        if (ex is Npgsql.PostgresException pg)
+        {
+            return IsTransientPostgresSqlState(pg.SqlState);
+        }
+
+        // 其余家族统一按「连接/超时/死锁/序列化冲突」这类可重试错误码判断，跨库取并集。
         var number = ex switch
         {
             Microsoft.Data.SqlClient.SqlException sql => sql.Number,
             MySqlConnector.MySqlException my => my.Number,
-            Npgsql.PostgresException pg => int.TryParse(pg.SqlState, out var s) ? s : 0,
-            Npgsql.NpgsqlException => -1,
+            Npgsql.NpgsqlException => -1, // 非 PostgresException：网络/连接层
             Oracle.ManagedDataAccess.Client.OracleException ora => ora.Number,
             _ => 0
         };
@@ -182,10 +189,45 @@ public class NodeResiliencePolicy : INodeResiliencePolicy, ITransientDependency
             -2 or 1205 or 4060 or 233 or 64 or 10053 or 10054 or 10060 => true,
             // MySQL: 死锁、锁等待超时、连接丢失、过多连接
             1213 or 1205 or 2006 or 2013 or 1040 => true,
-            // PostgreSQL: 40001 序列化失败 / 40P01 死锁 / 08xxx 连接异常 / 57P01 关停
-            40_001 or 40_001_0 or 53_000 => true,
+            // Oracle（ORA-xxxxx）：死锁、无法序列化、通信通道中断、未连接、TNS 超时/无监听、实例关停中
+            60 or 8177 or 3113 or 3114 or 12170 or 12541 or 12571 or 12547 or 12537 or 1033 or 1089 => true,
             -1 => true, // Npgsql 非 PostgresException（网络/连接层）
             0 => false,
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// PostgreSQL SqlState 分类（SQLSTATE 规范 + PG 扩展）。可重试集合：
+    /// <c>08xxx</c> 连接异常；<c>40001</c> 序列化失败；<c>40P01</c> 死锁；
+    /// <c>53xxx</c> 资源不足（内存/连接数/配置上限）；<c>55P03</c> 锁不可用；
+    /// <c>57P01~57P03</c> 实例关停/崩溃恢复/暂不可连接。
+    /// </summary>
+    /// <remarks>internal 便于单测直测（Npgsql 的 PostgresException 无法在测试中构造）。</remarks>
+    internal static bool IsTransientPostgresSqlState(string? sqlState)
+    {
+        if (string.IsNullOrWhiteSpace(sqlState) || sqlState.Length < 2)
+        {
+            return false;
+        }
+
+        // 连接异常类（08 前缀：08000/08001/08003/08006/08004/08007…）
+        if (sqlState.StartsWith("08", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return sqlState switch
+        {
+            "40001" => true, // serialization_failure
+            "40P01" => true, // deadlock_detected
+            "53200" => true, // out_of_memory
+            "53300" => true, // too_many_connections
+            "53400" => true, // configuration_limit_exceeded
+            "55P03" => true, // lock_not_available
+            "57P01" => true, // admin_shutdown
+            "57P02" => true, // crash_shutdown
+            "57P03" => true, // cannot_connect_now
             _ => false
         };
     }

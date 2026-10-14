@@ -21,7 +21,7 @@ alwaysApply: true
 4. **资产寄存器模型 ≠ 应用容器模型**。表单 / 报表 / 流程是**全局资产**，应用（SysMenu 树）只靠 code 引用；**绝不把资产内联进应用** —— 放弃 code 引用即退化核心差异化。
 5. **删除逻辑可编排**。记录删除一律走资源 `DeleteFlowKey` 流程；批量删除 / 性能优化**不得绕过它直接打表**。
 6. **图态与执行态分离**。画布存 `GraphJson`，引擎只读 `DslJson` 并自带校验；**引擎不信任前端**。
-7. **出参角色可见性不可破坏**。`FinalOutputAssembler` × `OutputVisibilityFilter.IsVisible` 按 `roles`+`permissions` 在**接口层**过滤字段；子图（SubFlow / ForEach / Parallel）不得旁路（当前已知缺陷 S6，改动必须向"透传角色快照"方向收敛，禁止加深）。
+7. **出参角色可见性不可破坏**。`FinalOutputAssembler` × `OutputVisibilityFilter.IsVisible` 按 `roles`+`permissions` 在**接口层**过滤字段；子图（SubFlow / ForEach / Parallel）必须把 `filterOutputsByRole` 与 `currentUser` 透传下去（S6 已在 `91d75bd` 修掉，禁止再硬编码 `false` / `null`）。
 8. **版本快照 + 缓存失效 + `FlowUsage` 调用影响索引三者闭环**。改动其一必须保持三者一致。
 
 # 稳定性优先级约定
@@ -33,11 +33,15 @@ alwaysApply: true
 - `async` 节点（当前 fire-and-forget 是已知缺陷 C1）；
 - 批量写（batchcreate / batchupdate / batchdelete）。
 
-# 当前实现状态（2026-10-14，HEAD `0c4f7eb`；引用前实测复核）
+# 当前实现状态（2026-10-14，HEAD `a95fb0e`，代码基线 `91d75bd`；引用前实测复核）
 
-**已实现（勿再当未实现）**：统一调度器 `RunSegmentAsync`；ForEach / Parallel / SubFlow 控制流；R1 HTTP 非安全方法禁重试（`ServiceDefaults/Extensions.cs:43` `DisableForUnsafeHttpMethods()`）；R2 节点级 `timeoutMs`（`ExecuteNodeAsync` 单点包裹，默认 30s / 上限 600s）；R3 非 HTTP 写弹性 `NodeResiliencePolicy.cs` + DSL `retryOnWrite`（声明即校验）；R4 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey。
+文档正文有滞后句，**以符号与本段为准**，不要按旧行号跳转（P0 批次在 `FlowExecutor.cs` 净增约 190 行）。定稿只看 `docs/`；`docx/` 里的 Word 是本地导出，不作为现状。
 
-**已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` / `Wait` 节点；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；异步节点结果回收（R5）；发布缓存跨进程失效（C3/E8）；单流程调用权限码（S14/E10）；未知 DSL 字段报错（当前静默忽略）；子图角色透传（S6）。
+**已实现（勿再当未实现）**：统一调度器 `RunSegmentAsync`；ForEach / Parallel / SubFlow；R1 HTTP 非安全方法禁重试（`ServiceDefaults/Extensions.cs` `DisableForUnsafeHttpMethods()`）；R2 节点级 `timeoutMs`（`ExecuteNodeAsync` 单点包裹，默认 30s / 上限 600s）；R3 非 HTTP 写弹性 `NodeResiliencePolicy.cs` + DSL `retryOnWrite`（声明即校验）；R4 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey。
+
+**P0 止血已落地（`91d75bd`，勿再当缺陷）**：C2 `SupportedNodeKinds` 白名单（`sql` / `switch` / `wait` **发布期拒绝**，多出边只留 Condition）；S7 `ValidateOutputContract`（根 `outputs` 或每个 End 的 `finalOutputs`）；S12 未知 `visibleTo.mode` 与 `roleIds` 发布期拒绝；S6 子图透传 `filterOutputsByRole` / `currentUser`；C13 PG SQLSTATE 按字符串分类 + Oracle 瞬态码；C16 `batchupdate` 写新戳、比旧戳，并合并 `filter.Args`。
+
+**已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` / `Wait` 节点（现在是发布失败，不是调用 500）；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；异步节点结果回收（R5，`Task.Run` + `CancellationToken.None` 仍在）；发布缓存跨进程失效（C3/E8）；单流程调用权限码（S14/E10）；未知 DSL 字段报错（仍静默忽略）；评审 P0-5～P0-14（约定列 Origin、破坏性 DDL、默认口令、SSRF、OA 驳回语义等）。Code 沙箱是 **Jint**，不是 Roslyn。
 
 **权威清单**（改动前必读）：
 - 事实契约 `docs/lowcode-logic-orchestration.md`（§2 能力总表 / §14 行为边界 / §15 规划）
@@ -57,5 +61,5 @@ alwaysApply: true
 # 工程门禁
 
 - 构建：`dotnet build Meta.Dow.slnx -c Release`（CPM 在 `Directory.Packages.props`）。
-- 测试：`dotnet test tests/Meta.Dow.Orchestration.Tests`（当前基线 **62/62**）。
+- 测试：`dotnet test tests/Meta.Dow.Orchestration.Tests`（当前基线 **91**：66 个 `[Fact]` + 25 条 `[InlineData]`；2026-10-14 按特性计数与文档声称的 91/91 一致，本轮未重跑测试进程）。
 - 本仓**无提交钩子**；提交 = commit + push，推送后以 `git ls-remote origin refs/heads/main` 为准核对（本机 push 存在"服务端已收、客户端假失败"，勿盲目重推）。

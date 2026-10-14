@@ -22,6 +22,12 @@ public interface IFlowDefinitionAppService : IApplicationService
 
     Task DeleteAsync(Guid id);
 
+    /// <summary>停用已发布流程。停用后立即失效调用方缓存，跨副本通过缓存通知传播。</summary>
+    Task<FlowDefinitionDto> DisableAsync(Guid id);
+
+    /// <summary>重新启用被停用的流程（回到已发布态或草稿态）。</summary>
+    Task<FlowDefinitionDto> EnableAsync(Guid id);
+
     Task<FlowVersionDto> PublishAsync(Guid id);
 
     Task<ListResultDto<FlowVersionDto>> GetVersionsAsync(Guid id);

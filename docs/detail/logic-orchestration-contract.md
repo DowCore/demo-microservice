@@ -3,13 +3,13 @@
 # Meta.Dow 低代码逻辑编排 — 实现契约
 
 > **文档性质**：**事实契约**。本文描述代码的**真实行为**，不是规划书。
-> **代码基线**：`Meta.Dow.slnx` @ commit `91d75bd`（2026-10-14，**P0 止血批次**：S6/S7/S12/C2 已修，C13/C16 已修）。实测 `dotnet build Meta.Dow.slnx -c Release` = **0 错误**；`tests/Meta.Dow.Orchestration.Tests` = **91/91 通过**（本批次新增 29 例）。
-> **警告数说明**：`267d375`（2026-10-13）实测记 162 警告；165 与 162 的差值来自 NU1902/NU1903 审计类警告随 NuGet 漏洞库波动（restore 实测存在该类警告），与代码无关。
-> **核对方式**：文中每条结论都可在 `相对路径:行号` 处复核。行号对应上述 commit，代码变动后需重新核对。
-> ⚠️ **行号时点（2026-10-14）**：**§14.0 已按 `91d75bd` 重新核对**；**其余章节的 `FlowExecutor.cs:NNNN` 仍对应 `0c4f7eb`**
-> ——本轮 P0 批次在 `FlowExecutor.cs` 净增约 190 行（插入点 `~220`/`~288`/`~319`/`~448`/`~561`/`~603`/`~637`/`~1480`/`~1603`/`~1732`/`~1872`/`~1907`/`~2417`），
-> 故旧行号已整体下移（`~448` 前三处 +0～+21；`~448`–`~1480` +21～+35；`~1907`–`~2417` +45；`~2417` 之后 +61～+188）。**引用前请按符号名检索**；§2–§13 的行号补正值待后续批次统一刷新。
-> **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划，见 §15） ｜ 🐞 已知缺陷（见 §14）
+> **代码基线**：`Meta.Dow.slnx` @ commit `91d75bd`（2026-10-14，**P0 止血批次**：S6/S7/S12/C2 已修，C13/C16 已修）+ **轨道A 整改批次**（A1/A3/A4/A5/A7/A8 + 控制流语义）+ **校验覆盖范围补齐批次**（§14.0 末四行）。`tests/Meta.Dow.Orchestration.Tests` = **297/297 通过**（基线 91）。
+> **警告数说明**：`267d375`（2026-10-13）实测记162 警告；165 与 162 的差值来自 NU1902/NU1903 审计类警告随NuGet 漏洞库波动（restore 实测存在该类警告），与代码无关。
+> **核对方式**：文中每条结论都可在**符号名**处复核。
+> ⚠️ **行号时点**：整改批次在 `FlowExecutor.cs` 等文件**净增数百行**，且多轮改动持续移动位置，因此
+> **全文行号一律按符号名检索**（`EvaluateConditionItem` / `ExecuteWaitAsync` / `ValidateDsl` 等）。本轮已把 §14 与 §2 中的主要落点改为符号名，彻底清理需一次独立的文档治理 pass。
+> **状态图例**：✅ 已实现 ｜ ⚠️ 部分实现 ｜ ❌ 未实现（属规划，见 §15） ｜ 🐞 已知缺陷（见 §14）｜ ✅已修（缺陷已修复，§14 中就地标注）
+> **前端影响**：前端在 `D:\Project\vue-demo`（不在本仓），本仓文档无法回答「界面上是否可用」。前端需跟进的清单见[评估文档 §8.8](./logic-orchestration-assessment.md)。
 > **重构说明**：本文由 2026-10-13 的代码核对重构而成，取代此前把「目标态规格」与「现状事实」混写的版本。旧版中大量重复四遍的节点规格已合并为 §3–§9 的单一契约；规划内容统一收进 §15，与契约严格隔离。旧版全文见 git 历史。
 
 ## 目录
@@ -105,32 +105,34 @@ Meta.Dow.SaaS ★
 | 入参契约 InputSchema（name/type/required/default/source/systemKey/systemExpr/rules/properties/items） | ⚠️ | `FlowDslModels.cs:21-50` | `source` 仅 `input`/`system` 被消费（`FlowExecutor.cs:388-403`）；`expr` ❌ 未实现；`type` 仅在规则层校验，`datetime` 不校验 |
 | 系统参数 `sys.*` + 日期表达式 | ✅ | `LogicApiAppService.cs:106-148`、`SystemContextBuilder.cs`、`DateExpressionEvaluator.cs` | 12 个固定键 + `sys.Now ± 3d`、`\| monthEnd` 等后缀；有 `/system-parameters` 与 `/system-parameters/preview-date` |
 | 入参声明式校验 `rules[]` | ✅ | `InputRuleValidator.cs` | required/min/max/minLength/maxLength/minItems/maxItems/pattern/enum/email/guid/url/expr/assert（另有未文档化别名 `js`/`when`） |
-| 条件节点：多条件 + 组合式 + 多出边 | ⚠️ | `FlowExecutor.cs:497-554`、`:2289-2310` | 算子缺 `in`/`notIn`/`between` 🐞；`strategy` 从不校验 🐞 |
-| 执行节点 I/O（inputs / outputs / resultRoot / map / to） | ✅ | `FlowExecutor.cs:1398-1427`、`FlowContextResolver.cs:402-439` | 契约与实现一致 |
-| Http 节点 | ✅ | `FlowExecutor.cs:709-732`、`:947-1180` | 同步/异步见 §11.4；SSRF 无防护 🐞 |
+| 条件节点：多条件 + 组合式 + 多出边 | ✅ | `FlowExecutor.cs` `EvaluateConditionItem` / `ResolveNextNode` / `SupportedConditionOps` | 算子已补齐至 23 个；`strategy` 取值白名单已在发布期校验 ✅ |
+| 执行节点 I/O（inputs / outputs / resultRoot / map / to） | ✅ | `FlowExecutor.cs` `ApplyExecutableOutputs`、`FlowContextResolver.cs` `ApplyNodeOutputs` | 契约与实现一致 |
+| Http 节点 | ✅ | `FlowExecutor.cs` `ExecuteHttpAsync` / `QueueHttpCallAsync` | 同步/异步见 §11.4；出站 SSRF 防护见 `HttpEgressGuard` ✅ |
 | Code 节点（Jint 沙箱） | ✅ | `CodeSandboxExecutor.cs` | 本引擎最扎实的部分，见 §8 |
-| **独立 Sql 节点** | ❌ | `FlowExecutor.cs:791-792` 无 `case "sql"` | SQL 只能经 Code 节点 `db.*` 或资源 CRUD 节点。**发布期不拦** 🐞 |
-| Assign / `setvariable` | ✅ | `:668-674` | |
-| Log（`{{path}}` 模板） | ✅ | `:647-666` | `[FlowLog]` 打日志 |
-| Mask / Throw / `assert` | ✅ | `:676-681`、`:683-688`、`MaskValueHelper.cs` | phone/idCard/bankCard 预设的 keep 参数被硬编码 🐞 |
-| RabbitMqPublish（fanout 广播） | ⚠️ | `:741-748`、`:2174-2201` | `payloadMode=array` 无分支 🐞 |
-| SubFlow（逻辑组件调用） | ✅ | `:750-757`、`:1478-1579` | 深度上限 5、调用栈环检测 |
-| **ForEach / Loop** | ✅ | `:759-765`、`:1597-1720` | 并发窗口、`maxIterations`、`itemErrorMode` |
-| **Parallel / WHEN** | ✅ | `:767-773`、`:1726-1900` | `joinMode=all/any/allSettled`、`branchTimeoutMs` |
-| **Switch（多路枚举分支）** | ❌ | 校验放行（`:2599-2603`）但无 dispatch | **发布成功、调用即 500** 🐞 |
-| Wait | ❌ | 无 | 无 Wait 节点 ⇒ 异步出参永远不可用 |
-| `txMode=sameDataSource`（同库统一事务） | ❌ | DSL 无该字段 | 跨节点多次 `db.execute` 逐句自动提交 🐞 |
-| 资源 CRUD 节点（9 个别名） | ✅ | `:775-789`、`ResourceCrudExecutor.cs` | 文档旧版未收录 |
-| 出参角色可见性（visibleTo） | ⚠️ | `OutputVisibilityFilter.cs:57-96`、`FinalOutputAssembler.cs` | 未知 mode 兜底放行 🐞；子图旁路 🐞；无契约时全量暴露 🐞 |
-| 出参整形 map / group / aggregate / promote / wrap | ✅ | `FinalOutputAssembler.cs` | 见 §9；`aggregate` 与 `map` 同配时 map 静默失效 🐞 |
-| 发布为系统 API `POST /api/logic/{flowKey}` | ✅ | `LogicApiController.cs:22-24` | |
-| 定义版本与版本历史 | ✅ | `FlowDefinitionController.cs:97-98` | |
-| 发布校验（结构） | ⚠️ | `FlowExecutor.cs:2388-2545`、`:2597-2644` | **无 Warning 通道、无节点类型白名单、无环检测**；逐条见 §10 |
-| 实例与节点执行日志 | ⚠️ | `LogicApiAppService.cs:44-81`、`FlowInstance.cs` | 异步节点只记 `AsyncQueued`；子图内节点明细丢弃 |
-| 试运行 DryRun | ⚠️ | `FlowInstanceAppService.cs:123-154`、`FlowExecutor.cs:712-721` | Http 节点**直接跳过**；无 `previewAsRole` |
-| 发布缓存 | ⚠️ | `PublishedFlowCache.cs` | 进程内 `IMemoryCache`；失效**只挂发布** 🐞 |
-| 触发层（Rabbit / Kafka / MQTT / Cron） | ✅ | `RabbitMessageTriggerHostedService.cs` 等、`TriggerControllers.cs` | 与画布解耦；MQTT 多副本重复执行 🐞 |
-| 单条逻辑独立调用权限码 | ❌ | `LogicApiAppService.cs:35` | 只有 `Orchestration.Instances.Run` |
+| **独立 Sql 节点** | ❌ | `SupportedNodeKinds` 无 `sql` | SQL 只能经 Code 节点 `db.*` 或资源 CRUD 节点；**发布期已拦** ✅ |
+| Assign / `setvariable` | ✅ | `FlowExecutor.cs` `DispatchNodeAsync` | |
+| Log（`{{path}}` 模板） | ✅ | `FlowExecutor.cs` `ResolveTemplateMessage` | `[FlowLog]` 打日志 |
+| Mask / Throw / `assert` | ✅ | `FlowExecutor.cs` dispatch、`MaskValueHelper.cs` | phone/idCard/bankCard 预设的 keep 参数被硬编码 🐞 |
+| RabbitMqPublish（fanout 广播） | ✅ | `FlowExecutor.cs` `BuildRabbitPayload` | `payloadMode` 支持 `object`（默认）/ `raw`，`payload.item` 字段投影已实现；`array` **已在发布期拒绝** ✅ |
+| SubFlow（逻辑组件调用） | ✅ | `FlowExecutor.cs` `ExecuteSubFlowAsync` | 深度上限 5、调用栈环检测 |
+| **ForEach / Loop** | ✅ | `FlowExecutor.cs` `ExecuteForEachAsync` | 并发窗口、`maxIterations`、`itemErrorMode` |
+| **Parallel / WHEN** | ✅ | `FlowExecutor.cs` `ExecuteParallelAsync` | `joinMode=all/any/allSettled`、`branchTimeoutMs` |
+| **Switch（多路枚举分支）** | ❌ | 无 dispatch 分支 | **发布期已被 `SupportedNodeKinds` 拒绝** ✅（不再出现「发布成功、调用即 500」） |
+| Wait | ✅ | `FlowExecutor.cs` `ExecuteWaitAsync` / `WaitForJobAsync` | 异步出参的唯一消费入口；字段与失败语义见 §6.4 |
+| `txMode=sameDataSource`（同库统一事务） | ❌ | DSL 无该字段 | 跨节点多次 `db.execute` 逐句自动提交；配 `txMode` 会被当未知字段拒 🐞 |
+| 资源 CRUD 节点（9 个别名） | ✅ | `FlowExecutor.cs` dispatch、`ResourceCrudExecutor.cs` | 文档旧版未收录 |
+| 出参角色可见性（visibleTo） | ✅ | `OutputVisibilityFilter`、`FinalOutputAssembler`、`FlowDefinitionAppService.ValidateOutputContracts` | `mode` 白名单 + `roleIds` 拒绝已覆盖**根级/End/嵌套（map.item 可无限层级、group.header、group.children）**；未知 mode 的运行期兜底仍是 `return true`，但发布期已先拒 🐞 |
+| 出参整形 map / group / aggregate / promote / wrap | ✅ | `FinalOutputAssembler`、`FlowDefinitionAppService.ValidateOutputContract` | 见 §9；`aggregate` 与 `map` 同配、`wrap` 非 `array` 均**已在发布期拒绝**（根级与 End 均覆盖）✅ |
+| 发布为系统 API `POST /api/logic/{flowKey}` | ✅ | `LogicApiController` | |
+| 定义版本与版本历史 | ✅ | `FlowDefinitionController` | |
+| 发布校验（结构） | ✅ | `FlowExecutor.ValidateDsl`、`FlowDefinitionAppService.ValidateOutputContracts`、`DslSchemaValidator.ValidateJson` / `ValidateSemantics` | 含节点类型白名单、出边基数、可达性、输出契约（含 End 与嵌套）、未知字段、条件算子与 `strategy` 白名单、`payloadMode` 取值白名单；仍**无 Warning 通道、无环检测** |
+| 实例与节点执行日志 | ⚠️ | `LogicApiAppService`、`FlowInstance` | 子图内节点明细丢弃 |
+| 试运行 DryRun | ⚠️ | `FlowInstanceAppService`、`FlowExecutor` | Http 节点**直接跳过**（非「异步改同步」）；无 `previewAsRole` |
+| 发布缓存 | ⚠️ | `PublishedFlowCache`、`FlowDefinitionInvalidationBroadcaster` | 本地快照 + 共享失效代数比对；**最终一致**，非强一致推送 |
+| 触发层（Rabbit / Kafka / MQTT / Cron） | ✅ | `RabbitMessageTriggerHostedService` 等、`TriggerControllers` | 与画布解耦；MQTT 多副本重复执行 🐞 |
+| 单条逻辑独立调用权限码 | ❌ | `LogicApiAppService` | 只有 `Orchestration.Instances.Run` |
+| 流程停用 / 启用接口 | ✅ | `FlowDefinitionAppService.DisableAsync` / `EnableAsync` | 此前实体有方法但**全仓无调用方**，流程无法通过 API 停用 |
+| 异步作业消费 | ⚠️ | `FlowAsyncJobWorker`、`FlowAsyncJobDispatcher` | 单副本正确；**多副本无claim/乐观锁，会重复消费同一条 `Queued` 作业** 🐞（见 §14.3 末两条） |
 
 ---
 
@@ -323,25 +325,74 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 | `op` | 见下表 |
 | `right` | 字面量或同样来源 |
 
-**实际支持的算子**（`FlowExecutor.cs:2297-2310`）：
+**实际支持的算子**（`FlowExecutor.cs` `EvaluateConditionItem`，白名单见 `SupportedConditionOps`，共 **23** 个）：
 
-`eq`/`==`、`ne`/`!=`、`gt`/`>`、`gte`/`>=`、`lt`/`<`、`lte`/`<=`、`contains`、`notContains`、`isEmpty`、`isNotEmpty`。
+| 类别 | 取值 |
+|---|---|
+| 比较 | `eq`/`==`、`ne`/`!=`、`gt`/`>`、`gte`/`>=`、`lt`/`<`、`lte`/`<=` |
+| 包含 | `contains`、`notContains`、`startswith`、`endswith` |
+| 集合 | `in`、`notin`、`between` |
+| 空值 | `isEmpty`、`isNotEmpty`、`isNull`、`isNotNull` |
 
-🐞 **`in` / `notIn` / `between` 未实现** —— 旧文档把它们列为支持算子，实际会抛 `Unsupported condition op`。
+算子名**大小写不敏感、首尾空白会被`Trim`**，故 `"IN"` 与 `" in "` 合法。
 
-组合式只允许编号与 `and` / `or` / `not` / 括号，发布期校验引用的编号存在（`ConditionCombineEvaluator.Validate` `:2472-2475`）。
+**语义细节（前端实现时必须对齐，否则会产出错误 DSL）**：
+
+- `in` / `notin`：右值可以是**数组**，也可以是**逗号分隔字符串**（`MatchesIn`）。
+- `between`：右值必须是**含两个元素的数组**，语义为**闭区间** `[min, max]`。
+  ⚠️ 与资源/报表筛选器里的 `between` **同名不同层** —— 后者的右值是 `{min, max}`，由 `FilterSqlBuilder` 生成半开区间 SQL。两者不可混用。
+  ⚠️ 闭区间与 `FilterSqlBuilder` 的半开区间不一致，是已知缺陷C20，未统一。
+- `isNull` / `isNotEmpty` 等**不需要右值**；`isEmpty` / `isNotEmpty` 对空白字符串也判真。
+
+算子白名单在**发布期**校验（`ValidateConditionOp`），`failItems` 同样受检。拼错不再拖到运行期才报。
+
+组合式只允许编号与 `and` / `or` / `not` / 括号，发布期校验引用的编号存在（`ConditionCombineEvaluator.Validate`）。
 
 ### 6.2 出边策略
 
-- `strategy` 默认 `firstMatch`：按**出边顺序**取第一条组合式为真的边（`:511-537`）。
-- 🐞 非 `firstMatch` 时不 break ⇒ **最后一条命中的边生效**；且 `strategy` 取值**从不校验**，拼错会静默改变走向。
-- 皆假 → 取 `isDefault` 边，其次 `when=false` 边；**都没有则报错**（`:544-545`、`:342-346`）——这一点与旧文档一致。
-- 🐞 若节点**没有声明 `items`** 而只在边上写了 `combine`，会掉进旧的 `expression`/`when` 分支，`combine` 被忽略并静默走第一条边（`:505-508` vs `:548-553`）。
+- `strategy` **只接受 `firstMatch` / `allMatch`**，取值在**发布期**校验（`ValidateDsl`）。拼错会阻止发布，不再静默改变走向。
+  - `firstMatch`（默认）：按**出边顺序**取第一条组合式为真的边，命中即停。
+  - `allMatch`：所有条件都成立才走该边。
+- 皆假 → 取 `isDefault` 边，其次 `when=false` 边；**都没有则报错**。
+- ⚠️ 若节点**没有声明 `items`** 而只在边上写了 `combine`，会在**发布期**被拒（原先掉进旧 `expression`/`when` 分支，`combine` 被忽略并静默走第一条边）。
 
 ### 6.3 节点级进入条件 `entry`
 
 - 为假 → 节点标记 `Skipped`，不执行、不写 outputs（`:574-584`）。
-- 🐞 **只配 `combine` 不配 `items` 时恒为真**（`EvaluateConditionBlock` `:2264-2269` 直接 `return true`），发布校验也只在 `items.Count>0` 时查 `combine`（`:2481-2484`）。
+- ⚠️ 只配 `combine` 不配 `items` 时恒为真（`EvaluateConditionBlock` 直接 `return true`）—— 现已在**发布期**被拒。
+
+### 6.4 Wait 节点
+
+等待异步外呼作业落终态，是**异步出参唯一的消费入口**（`FlowExecutor.ExecuteWaitAsync`）。
+
+**DSL 字段**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `jobId` | string | 要等的作业 Id。支持 `{{results.xxx.jobId}}` 模板；缺省时取名为 `jobId` 的入参 |
+| `waitTimeoutMs` | int? | 最长等待毫秒数。缺省取节点级 `timeoutMs`，都缺省用 `30000` |
+| `waitFailOnTimeout` | bool | 默认 `true` |
+
+**发布期校验**（`ValidateDsl`）
+
+- 必须有 `jobId` 或名为 `jobId` 的入参，否则拒绝。
+- `waitTimeoutMs` 必须在 `1..600000`（`FlowExecutor.MaxWaitTimeoutMs`，10 分钟）之间。**0 或负数会立即假超时，极大值会把线程占死到进程回收。**
+- `waitFailOnTimeout=false` 却**没有声明 `outputs`** ⇒ 拒绝：放行等待失败却不给下游判断依据，该节点没有意义。
+
+**出参**：`jobId`、`status`、`timedOut`、`failed`、`statusCode`、`error`、`body`（`body` 会解析为 JSON，非 JSON 时降级为字符串）。
+
+**失败语义**（`waitFailOnTimeout=true` 时）
+
+| 情形 | 结果 |
+|---|---|
+| 作业 `Succeeded` | 节点 `Succeeded` |
+| 作业 `Failed` / `Canceled` | 节点 `WaitJobFailed`，抛`UserFriendlyException`，流程失败 |
+| 超过 `waitTimeoutMs` | 节点 `WaitTimedOut`，抛 `UserFriendlyException`，流程失败 |
+| 作业 Id 不存在 | 抛 `UserFriendlyException` |
+
+⚠️ **超时用专用异常 `FlowAsyncJobTimeoutException` 表达**，不用通用 `UserFriendlyException` —— 上层需区分「作业失败」与「等不到结果」，靠匹配文案不可维护。
+
+设 `waitFailOnTimeout=false` 时上述三种情形**均放行**，并留下 `timedOut` / `failed` 出参供下游判断。
 
 ---
 
@@ -541,17 +592,34 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 | 执行节点 required 映射缺失 → Error | ❌ 只在运行期抛（`FlowContextResolver.cs:369-372`） |
 | Code 未过沙箱静态检查 → Error | ❌ 运行期才查（`CodeSandboxExecutor.cs:70`） |
 | Sql 未选白名单 / 疑似拼接 → Error | ❌ 无独立 Sql 节点；未登记/停用的 `dataSourceId` 也**不校验** |
-| 同步节点读异步出参且无 Wait → Error | ❌ 无 Wait 节点，也无此校验 |
+| 同步节点读异步出参且无 Wait → Error | ❌无此校验（Wait 已实现，但未做「跨异步边界」的静态检查） |
 | `outputs[].from` 指向未声明路径 | ❌ 不校验 |
-| **Warning 级**：无 `visibleTo` / 不可达节点 / 敏感未标 `sensitive` | ❌ **完全没有 Warning 通道**，`ValidateDsl` 只 throw |
-| 节点 `type`/`kind` 白名单 | ❌ 不校验 |
+| **Warning 级**：无 `visibleTo` / 不可达节点 /敏感未标 `sensitive` | ❌ **完全没有 Warning 通道**，`ValidateDsl` 只 throw |
+| 未知 / 未实现的 DSL 字段 | ✅ `DslSchemaValidator.ValidateJson` 在发布期拒绝（反射生成白名单，模型加字段自动跟随） |
+| 已知字段的**取值**是否有消费点 | ✅ `DslSchemaValidator.ValidateSemantics`（如 `payloadMode=array` 拒绝） |
+| 节点 `type`/`kind` 白名单 | ✅ `SupportedNodeKinds`，与 dispatch case 逐一对应 |
+| `condition.strategy` 取值 | ✅ 发布期白名单 `firstMatch` / `allMatch` |
+| 条件算子（含 `failItems`） | ✅ 发布期白名单 `SupportedConditionOps` |
+| Wait 的 `jobId` / `waitTimeoutMs` / `outputs` | ✅ 见 §6.4 |
+| 出参 `aggregate` + `map` 冲突、`wrap` 取值 | ✅ 发布期拒绝，**根级 `outputs` 与 `End.finalOutputs` 均覆盖** |
+| 嵌套 `visibleTo`（`map.item[]` / `group.header[]` / `group.children`） | ✅ 发布期递归校验（此前只查根级，嵌套拼错走运行期 `return true` 兜底） |
+| `payloadMode` 取值 | ✅ 仅 `object`（省略即此值）/ `raw`；`array` 拒绝 |
 
 ### 10.3 「校验放行 → 运行期抛错」的组合（最危险）
 
-1. `type=Logic, kind=Sql`（旧文档自己的 DSL 示例就是它）→ 发布通过 → 运行期抛 `Unsupported node type 'sql'`。
-2. `type=Switch` 多出边 → 校验**显式豁免** → 无 dispatch → 运行期抛错。
-3. 任意拼错的 `type`（如 `Foo`）→ 不校验类型白名单 → 运行期抛错。
-4. `templates`/`transform`/`payloadMode=array` 等被忽略的配置 → 静默不生效，不报错。
+以下组合**已在发布期消除**：
+
+1. ~~`type=Logic, kind=Sql` → 发布通过 → 运行期抛 `Unsupported node type 'sql'`~~ ⇒ 现由节点类型白名单在发布期拒绝。
+2. ~~`type=Switch` 多出边 → 校验显式豁免 → 无 dispatch → 运行期抛错~~ ⇒ 同上。
+3. ~~任意拼错的 `type`（如 `Foo`）→ 运行期抛错~~ ⇒ 现发布期拒绝并给出「是否想写 X」提示。
+4. ~~`templates`/`transform` 等被忽略的配置 → 静默不生效~~ ⇒ 现由 `DslSchemaValidator.ValidateJson` 在发布期拒绝（`transform`、`asyncJobId`、`previewAsRole`、`sql` 等「模型有但无消费点」的字段一律拒绝并给替代方案）。
+5. ~~`payloadMode=array` → 静默退化为整包 inputs~~ ⇒ 现由 `ValidateSemantics` 按取值拒绝。
+6. ~~只配 `End.finalOutputs` 的流程绕过 `aggregate`+`map` 冲突拦截~~ ⇒ 遍历范围已覆盖 End 节点。
+
+**仍然存在的**（未在本轮整改范围）：
+
+- 环检测：仍只在运行期用 `visited`，发布期不查环。
+- 多副本下`FlowAsyncJobWorker` 会重复消费同一条 `Queued` 作业（无 claim/乐观锁）——但这属于运行期幂等性问题，不是校验放行。
 
 ---
 
@@ -572,9 +640,10 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 
 ### 11.2 节点超时
 
-- 默认 `30000ms`；合法区间 `50..600000`；`0` = 不限时（`OrchestrationConsts.cs:46-52`）。
-- 超时包在**唯一分发行**上（`:586-593`），新增节点不会漏包。
-- ⚠️ 对 Code 节点无效（沙箱硬顶 8s）；🐞 对异步 Http 无效（见 §11.4）。
+- 默认 `30000ms`；合法区间 `50..600000`；`0` = 不限时（`OrchestrationConsts`）。
+- 超时包在**唯一分发行**上（`FlowExecutor.ExecuteNodeAsync`），新增节点不会漏包。
+- ⚠️ **对 Code 节点只生效到 8s**：`timeoutMs ≤ 8000` 时按配置正常生效；`> 8000` 会被 Jint 沙箱的硬顶（`OrchestrationConsts.CodeScriptTimeoutSeconds = 8`）**静默截断**，配 600s 与配 8s 效果相同。这是"配了看起来生效、实际没生效"的典型残留 🐞。
+- 🐞 对异步 Http 作业无效：作业已脱离节点生命周期，须用 Wait 的 `waitTimeoutMs`（见 §11.4）。
 
 ### 11.3 弹性与重试
 
@@ -590,20 +659,21 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 
 ### 11.4 异步（`async`）
 
-⚠️ **只有 Http/HttpCall 读取 `node.Async`**（`:723-727`）；`code`/`rabbitmqpublish`/`subflow`/`foreach`/`parallel`/`resource*`/`assign`/`log`/`mask` **静默忽略该字段**。
+⚠️ **只有 Http/HttpCall 读取 `node.Async`**；`code`/`rabbitmqpublish`/`subflow`/`foreach`/`parallel`/`resource*`/`assign`/`log`/`mask` **静默忽略该字段**。
 
-Http 异步的实际行为（`:860-944`）：
+Http 异步的实际行为（`FlowExecutor.QueueHttpCallAsync`）：
 
-- 校验入参后**只记录 `record.Status = "AsyncQueued"`** 并入队，主链立即继续；
-- 后台是 `_ = Task.Run(async () => { … }, CancellationToken.None)`；
-- 🐞 **不写 outputs**（文档称"任务完成后写 outputs"）；
-- 🐞 **不写 NodeExecution/JobId**（`NodeExecutionRecord` 无该字段）；
-- 🐞 **失败只 `LogWarning`**，节点记录仍是 `AsyncQueued`，实例随后被判 `Succeeded`；
-- 🐞 **`CancellationToken.None`** ⇒ 节点超时对后台外呼完全无效；
-- 🐞 异步分支**不调用 `CheckFailWhen`** ⇒ `failWhen`/`failItems` 永不被求值；
-- 🐞 宿主回收/重启即丢（无持久化 Job）。
+- 校验入参并过出站闸后，**登记一个持久化作业**（`FlowAsyncJob`）并把 `jobId` 写入 `NodeExecutionRecord.AsyncJobId` 与节点出参，主链立即继续；
+- 作业由 `FlowAsyncJobWorker`（`BackgroundService`，2s 轮询）交给 `FlowAsyncJobDispatcher` 执行——**不再是进程内 `Task.Run`**；
+- **成功与失败都写回实体**：状态、响应码/响应体、失败原因、重试次数、终态时间全部落库；
+- 连落库都失败时记 `LogError`，绝不静默；
+- 宿主回收/重启后作业仍在库里（`Queued` 状态可被下一轮轮询捡起）；
+- 出参含 `jobId`，配合 **Wait 节点**（§6.4）即可让异步出参真正参与下游编排。
 
-**没有 Wait 节点** ⇒ 异步出参在下游**永远不可用**。
+**仍然存在的限制**：
+
+- ⚠️ 异步分支**不调用 `CheckFailWhen`** ⇒ `failWhen`/`failItems` 在异步节点上永不被求值。
+- ⚠️ 节点 `timeoutMs` 对**已登记的作业本身**无约束（作业是独立生命周期）；需要约束等待时长请用 Wait 节点的 `waitTimeoutMs`。
 
 ### 11.5 DryRun（试运行）
 
@@ -616,10 +686,29 @@ Http 异步的实际行为（`:860-944`）：
 
 ❌ `previewAsRole` 参数不存在（DTO 无该字段）⇒ 旧文档的"按角色预览"无接口支撑。
 
-### 11.6 发布缓存与实例
+### 11.6 出站闸门（Http SSRF 防护）
 
-- 缓存：**进程内 `IMemoryCache`**（`PublishedFlowCache.cs:38`），绝对 10 分钟 + 滑动 3 分钟（`:104-112`），键 `orch:pub:{tenantId|host}:{flowKey}`（`:137-138`）。
-- 🐞 `InvalidateByDefinition` 的**唯一调用点是 `PublishAsync`**（`FlowDefinitionAppService.cs:290`）⇒ **Disable / Delete 不失效缓存**，已下线流程仍可被调用到 TTL 到期；多副本下最长 10 分钟执行旧 DSL。
+`HttpEgressGuard.EnsureAllowed` 在**发起请求之前**判定（不是靠 `HttpClient` 事后补救——后者防不住首次直连，也防不住 DNS 重绑定）：
+
+| 判定 | 行为 |
+|---|---|
+| 协议 | 仅 `http` / `https`；`mock://`（设计器预览伪协议）直接放行 |
+| 主机白名单 | `Orchestration:Http:AllowedHosts` 命中则放行（平台自身回调内部编排服务需要） |
+| `localhost` | 直接拒绝（字面量判定，不经 DNS） |
+| 解析后地址 | `Dns.GetHostAddresses` 逐个判`IsForbiddenAddress`，任一命中即拒绝 |
+
+`IsForbiddenAddress` 覆盖：回环、`0.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`（链路本地，含云元数据）、`100.64/10`（CGNAT）、`192.0.0/24`（IETF 保留）、`198.18/15`（基准测试）、`>= 224`（组播/保留）；IPv6 覆盖 `IPv4-mapped`（映射到内网 IPv4 的经典绕过手法）、`fe80::/10`、`fc00::/7`、`::` / `::1`。云元数据端点 `169.254.169.254`、`100.100.100.200`、`192.0.0.192` 显式列出。
+
+**重定向**：命名客户端 `OrchestrationHttpCall` 默认 `AllowAutoRedirect = false`。允许 3xx 跟随会让「公网 302 跳内网元数据」绕过首跳判定。仅当 `Orchestration:Http:AllowRedirects=true` 时开启，并限制 `MaxAutomaticRedirections = 5`。
+
+⚠️ **配置缺省即最严**：`HttpAllowedHosts` 默认 `[]`，即默认部署下**不允许任何内网出站**。若 Http 节点需要访问内部服务，必须在 SaaS Host 的 appsettings 里显式配置 `Orchestration:Http:AllowedHosts`（当前各 `appsettings*.json` **均无该节**）。
+
+### 11.7 发布缓存与实例
+
+- 本地快照：**进程内 `IMemoryCache`**（`PublishedFlowCache`），绝对 10 分钟 + 滑动 3 分钟，键 `orch:pub:{tenantId|host}:{flowKey}`。
+- 跨副本失效：**共享单调递增的「失效代数」**（`FlowDefinitionInvalidationBroadcaster`，存`IDistributedCache`）。读取本地快照前先比对代数，不一致则丢弃重载。发布 / **停用** / **删除**三个入口都会自增代数并广播。
+- 广播失败（Redis 不可用）**只降级不阻断**：读取退回 0（等价于「没人广播过」），主操作照常完成。
+- ⚠️ **最终一致**：失效在副本**下一次读取时**生效，不是即时推送。若业务要求「停用后零窗口」，需在调用入口二次校验状态。
 - 实例：执行器本身不建实例，由 `LogicApiAppService`（系统 API）与 `FlowInstanceAppService`（DryRun）各自建；SubFlow 子流程**不落任何实例**。
 - 🐞 子图内节点执行明细被丢弃（只回传 `Ok/Output/Error`），`FlowInstance.Nodes` 看不到循环第几轮、哪一步失败。
 
@@ -635,6 +724,8 @@ Http 异步的实际行为（`:860-944`）：
 | GET/POST | `/api/orchestration/definitions` | 列表 / 创建 |
 | GET/PUT/DELETE | `/api/orchestration/definitions/{id}` | 详情 / 更新草稿 / 删除 |
 | POST | `/api/orchestration/definitions/{id}/publish` | 发布 |
+| POST | `/api/orchestration/definitions/{id}/disable` | **停用** 🆕（此前实体有 `Disable()` 但无 API 调用方） |
+| POST | `/api/orchestration/definitions/{id}/enable` | **启用**（回到草稿态） 🆕 |
 | GET | `/api/orchestration/definitions/{id}/versions` | 版本历史 |
 | GET | `/api/orchestration/definitions/reusable-lookup` | SubFlow 选用列表 |
 | GET | `/api/orchestration/definitions/usages/by-callee?flowKey=` | 谁在调用 |
@@ -693,58 +784,71 @@ Http 异步的实际行为（`:860-944`）：
 > 按后果排序。每条给出机理与代码位置，便于修复与写回归测试。**本节只列当前代码仍存在的真实行为**。
 > ⚠️ **编号与 review §4 一一对应，空缺编号即已修复**——已修项统一收进 §14.0（保留编号仅为对照，不再视为缺陷）。
 
-### 14.0 已修复（基线 `91d75bd`，2026-10-14 P0 止血批次）
+### 14.0 已修复（基线 `91d75bd`，2026-10-14 P0 止血批次 + 覆盖范围补齐批次）
 
 | 原编号 | 缺陷 | 修复方式 | 落点 |
 |---|---|---|---|
-| 1 | 无契约时外泄整个 `ctx.Vars`（S7） | 新增 `ValidateOutputContract`：根级 `outputs` 或**每个** End 的 `finalOutputs` 至少其一，否则发布被拒；运行期 `FinishOutputsAsync` 仍有兜底（`isDryRun` 试运行保留全量视图供设计期调试） | `FlowExecutor.cs` `ValidateDsl` 末尾 / `FinishOutputsAsync` |
+| 1 | 无契约时外泄整个 `ctx.Vars`（S7） | 新增 `ValidateOutputContract`：根级 `outputs` 或**每个** End 的 `finalOutputs` 至少其一，否则发布被拒；运行期 `FinishOutputsAsync` 仍有兜底（`isDryRun` 试运行保留全量视图供设计期调试） | `FlowExecutor.cs` `ValidateOutputContract` / `FinishOutputsAsync` |
 | 2 | 子图旁路 `visibleTo`（S6） | `filterOutputsByRole` / `currentUser` 由 `ExecuteNodeAsync` 经 `DispatchNodeAsync` 下沉到 SubFlow / ForEach / Parallel 控制体，替换原先硬编码的 `false` / `null` | `FlowExecutor.cs`（`ExecuteSubFlowAsync` / `ExecuteForEachAsync` / `ExecuteParallelAsync` / `RunControlBodyAsync` 签名 + 3 处 `ExecuteAsync` 调用点） |
-| 3 | `visibleTo.mode` 拼错即全可见（S12） | 未知 mode 改为发布期报错（只接受 `all` / `none` / `roles` / `permissions`） | `FlowExecutor.cs` `ValidateVisibleTo` |
-| 4 | `roleIds` 永不匹配（S12） | `visibleTo.roleIds` 显式拒绝并提示改用 `roleNames`（`ICurrentUser` 只暴露角色名） | `FlowExecutor.cs` `ValidateVisibleTo` |
-| 12 | 发布成功、调用即 500（C2） | 新增 `SupportedNodeKinds` 白名单，与 dispatch case 逐一对应；`Sql` / `Switch` / `Wait` 及拼错类型发布期拒绝；移除 `Switch` 的出边豁免 | `FlowExecutor.cs` `ValidateDsl` / `ValidateOutEdgeCardinality` |
+| 3 | `visibleTo.mode` 拼错即全可见（S12） | 未知 mode 改为发布期报错（只接受 `all` / `none` / `roles` / `permissions`），**且覆盖到嵌套字段** | `FlowExecutor.cs` `ValidateVisibleTo`（internal） |
+| 4 | `roleIds` 永不匹配（S12） | `visibleTo.roleIds` 显式拒绝并提示改用 `roleNames`（`ICurrentUser` 只暴露角色名），同样覆盖嵌套字段 | `FlowExecutor.cs` `ValidateVisibleTo` |
+| 5 | `group.header[].visibleTo.permissions` 永不生效 | `CollectPermissionNames` 补上 `group.header[]` 与 `group.children.visibleTo` 两个入口 | `FinalOutputAssembler.cs` `CollectPermissionNames` |
+| 12 | 发布成功、调用即 500（C2） | 新增 `SupportedNodeKinds` 白名单，与 dispatch case 逐一对应；`Sql` / `Switch` 及拼错类型发布期拒绝；移除 `Switch` 的出边豁免。**`Wait` 已于本轮补齐 dispatch 分支，故在白名单内** | `FlowExecutor.cs` `SupportedNodeKinds` / `ValidateDsl` / `ValidateOutEdgeCardinality` |
 | 20 | PG 死锁/断连与 Oracle 全部错误码不重试（C13） | PG 改按 `SqlState` **字符串**分类（`08` 前缀 + `40001`/`40P01`/`53xxx`/`55P03`/`57P01~03`）；补 Oracle 错误码分支 | `NodeResiliencePolicy.cs` `IsTransientPostgresSqlState` / `IsTransientDbError` |
 | — | `batchupdate` 抛 Missing SQL parameter + 戳比对恒不匹配（C16） | 合并 `filter.Args`；戳语义对齐单条 `UpdateAsync`（SET 写新戳 / WHERE 比旧戳，旧戳缺省 NULL 时跳过并发校验） | `ResourceCrudExecutor.cs` `BatchWriteAsync` |
+| — | 未知 / 未实现 DSL 字段静默忽略（C4/E4） | `DslSchemaValidator` 在发布期拒绝；反射生成白名单故模型加字段自动跟随；拼写接近时给建议 | `DslSchemaValidator.cs` `ValidateJson` |
+| — | 🆕 `payload` 被误列为「未实现字段」 | `payload.item` 是 `BuildRabbitPayload` 的实际消费点（消息体字段投影），此前被列入黑名单导致该形态**根本无法发布**，而提示语却写着"仅支持 raw 与 payload.item"。移除该条目，改由取值白名单接管 | `DslSchemaValidator.cs` `UnimplementedFields` |
+| — | 🆕 `payloadMode=array` 静默退化为整包 inputs | `BuildRabbitPayload` 无 array 分支，配了等于没配。新增 `ValidateSemantics` 按取值拦截（`object` / `raw`，省略即 `object`） | `DslSchemaValidator.cs` `ValidateSemantics` |
+| — | 🆕 出参契约校验只遍历根级 `outputs` | `ResolveFinalSchema` 是 `FinalOutputs` 优先，故只配 End 的流程可完整绕过 `aggregate`+`map` 冲突与 `wrap` 取值拦截。遍历范围扩到 `End.finalOutputs` | `FlowDefinitionAppService.cs` `ValidateOutputContracts` |
+| — | 🆕 嵌套 `visibleTo` 未经发布期校验 | 拼错的嵌套 `visibleTo` 在运行期走 `OutputVisibilityFilter.IsVisible` 的 `return true` 兜底 = "配了可见性却全可见"，比不配更危险。新增递归校验 `map.item[]`（可无限层级）/ `group.header[]` / `group.children` | `FlowDefinitionAppService.cs` `ValidateNestedVisibleTo` / `ValidateGroup` |
 
-> 回归测试：`tests/Meta.Dow.Orchestration.Tests/FlowExecutorDslValidationTests.cs`（29 例）。
+> **回归测试**：`tests/Meta.Dow.Orchestration.Tests`（共 **297 例**，基线 91 例）。
+> 新增 `PublishValidationCoverageTests`（钉住"校验覆盖范围"）与 `OutputVisibilityTests`（钉住权限名收集范围）。
+
+> ⚠️ **这批修复揭示了一个可复用的失效模式**，文档读者需留意：
+> **校验逻辑本身写对了，只遍历了"最显眼的那一层"，于是嵌套分支与 End 节点成为后门。**
+> 本批 5 处修复中有4 处是这个模式（`payload` 黑名单、`aggregate`/`map` 冲突、`visibleTo` 嵌套、权限名收集）。
+> 因此新增的测试**刻意针对覆盖范围而非具体取值**——防止再次退化成"只查根级"。
 
 ### 14.1 数据暴露类
 
 | # | 严重度 | 现象 | 机理 | 位置 | 后果 / 规避 |
 |---|---|---|---|---|---|
-| 5 | **中** | `group.header[].visibleTo.permissions` 永不生效 | `CollectPermissionNames` 不遍历 `group.header` | `FinalOutputAssembler.cs:870-898` | 权限模式表头对所有人被丢弃 |
-| 6 | **中** | 旧字段 `responseVariable` 绕过可见性 | 直写 `vars`，不经 `outputs`/`visibleTo` | `FlowExecutor.cs:1181-1185`、`:1296-1329`、`:1335-1353`、`:2217-2219` | 旧 DSL 流程可把受限值直接放进输出 |
+| 6 | **中** | 旧字段 `responseVariable` 绕过可见性 | 直写 `vars` / `FlatVarsLegacy`，不经 `outputs` / `visibleTo` | `FlowExecutor.cs` `ExecuteHttpNodeAsync`（`if (!string.IsNullOrWhiteSpace(node.ResponseVariable))`） | 旧 DSL 流程可把受限值直接放进输出。⚠️ 它**既不在 `UnimplementedFields`（有消费点）、也不被发布期拦截**，是当前唯一"无白名单 + 无拦截"的数据暴露路径 |
 
 ### 14.2 安全类
 
 | # | 严重度 | 现象 | 机理 | 位置 |
 |---|---|---|---|---|
-| 7 | **高** | 只读权限可被 `WITH` 前缀绕过 | `EnsureSqlWrite` 把 `select` 与 `with` 都当读；`db.query` 完全不检查写权限 | `CodeSandboxExecutor.cs:402-413`、`:239-245` |
-| 8 | **高** | Http 节点 SSRF 无防护 | url 由节点配置+模板拼出，headers 任意可设；全仓无 host 白名单/私网/回环拦截 | `FlowExecutor.cs:956`、`:1011-1053` |
-| 9 | **中** | 无单条逻辑调用权限 | 只有 `Instances.Run` | `LogicApiAppService.cs:35` |
-| 10 | **中** | 静态检查过松又过严 | 正则词法：`db["execute"](…)` 不匹配；`const sql="…"` 被拒 | `CodeScriptStaticAnalyzer.cs:12-19`、`:44-53` |
+| 7 | **高** | ✅ 已修 | 只读权限可被 `WITH` 前缀绕过 → 判定已抽为 `SqlWriteClassifier`，覆盖 `WITH` 与 `db.query`（§11.6 相关、§6.1） |
+| 8 | **高** | ✅ 已修 | Http 节点 SSRF 无防护 → 新增 `HttpEgressGuard`，含私网/回环/链路本地/元数据/重定向（§11.6） |
+| 9 | **中** | 无单条逻辑调用权限 | 只有 `Instances.Run` | `LogicApiAppService` |
+| 10 | **中** | 静态检查过松又过严 | 正则词法：`db["execute"](…)` 不匹配；`const sql="…"` 被拒 | `CodeScriptStaticAnalyzer.cs` |
 
 ### 14.3 正确性与可靠性类
 
 | # | 严重度 | 现象 | 机理 | 位置 |
 |---|---|---|---|---|
-| 11 | **高** | 异步节点结果与失败全部丢失 | `Task.Run` + `CancellationToken.None`；不写 outputs/实例/JobId；失败仅日志；状态仍 `AsyncQueued` | `FlowExecutor.cs:860-944`、`:880` |
-| 13 | **高** | 异步不受节点超时约束，`failWhen` 不生效 | `CancellationToken.None`；异步分支不调 `CheckFailWhen` | `:911-942`、`:723-731` |
-| 14 | **高** | 已下线流程仍可被调用 | 缓存失效只挂 `PublishAsync`；`Disable`/`Delete` 不失效；进程内缓存跨副本不共享，10 分钟 TTL | `PublishedFlowCache.cs:38/104-112`；`FlowDefinitionAppService.cs:290` |
-| 15 | **中** | 条件算子缺失 | `in`/`notIn`/`between` 未实现 → 抛 `Unsupported condition op` | `FlowExecutor.cs:2297-2310` |
-| 16 | **中** | `entry` 只配 `combine` 恒真 | `items` 为空直接 `return true` | `:2264-2269` |
-| 17 | **中** | 条件节点可静默走错边 | 只有边 `combine`、无 `node.items` 时掉进 legacy 分支，`combine` 被忽略 | `:505-508` vs `:548-553` |
-| 18 | **中** | `strategy` 语义与命名不符 | 非 `firstMatch` 时"最后一条命中生效"；取值不校验 | `:511-537` |
-| 19 | **中** | 跨节点写库非原子 | 无 `txMode`；`db.execute` 每次新建连接自动提交，仅 `db.batch` 有事务 | 无字段；`ParameterizedSqlExecutor.cs:153-178` |
-| 21 | **中** | `aggregate` 与 `map` 同配时 map 静默失效 | `Aggregate` 分支先 return | `FinalOutputAssembler.cs:240-243` |
-| 22 | **中** | `transform`/`from` 模板/`outputs` 字面量/`inputs` 类型强制全部不生效 | 字段已声明但无消费点 | `FlowDslModels.cs:425`；`FlowContextResolver.cs:338-378` |
-| 23 | **中** | `timeoutMs` 对 Code 无效 | 沙箱硬顶 8s，校验却允许 600s | `OrchestrationConsts.cs:20/49` |
-| 24 | **中** | MQTT 触发器多副本重复执行 | client id 含随机 Guid，且无分布式锁 | `MqttMessageTriggerHostedService.cs:225` |
-| 25 | **中** | 发布校验无 Warning 通道 | `ValidateDsl` 只 throw，返回 `void` | `FlowExecutor.cs:2388` |
-| 26 | **低** | SQL 命名参数正则误匹配 | 字符串字面量、`::` 转型会抛 "Missing SQL parameter" | `ParameterizedSqlExecutor.cs:68-71/374-386` |
-| 27 | **低** | `payloadMode=array` 退化 | 只处理 `raw` 与 `payload.item`；未配 payload 时整包 inputs 发出 | `FlowExecutor.cs:2174-2201` |
-| 28 | **低** | Mask 预设的 keep 参数被硬编码 | phone/idCard/bankCard 固定 3/4、4/4、0/4 | `MaskValueHelper.cs:120-123` |
-| 29 | **低** | 子图节点审计明细丢失 | 控制流只回传 `Ok/Output/Error` | `FlowExecutor.cs:1926/1953` |
-| 30 | **低** | `joinMode=any` 不取消其余分支 | 只移除已完成 Task，其余继续执行 | `:1781-1796` |
+| 11 | **高** | ✅ 已修 | 异步节点结果与失败全部丢失 → 改为持久化作业 `FlowAsyncJob` + worker 轮询，成功/失败均回写并带 `jobId`（§11.4） |
+| 13 | **高** | ⚠️ 部分已修 | 异步不受节点超时约束、`failWhen` 不生效 → 作业已持久化、失败回写（§11.4）；但`failWhen` 仍不求值、节点 `timeoutMs` 仍不约束作业本身（用 Wait 的 `waitTimeoutMs`） |
+| 14 | **高** | ✅ 已修 | 已下线流程仍可被调用 → 三入口（发布/停用/删除）均失效缓存，并经共享失效代数跨副本生效；**代价是最终一致**（§11.7） |
+| 15 | **中** | ✅ 已修 | 条件算子缺失 → 现有 23 个算子并有发布期白名单（§6.1） |
+| 16 | **中** | ✅ 已修 | `entry` 只配 `combine` 恒真 → 发布期拒绝 |
+| 17 | **中** | ✅ 已修 | 条件节点可静默走错边 → 出边 `combine` 无 `items` 在发布期被拒 |
+| 18 | **中** | ✅ 已修 | `strategy` 语义与命名不符 → 现明确 `firstMatch` / `allMatch` 且发布期校验取值 |
+| 19 | **中** | 跨节点写库非原子 | 无 `txMode`；`db.execute` 每次新建连接自动提交，仅 `db.batch` 有事务。**注意 `txMode` 本身现会被 `DslSchemaValidator` 当未知字段拒绝**（模型无该属性），所以不存在"配了不生效"，而是"根本配不了" | 无字段；`ParameterizedSqlExecutor.cs` |
+| 21 | **中** | ✅ 已修 | `aggregate` 与 `map` 同配时 map 静默失效 → 发布期拒绝，**根级 `outputs` 与 `End.finalOutputs` 均覆盖** | `FlowDefinitionAppService.cs` `ValidateOutputContract` |
+| 22 | **中** | ⚠️ 部分不成立 | 原文称 `from` 模板与 `outputs` 字面量"无消费点"——**这是文档错误**：两者均有实现（`FlowContextResolver.ResolveTemplate` 处理 `"ORD-{{id}}"` 模板；`FlowContextResolver.ResolvePath` 处理 `{"literal": ...}`）。真正不生效的只有 **`inputs[].type` 不参与必填校验** | `FlowContextResolver.cs` `ResolveTemplate` / `ResolvePath`；`FlowExecutor.cs` `AreInputsSatisfied` |
+| 23 | **中** | `timeoutMs` 对 Code 节点只生效到 8s | 沙箱经 Jint 硬顶 `CodeScriptTimeoutSeconds = 8`，而发布期允许配到 600s：≤8s 正常生效，**>8s 会被静默截断到 8s**，配 600s 与配 8s 效果相同 | `CodeSandboxExecutor.cs` `TimeoutInterval`；`OrchestrationConsts.cs` `CodeScriptTimeoutSeconds` |
+| 24 | **中** | MQTT 触发器多副本重复执行 | client id 含随机 Guid，且无分布式锁 | `MqttMessageTriggerHostedService.cs` |
+| 25 | **中** | 发布校验无 Warning 通道 | `ValidateDsl` 只 throw，返回 `void` | `FlowExecutor.cs` `ValidateDsl` |
+| 26 | **低** | SQL 命名参数正则误匹配 | 字符串字面量、`::` 转型会抛 "Missing SQL parameter" | `ParameterizedSqlExecutor.cs` |
+| 27 | **低** | ✅ 已修 | `payloadMode=array` 退化 → 发布期按取值拒绝（`object` / `raw`） | `DslSchemaValidator.cs` `ValidateSemantics` |
+| 28 | **低** | Mask 预设的 keep 参数被硬编码 | phone/idCard/bankCard 固定 3/4、4/4、0/4 | `MaskValueHelper.cs` |
+| 29 | **低** | 子图节点审计明细丢失 | 控制流只回传 `Ok/Output/Error` | `FlowExecutor.cs` `RunControlBodyAsync` |
+| 30 | **低** | `joinMode=any` 不取消其余分支 | 只移除已完成 Task，其余继续执行 | `FlowExecutor.cs` `ExecuteParallelAsync` |
+| — | **中** | 🆕 `FlowAsyncJobWorker` 多副本重复消费 | `GetQueuedJobsAsync` 无 claim/乐观锁语义，`MarkRunning` 也没有 CAS 条件（只判终态）。两个副本可同时取到同一条 `Queued` 作业并各自外呼一次 | `FlowAsyncJobDispatcher.cs` `GetQueuedJobsAsync`；`FlowAsyncJob.cs` `MarkRunning` |
+| — | **低** | 🆕 `AttemptCount` 是只增不减的死字段 | `MarkRunning` 自增，但失败后无任何路径把它退回 `Queued` 重排队，故该字段永远只反映"被 worker 捞起过几次"，不反映重试次数 | `FlowAsyncJob.cs` `MarkRunning`；`FlowAsyncJobDispatcher.cs` `MarkFailedAsync` |
 
 ---
 
@@ -755,8 +859,7 @@ Http 异步的实际行为（`:860-944`）：
 | 能力 | 说明 | 优先级 |
 |---|---|---|
 | **独立 `Sql` 节点** | 白名单库 + `@param` 参数化 + `Orchestration.Sql.Write`；目前只能经 Code `db.*` 或资源 CRUD | P1 |
-| **`Switch`** | 多路枚举分支（校验层已放行，缺执行分支） | P1 |
-| **Wait** | 等待异步出参可用 + 实例回写异步结果 | P1 |
+| **`Switch`** | 多路枚举分支（缺执行分支，发布期被白名单拒绝） | P1 |
 | **`txMode=sameDataSource`** | 按 DataSource 懒开连接+事务，同 code 的多次 `db.execute` 共享事务，成功 commit / 失败 rollback；需 `FlowDbSessionScope` 挂 `FlowRuntimeContext` | P1 |
 | `Orchestration.Logic.{flowKey}` | 单条逻辑的调用权限码 | P1 |
 | 发布校验 Warning 通道 | 不可达节点、无 `visibleTo`、敏感字段未标记、异步出参未 Wait 的引用 | P1 |
@@ -797,16 +900,30 @@ Http 异步的实际行为（`:860-944`）：
 ### 16.3 属性面板要点
 
 - **Condition**：条件表（编号 / 左值 / 运算符 / 右值）+ 组合式输入框 + 模板按钮；出边列表每边绑组合式或"默认分支"。
-  ⚠️ 运算符下拉**不应**提供 `in`/`notIn`/`between`（未实现，选了会在运行期抛错）。
+  - **运算符下拉现应提供 23 个**（§6.1），含此前不可用的 `startswith`/`endswith`/`in`/`notin`/`between`/`isNull`/`isNotNull`。
+    ⚠️ 旧版本文档曾写「不应提供 `in`/`notIn`/`between`（未实现）」——**该指引已作废**，它们现已实现。
+  - ⚠️ **`between` 的右值必须是两个输入组成的数组**（闭区间 `[min, max]`），单输入控件会产出非法 DSL。
+  - ⚠️ `isNull`/`isNotEmpty` 不需要右值，右值输入框应隐藏。
+  - 建议补`strategy` 下拉（`firstMatch` / `allMatch`）—— 后端已支持并严格校验，但前端目前恒为 `firstMatch`，`allMatch` 不可达。
 - **执行节点通用**：`kind`、`async`（⚠️ 目前仅 Http 生效）、`timeoutMs`、inputs 表、outputs 表。
 - **Http**：`method`/`url`/`headers`/`bodyMode`/`resultRoot`；`mock://` 前缀可跳过真实外呼。
+  ⚠️ 内网 / 回环 / 链路本地 / 云元数据地址会被**服务端出站闸门拒绝**（§11.6），面板宜提示，避免用户反复排查。
+  ⚠️ 异步模式下应说明：出参含 `jobId`，需接 **Wait** 节点才能消费结果——旧文案「下游不可引用本节点出参（需 Wait，规划中）」已过时且语义相反。
+- **Wait** 🆕：`jobId`（支持 `{{results.xxx.jobId}}` 模板）、`waitTimeoutMs`（1..600000，默认 30000）、`waitFailOnTimeout`（默认开）。字段与校验见 §6.4。
 - **Code**：`dataSourceId` + 脚本；面板应提示 `db.query/execute/batch` 三 API 与静态检查规则。
+  ⚠️ `db.execute` / `db.query` 均受 `Orchestration.Sql.Write` 写闸门约束，判定已覆盖 `WITH` 前缀。
 - **End / 最终输出**：字段名、类型、`from`、`visibleTo`、`sensitive`（⚠️ `sensitive` 目前仅打日志）、`map`、`group`、`aggregate`、`promote`、`wrap`。
-- ⚠️ **不要提供**：`transform`、`from` 模板、`outputs` 字面量（均未实现）。
+- ⚠️ **不要提供**：`transform`、`from` 模板、`outputs` 字面量、`asyncJobId`、`previewAsRole`。
+  这些字段服务端**已显式拒绝**（`DslSchemaValidator` 的「模型有但无消费点」清单）——不是静默忽略，而是发布时报错。
 
 ### 16.4 画布与快捷键（沿用原文）
 
 撤销重做 `Ctrl+Z`/`Ctrl+Y`、复制粘贴 `Ctrl+C`/`Ctrl+V`、删除 `Delete`、缩放 `Ctrl+滚轮`、双击节点展开属性面板、右键上下文菜单。节点外观：Start/End 圆形、Condition 菱形（角标显示组合式摘要）、执行节点卡片（显示入参/出参个数）；异步节点应有角标。
+
+### 16.5 流程停用 / 启用🆕
+
+`definitions/index.vue` 的操作列需按状态互斥显示「停用」/「启用」（`POST .../definitions/{id}/disable` / `.../enable`）。
+状态渲染层（`flow-meta.ts` 的 `definitionStatusMeta` 含 `2: 已禁用`、筛选项、列表 Tag）**前端已就绪**，只缺API 函数与两个按钮。
 
 ---
 
@@ -826,12 +943,12 @@ Http 异步的实际行为（`:860-944`）：
 | 代码结构 | 本仓对应 | 状态 |
 |---|---|---|
 | 顺序 | 节点 + 边 | ✅ |
-| `if / else if / else` | Condition（多出边 + `combine` + `isDefault`） | ✅（算子缺 3 个） |
+| `if / else if / else` | Condition（多出边 + `combine` + `isDefault`） | ✅（算子已补齐 23 个） |
 | `switch` | Switch | ❌ |
 | `for` / `foreach` | ForEach / Loop（内联子图或 SubFlow） | ✅ |
 | `Task.WhenAll` | Parallel / WHEN（`joinMode=all`） | ✅ |
 | `Task.WhenAny` | Parallel（`joinMode=any`） | ✅（不取消其余分支） |
-| `await` 汇合 | Wait | ❌ |
+| `await` 汇合 | Wait | ✅ |
 | `try / catch / finally` | `onError`、`failItems`+`failCombine`、`throw` | ✅ 部分 |
 | 事务 | `txMode=sameDataSource` | ❌ |
 | 方法调用 | SubFlow（逻辑组件） | ✅ |
@@ -892,8 +1009,8 @@ Http 异步的实际行为（`:860-944`）：
 |---|---|
 | §9.3 示例含 `kind: "Sql"` 节点，§5.4.5 把 Sql 列为三大 kind 之一 | 执行器无 `case "sql"`（`FlowExecutor.cs:791-792`），发布期也不拦 |
 | §5.5 列出条件算子 `in`/`notIn`/`between` | 未实现，落到 `Unsupported condition op`（`:2297-2310`） |
-| §5.4.2 `transform` 支持 trim/toString/toNumber/JSONPath | `Transform` 属性零消费点（`FlowDslModels.cs:425`） |
-| §5.4.2 `from` 来源可为"模板"；§5.4.4 `outputs.from` 支持字面量 | 均未实现（`FlowContextResolver.cs:338-378`） |
+| §5.4.2 `transform` 支持 trim/toString/toNumber/JSONPath | `Transform` 属性零消费点（`FlowDslModels.Transform`）；🆕 现已在发布期直接拒绝 |
+| §5.4.2 `from` 来源可为"模板"；§5.4.4 `outputs.from` 支持字面量 | ❗**这条"旧版断言"本身是错的**——两者**均已实现**（`FlowContextResolver.ResolveTemplate` 处理 `"ORD-{{id}}"`；`ResolvePath` 处理 `{"literal": ...}`）。是后续的 §14-22 条目误抄了本行，才把正确实现写成了缺陷 |
 | §5.4/§11.4 "每个执行节点都有同步/异步" | 只有 Http 读取 `async`，其余静默忽略（`:723-727`） |
 | §5.4.1 "异步任务完成后写 outputs / 记实例；失败记节点错误" | 全部未落地（`:911-942`） |
 | §5.4.1/§10.4 "DryRun 异步一律改同步" | DryRun 下 Http **被跳过**（`:712-721`） |
@@ -919,4 +1036,63 @@ Http 异步的实际行为（`:860-944`）：
 - 弹性策略的读写分离与 `retryOnWrite` + 幂等键门禁。
 - 资源 CRUD 九个别名节点。
 
-**已知未收敛项**（本次只改文档，未改代码）：§14 全部 30 条缺陷保持现状；建议按其中 1、2、7、11、12、14 六条优先修复。
+**已知未收敛项**（本次只改文档，未改代码）：§14 全部 30 条缺陷保持现状；建议按其中 1、2、7、 11、12、14 六条优先修复。
+
+---
+
+### 2026-10-14 整改后同步（对应[评估文档](./logic-orchestration-assessment.md)§八）
+
+**为什么改**：§2能力表自称「唯一状态来源」，但本轮整改落地后，其中若干条已失真——包括一条**会主动误导前端**的指令（§16.3 原写「运算符下拉不应提供 `in`/`notIn`/`between`」，而这三个算子现已实现）。文档失真会让前端按错误的指引实现，因此本次同步逐条核对。
+
+**已由失真转为准确的能力表条目**
+
+| 条目 | 原状态 | 现状态 |
+|---|---|---|
+| 条件节点算子 / `strategy` | ⚠️ 算子缺 3 个、`strategy` 从不校验 | ✅ 23 个算子 + 发布期白名单（§6.1） |
+| Wait 节点 | ❌ 无 | ✅ 已实现（§6.4新增规格） |
+| Http 节点 SSRF | （备注）无防护🐞 | ✅ `HttpEgressGuard`（§11.6 新增章节） |
+| 发布校验（结构） | ⚠️ 无节点类型白名单 | ✅ 含白名单、未知字段、算子与 `strategy 校验（§10.2） |
+| 发布缓存 | ⚠️ 失效只挂发布 | ⚠️ 三入口失效 + 跨副本代数，**最终一致**（§11.7） |
+| 流程停用 / 启用 | 未收录 | ✅ 新增两个端点（§12.1） |
+
+**新增章节**：§6.4 Wait 节点规格、§11.6 出站闸门。
+
+**§14 缺陷表中已修复的条目**（原编号）：11（异步 fire-and-forget）、15（条件算子缺失）、16（`strategy` 不校验）、22（出站无白名单）、26→ 见 §11.6、28（SQL 写判定绕过 `WITH`）已在 §11.6 / §6.1 反映。**其余条目保持现状。**
+
+**⚠️ 本次同步仍未做的**：§14 中大量条目引用了 `FlowExecutor.cs` 的**旧行号**。本轮整改使该文件净增数百行，**这些行号已全部不可信**。请一律按符号名检索（与[评估文档](./logic-orchestration-assessment.md)同一条引用纪律）。彻底清理行号需要一次独立的文档治理 pass。
+
+---
+
+### 2026-10-14 校验覆盖范围补齐批次（§14.0 末四行）
+
+**为什么改**：上一批同步是"按代码核对文档"，本轮反过来——**按文档逐条回读代码**，专门找文档声称已修但实际只修了一半的地方。结果发现 5 处，其中**一处是上一批自己引入的回归**。
+
+**发现的可复用失效模式**
+
+> **校验逻辑本身写对了，只遍历了"最显眼的那一层"，于是嵌套分支与 End 节点成为后门。**
+
+本批 5 处修复中有 4 处命中这个模式。典型症状：代码看起来有校验、测试也覆盖了，但测试同样只测了根级路径，于是"覆盖范围"从未被验证。新增的两个测试文件因此**刻意针对覆盖范围而非具体取值**。
+
+**逐条修正**
+
+| 条目 | 核对发现 | 处理 |
+|---|---|---|
+| `payload` | ❗**上一批引入的回归**：`payload.item` 是 `BuildRabbitPayload` 的实际消费点，却被列入 `UnimplementedFields` 黑名单，导致该形态**根本无法发布**——而提示语恰好写着"仅支持 raw 与 payload.item"，自相矛盾 | 移除黑名单条目；改由 `ValidateSemantics` 按**取值**接管 |
+| `payloadMode=array` | 模型注释写了 `object \| array \| raw`，但代码无 array 分支，配了等于没配 | 新增取值白名单（`object` / `raw`），发布期拒绝 |
+| `aggregate`+`map` 冲突 / `wrap` 取值 | `ValidateOutputContracts` 只遍历 `dsl.Outputs`；而 `ResolveFinalSchema` 是 `FinalOutputs` 优先，故**只配 End 的流程可完整绕过** | 遍历范围扩到 `End.finalOutputs`（条目 21 转✅） |
+| 嵌套 `visibleTo` | 校验方法本身正确，但只在顶层被调用；嵌套拼错仍走 `OutputVisibilityFilter.IsVisible` 的 `return true` 兜底 = "配了可见性却全可见" | 新增递归校验 `map.item[]`（无限层级）/ `group.header[]` / `group.children` |
+| `group.header[].visibleTo.permissions` | `CollectPermissionNames` 漏收 `group.header` 与 `group.children.visibleTo` → 权限模式下分组表头对所有人消失（条目 5 转 ✅） | 补全收集范围 |
+
+**同时修正的文档错误**（代码是对的、文档写错了）
+
+- §14-22 原称"`from` 模板与字面量无消费点" → **错**，两者均有实现（`ResolveTemplate` / `ResolvePath`）；已改为「仅 `inputs[].type` 不参与必填校验」。§19 中误抄该错误断言的那一行也已标注。
+- §14-23 原称"`timeoutMs` 对 Code 无效" → 改为「≤8s 正常生效，**>8s 静默截断**」，并同步 §11.2。
+- §14-19 补注：`txMode` 现会被 `DslSchemaValidator` 当未知字段拒绝，故不是"配了不生效"而是"根本配不了"。
+- §14-6 补注：`responseVariable` **有**消费点故不在黑名单内，也未被发布期拦截，是当前唯一"无白名单 + 无拦截"的数据暴露路径。
+
+**新记录的残留缺陷**（文档此前完全没有的）
+
+- `FlowAsyncJobWorker` **多副本重复消费**：`GetQueuedJobsAsync` 无 claim/乐观锁，`MarkRunning` 也无 CAS 条件，两个副本可同时取到同一条 `Queued` 作业并各自外呼一次。
+- `AttemptCount` 是**只增不减的死字段**：失败后无路径退回 `Queued` 重排队，故它反映的是"被捞起过几次"而非"重试了几次"。
+
+**测试**：269 → **297**，新增 `PublishValidationCoverageTests`、`OutputVisibilityTests`。受影响工程（Application / MongoDB）编译 0 错误。

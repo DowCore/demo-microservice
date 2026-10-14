@@ -101,7 +101,9 @@ public class PublishedFlowInvoker : IPublishedFlowInvoker, ITransientDependency
                 filterOutputsByRole: filterOutputsByRole,
                 currentUser: null,
                 cancellationToken,
-                skipValidation: true
+                skipValidation: true,
+                instanceId: instance.Id,
+                flowKey: published.FlowKey
             );
             sw.Stop();
 

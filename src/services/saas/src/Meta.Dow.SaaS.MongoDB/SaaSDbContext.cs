@@ -15,6 +15,12 @@ public class SaaSDbContext : AbpMongoDbContext
 
     public IMongoCollection<FlowInstance> FlowInstances => Collection<FlowInstance>();
 
+    /// <summary>
+    /// 异步外呼作业（C1 修复）。原先异步 Http 走进程内 Task.Run，
+    /// 没有可持久化的作业记录，结果与失败无处安放。
+    /// </summary>
+    public IMongoCollection<FlowAsyncJob> FlowAsyncJobs => Collection<FlowAsyncJob>();
+
     public IMongoCollection<DataSource> DataSources => Collection<DataSource>();
 
     public IMongoCollection<FlowUsage> FlowUsages => Collection<FlowUsage>();

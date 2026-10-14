@@ -16,6 +16,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
     private readonly IRepository<FlowVersion, Guid> _versionRepository;
     private readonly IRepository<FlowUsage, Guid> _usageRepository;
     private readonly PublishedFlowCache _publishedFlowCache;
+    private readonly FlowDefinitionInvalidationBroadcaster _invalidationBroadcaster;
     private readonly IFlowUsageIndexer _usageIndexer;
 
     public FlowDefinitionAppService(
@@ -23,6 +24,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         IRepository<FlowVersion, Guid> versionRepository,
         IRepository<FlowUsage, Guid> usageRepository,
         PublishedFlowCache publishedFlowCache,
+        FlowDefinitionInvalidationBroadcaster invalidationBroadcaster,
         IFlowUsageIndexer usageIndexer
     )
     {
@@ -30,6 +32,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         _versionRepository = versionRepository;
         _usageRepository = usageRepository;
         _publishedFlowCache = publishedFlowCache;
+        _invalidationBroadcaster = invalidationBroadcaster;
         _usageIndexer = usageIndexer;
     }
 
@@ -234,7 +237,61 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         }
 
         await _usageIndexer.ClearForDefinitionAsync(id);
+
+        // A5：删除也必须失效缓存。原实现只有 PublishAsync 失效，
+        // 导致已删除的流程在本进程内最长 10 分钟仍可被调用。
+        _publishedFlowCache.InvalidateByDefinition(entity);
+        await _invalidationBroadcaster.BroadcastAsync();
+
         await _definitionRepository.DeleteAsync(id, autoSave: true);
+    }
+
+    [Authorize(OrchestrationPermissions.Definitions.Publish)]
+    public async Task<FlowDefinitionDto> DisableAsync(Guid id)
+    {
+        var entity = await _definitionRepository.GetAsync(id);
+        if (entity.IsSystem)
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
+        if (entity.Status != FlowDefinitionStatus.Published)
+        {
+            throw new UserFriendlyException("只有已发布的流程可以停用。");
+        }
+
+        entity.Disable();
+        await _definitionRepository.UpdateAsync(entity, autoSave: true);
+
+        // 停用必须立即失效本地快照并广播到其他副本，
+        // 否则被停用的流程在最长 10 分钟内仍可被调用。
+        _publishedFlowCache.InvalidateByDefinition(entity);
+        await _invalidationBroadcaster.BroadcastAsync();
+
+        return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
+    }
+
+    [Authorize(OrchestrationPermissions.Definitions.Publish)]
+    public async Task<FlowDefinitionDto> EnableAsync(Guid id)
+    {
+        var entity = await _definitionRepository.GetAsync(id);
+        if (entity.IsSystem)
+        {
+            throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
+        }
+
+        if (entity.Status != FlowDefinitionStatus.Disabled)
+        {
+            throw new UserFriendlyException("只有已停用的流程可以重新启用。");
+        }
+
+        entity.EnableAsDraft();
+        await _definitionRepository.UpdateAsync(entity, autoSave: true);
+
+        _publishedFlowCache.InvalidateByDefinition(entity);
+        await _invalidationBroadcaster.BroadcastAsync();
+
+        return ObjectMapper.Map<FlowDefinition, FlowDefinitionDto>(entity);
     }
 
     [Authorize(OrchestrationPermissions.Definitions.Publish)]
@@ -253,6 +310,10 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
 
         try
         {
+            // A1：未知 / 已知但未实现的字段在发布期就报错，不再静默忽略。
+            // 顺序上先做结构校验——它给出的错误信息比后续反序列化更具体。
+            DslSchemaValidator.ValidateJson(entity.DslJson);
+
             var dsl = System.Text.Json.JsonSerializer.Deserialize<FlowDslDocument>(
                 entity.DslJson,
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }
@@ -262,7 +323,9 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
                 throw new UserFriendlyException(L["Orchestration:DslRequired"]);
             }
 
+            DslSchemaValidator.ValidateSemantics(dsl);
             FlowExecutor.ValidateDsl(dsl);
+            ValidateOutputContracts(dsl);
         }
         catch (UserFriendlyException)
         {
@@ -288,8 +351,112 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         await _definitionRepository.UpdateAsync(entity, autoSave: true);
         await _usageIndexer.RebuildForDefinitionAsync(entity);
         _publishedFlowCache.InvalidateByDefinition(entity);
+        await _invalidationBroadcaster.BroadcastAsync();
 
         return ObjectMapper.Map<FlowVersion, FlowVersionDto>(version);
+    }
+
+    /// <summary>
+    /// 出参契约的结构校验。放在发布期，是因为这些冲突在运行期只会表现为
+    /// "某个字段的值和预期不一样"，排查成本极高。
+    ///
+    /// <para><b>遍历范围必须覆盖全部"契约载体"</b>：根级 <c>dsl.Outputs</c>、
+    /// 每个 End 节点的 <c>finalOutputs</c>，以及两者内部的<b>嵌套</b>字段
+    /// （<c>map.item[].visibleTo</c>、<c>group.header[].visibleTo</c>、
+    /// <c>group.children.visibleTo</c>）。只查根级等于给嵌套留后门——
+    /// 而嵌套 visibleTo 拼错时 <c>OutputVisibilityFilter.IsVisible</c> 会走
+    /// <c>return true</c> 兜底，导致"配了可见性却全可见"这类数据暴露。
+    /// 本方法与 <c>FlowExecutor.ValidateVisibleTo</c> 是同一套规则的两个入口。</para>
+    /// </summary>
+    private static void ValidateOutputContracts(FlowDslDocument dsl)
+    {
+        foreach (var output in dsl.Outputs ?? [])
+        {
+            ValidateOutputContract(output, $"outputs.{output.Name}");
+        }
+
+        foreach (var end in (dsl.Nodes ?? [])
+                     .Where(x => string.Equals(x.Type, "End", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var output in end.FinalOutputs ?? [])
+            {
+                ValidateOutputContract(output, $"End('{end.Id}').finalOutputs.{output.Name}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 仅供测试直接触达出参契约校验。<b>production 代码不应调用</b>——
+    /// 校验必须经由 <see cref="PublishAsync"/>，那里才有"发布失败要中止"的语义。
+    /// </summary>
+    internal static void ValidateOutputContractsForTest(FlowDslDocument dsl) => ValidateOutputContracts(dsl);
+
+    /// <summary>校验单个出参及其全部嵌套字段。owner 用于错误信息定位。</summary>
+    private static void ValidateOutputContract(FlowOutputParameterDsl output, string owner)
+    {
+        // C15：aggregate 与 map 同配时，ApplyAggregate 分支先 return，map 静默失效。
+        // 两个都是"整形成一个值"的指令，同时声明就是配置冲突，必须让用户二选一。
+        if (output.Aggregate != null && !string.IsNullOrWhiteSpace(output.Aggregate.Op) &&
+            output.Map?.Item is { Count: > 0 })
+        {
+            throw new UserFriendlyException(
+                $"出参 '{owner}' 同时配置了 aggregate 与 map.item，二者语义冲突。" +
+                "aggregate 是把整个集合聚合成一个值，map.item 是逐项映射——请只保留其一。"
+            );
+        }
+
+        // wrap 目前只识别 array；配了别的值等于没配。
+        if (!string.IsNullOrWhiteSpace(output.Wrap) &&
+            !output.Wrap.Trim().Equals("array", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UserFriendlyException(
+                $"出参 '{owner}' 的 wrap='{output.Wrap}' 尚未实现；当前只支持 wrap='array'。"
+            );
+        }
+
+        FlowExecutor.ValidateVisibleTo(owner, output.VisibleTo);
+
+        // map.item 可无限层级嵌套，每一层都带 visibleTo。
+        ValidateNestedVisibleTo(output.Map, $"{owner}.map");
+        ValidateGroup(output.Group, $"{owner}.group");
+    }
+
+    /// <summary>递归校验 map 投影链上的 visibleTo（FlowOutputMapDsl → FlowOutputMapDsl 可自嵌套）。</summary>
+    private static void ValidateNestedVisibleTo(FlowOutputMapDsl? map, string owner)
+    {
+        if (map?.Item is not { Count: > 0 })
+        {
+            return;
+        }
+
+        for (var i = 0; i < map.Item.Count; i++)
+        {
+            var item = map.Item[i];
+            FlowExecutor.ValidateVisibleTo($"{owner}.item[{i}]", item.VisibleTo);
+            ValidateNestedVisibleTo(item.Map, $"{owner}.item[{i}].map");
+        }
+    }
+
+    private static void ValidateGroup(FlowOutputGroupDsl? group, string owner)
+    {
+        if (group == null)
+        {
+            return;
+        }
+
+        if (group.Header is { Count: > 0 })
+        {
+            for (var i = 0; i < group.Header.Count; i++)
+            {
+                FlowExecutor.ValidateVisibleTo($"{owner}.header[{i}]", group.Header[i].VisibleTo);
+            }
+        }
+
+        if (group.Children != null)
+        {
+            FlowExecutor.ValidateVisibleTo($"{owner}.children", group.Children.VisibleTo);
+            ValidateNestedVisibleTo(group.Children.Map, $"{owner}.children.map");
+        }
     }
 
     public async Task<ListResultDto<FlowVersionDto>> GetVersionsAsync(Guid id)

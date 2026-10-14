@@ -239,6 +239,9 @@ public sealed class CodeDbHost
     public object Query(string sql, object? args = null)
     {
         EnsureFamily(DataSourceProvider.FamilySql, "db.query");
+        // S4：query 原先完全不校验写权限，是最直接的绕过入口。
+        // 与 execute 共用同一判定，WITH … DELETE 因此在 query 侧同样被拦。
+        EnsureSqlWrite(sql);
         var result = Run("db.query", isWrite: false, ct => _sqlExecutor.QueryAsync(
             _dataSource, sql, ToJsonObject(args), _isDryRun, ct));
         return ToSqlResult(result, includeRows: true);
@@ -401,10 +404,7 @@ public sealed class CodeDbHost
 
     private void EnsureSqlWrite(string sql)
     {
-        var trimmed = sql.TrimStart();
-        var isWrite = !(trimmed.StartsWith("select", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith("with", StringComparison.OrdinalIgnoreCase));
-        if (isWrite && !_canWrite)
+        if (SqlWriteClassifier.IsWrite(sql) && !_canWrite)
         {
             throw new UserFriendlyException(
                 "Missing permission Orchestration.Sql.Write for database write operations."

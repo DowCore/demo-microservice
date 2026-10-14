@@ -58,7 +58,9 @@ public class LogicApiAppService : SaaSAppService, ILogicApiAppService
             isDryRun: false,
             filterOutputsByRole: true,
             currentUser: CurrentUser,
-            skipValidation: true
+            skipValidation: true,
+            instanceId: instance.Id,
+            flowKey: published.FlowKey
         );
         executeSw.Stop();
 

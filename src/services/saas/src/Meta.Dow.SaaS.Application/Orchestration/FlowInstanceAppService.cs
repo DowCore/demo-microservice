@@ -99,7 +99,9 @@ public class FlowInstanceAppService : SaaSAppService, IFlowInstanceAppService
             input.VariablesJson,
             isDryRun: false,
             filterOutputsByRole: false,
-            currentUser: CurrentUser
+            currentUser: CurrentUser,
+            instanceId: instance.Id,
+            flowKey: definition.Code
         );
 
         foreach (var node in execution.Nodes)

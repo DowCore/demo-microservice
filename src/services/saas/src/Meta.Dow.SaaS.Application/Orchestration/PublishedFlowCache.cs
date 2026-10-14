@@ -27,6 +27,11 @@ public sealed class PublishedFlowSnapshot
 
 /// <summary>
 /// 已发布流程热路径缓存：避免每次 Logic API 两次 Mongo 查询 + 重复反序列化/校验 DSL。
+///
+/// <para><b>A5：本地快照与跨副本失效</b>。每份快照记住自己加载时的全局失效版本号
+/// （见 <see cref="FlowDefinitionInvalidationBroadcaster"/>）。读取前先比对版本号，
+/// 不一致就丢弃本地快照重新加载，从而让发布/停用/删除在多副本下都能生效，
+/// 而不必把 DSL 本体放进分布式缓存。</para>
 /// </summary>
 public class PublishedFlowCache : ITransientDependency
 {
@@ -39,18 +44,21 @@ public class PublishedFlowCache : ITransientDependency
     private readonly IRepository<FlowDefinition, Guid> _definitionRepository;
     private readonly IRepository<FlowVersion, Guid> _versionRepository;
     private readonly ICurrentTenant _currentTenant;
+    private readonly FlowDefinitionInvalidationBroadcaster _broadcaster;
 
     public PublishedFlowCache(
         IMemoryCache cache,
         IRepository<FlowDefinition, Guid> definitionRepository,
         IRepository<FlowVersion, Guid> versionRepository,
-        ICurrentTenant currentTenant
+        ICurrentTenant currentTenant,
+        FlowDefinitionInvalidationBroadcaster broadcaster
     )
     {
         _cache = cache;
         _definitionRepository = definitionRepository;
         _versionRepository = versionRepository;
         _currentTenant = currentTenant;
+        _broadcaster = broadcaster;
     }
 
     public async Task<PublishedFlowSnapshot> GetByKeyAsync(string flowKey)
@@ -61,9 +69,18 @@ public class PublishedFlowCache : ITransientDependency
         }
 
         var key = CacheKey(flowKey.Trim());
-        if (_cache.TryGetValue(key, out PublishedFlowSnapshot? cached) && cached != null)
+
+        // A5：命中本地快照前，先确认它不是被其他副本的发布/停用/删除作废的旧版本。
+        var generation = await _broadcaster.GetGenerationAsync();
+
+        if (_cache.TryGetValue(key, out CachedFlow? cached) && cached != null)
         {
-            return cached;
+            if (cached.Generation == generation)
+            {
+                return cached.Snapshot;
+            }
+
+            _cache.Remove(key);
         }
 
         var definition = await _definitionRepository.FirstOrDefaultAsync(x => x.Code == flowKey.Trim());
@@ -103,7 +120,7 @@ public class PublishedFlowCache : ITransientDependency
 
         _cache.Set(
             key,
-            snapshot,
+            new CachedFlow(snapshot, generation),
             new MemoryCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10),
@@ -113,6 +130,9 @@ public class PublishedFlowCache : ITransientDependency
 
         return snapshot;
     }
+
+    /// <summary>本地缓存条目：快照 + 加载时的全局失效版本号。</summary>
+    private sealed record CachedFlow(PublishedFlowSnapshot Snapshot, long Generation);
 
     public void Invalidate(string flowKey)
     {

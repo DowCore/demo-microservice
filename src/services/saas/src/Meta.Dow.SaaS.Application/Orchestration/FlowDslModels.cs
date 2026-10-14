@@ -220,6 +220,24 @@ public class FlowDslNode
 
     public bool Async { get; set; }
 
+    /// <summary>
+    /// Wait 节点：要等待的异步作业 Id（字符串路径或字面量）。
+    /// 缺省时取入参 <c>jobId</c>。
+    /// </summary>
+    public string? JobId { get; set; }
+
+    /// <summary>
+    /// Wait 节点的最长等待毫秒数。缺省取节点级 <see cref="TimeoutMs"/>，
+    /// 两者都缺省时用 30s 上限，避免一个 Wait 挂死整条流程。
+    /// </summary>
+    public int? WaitTimeoutMs { get; set; }
+
+    /// <summary>
+    /// Wait 节点超时或作业失败时是否让流程失败。
+    /// 默认 true——等不到结果却继续往下走，等于把不确定性带进后续节点。
+    /// </summary>
+    public bool WaitFailOnTimeout { get; set; } = true;
+
     public int? TimeoutMs { get; set; }
 
     /// <summary>

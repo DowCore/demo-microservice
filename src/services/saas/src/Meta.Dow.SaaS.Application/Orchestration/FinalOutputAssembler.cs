@@ -894,6 +894,39 @@ public static class FinalOutputAssembler
                     yield return p;
                 }
             }
+
+            // 分组出参有两条独立的可见性入口，任一漏收都会让 permissions 模式下的字段被误判为不可见：
+            // header 的 visibleTo.permissions（分组主属性），以及 children 自身的 visibleTo（整个子表）。
+            if (output.Group?.Children?.VisibleTo?.Permissions != null)
+            {
+                foreach (var p in output.Group.Children.VisibleTo.Permissions)
+                {
+                    if (!string.IsNullOrWhiteSpace(p))
+                    {
+                        yield return p;
+                    }
+                }
+            }
+
+            if (output.Group?.Header != null)
+            {
+                for (var i = 0; i < output.Group.Header.Count; i++)
+                {
+                    var header = output.Group.Header[i];
+                    if (header.VisibleTo?.Permissions == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var p in header.VisibleTo.Permissions)
+                    {
+                        if (!string.IsNullOrWhiteSpace(p))
+                        {
+                            yield return p;
+                        }
+                    }
+                }
+            }
         }
     }
 

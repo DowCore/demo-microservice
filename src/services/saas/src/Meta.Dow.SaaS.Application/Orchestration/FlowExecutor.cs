@@ -6,9 +6,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Meta.Dow.SaaS.Orchestration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Volo.Abp;
 using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.DependencyInjection;
+using Volo.Abp.MultiTenancy;
 
 namespace Meta.Dow.SaaS.Orchestration;
 
@@ -33,6 +35,15 @@ public class FlowExecutionResult
 
     /// <summary>解释器纯执行耗时（不含查库/落库）</summary>
     public int ExecuteMs { get; set; }
+
+    /// <summary>
+    /// 本次执行所属的流程实例 Id。由调用方在执行前生成并回填，
+    /// 供异步节点把作业关联回实例（C1 修复）。
+    /// </summary>
+    public Guid? InstanceId { get; set; }
+
+    /// <summary>本次执行的 flowKey，用于异步作业归属与排障。</summary>
+    public string? FlowKey { get; set; }
 }
 
 public class FlowExecutor : ITransientDependency
@@ -54,6 +65,18 @@ public class FlowExecutor : ITransientDependency
     private readonly IResourceCrudExecutor _resourceCrudExecutor;
     private readonly ILogger<FlowExecutor> _logger;
 
+    /// <summary>C1 修复：异步外呼作业的登记与执行。取代原进程内 Task.Run。</summary>
+    private readonly FlowAsyncJobDispatcher _asyncJobDispatcher;
+
+    /// <summary>当前租户。异步作业必须携带租户，否则跨租户读取作业结果会成为漏洞。</summary>
+    private readonly ICurrentTenant? _currentTenant;
+
+    /// <summary>
+    /// 出站安全开关。A7：Http 出站白名单与重定向策略。
+    /// 声明为可选参数，使纯控制流单测无需引入配置依赖。
+    /// </summary>
+    private readonly OrchestrationOptions _options;
+
     public FlowExecutor(
         IHttpClientFactory httpClientFactory,
         SystemContextBuilder systemContextBuilder,
@@ -63,7 +86,10 @@ public class FlowExecutor : ITransientDependency
         IOrchestrationRabbitPublisher rabbitPublisher,
         PublishedFlowCache publishedFlowCache,
         IResourceCrudExecutor resourceCrudExecutor,
-        ILogger<FlowExecutor> logger
+        ILogger<FlowExecutor> logger,
+        IOptions<OrchestrationOptions>? options = null,
+        FlowAsyncJobDispatcher? asyncJobDispatcher = null,
+        ICurrentTenant? currentTenant = null
     )
     {
         _httpClientFactory = httpClientFactory;
@@ -75,6 +101,9 @@ public class FlowExecutor : ITransientDependency
         _publishedFlowCache = publishedFlowCache;
         _resourceCrudExecutor = resourceCrudExecutor;
         _logger = logger;
+        _options = options?.Value ?? new OrchestrationOptions();
+        _asyncJobDispatcher = asyncJobDispatcher!;
+        _currentTenant = currentTenant;
     }
 
     public async Task<FlowExecutionResult> ExecuteAsync(
@@ -85,11 +114,18 @@ public class FlowExecutor : ITransientDependency
         Volo.Abp.Users.ICurrentUser? currentUser = null,
         CancellationToken cancellationToken = default,
         bool skipValidation = false,
-        HashSet<string>? callStack = null
+        HashSet<string>? callStack = null,
+        Guid? instanceId = null,
+        string? flowKey = null
     )
     {
         var swAll = Stopwatch.StartNew();
-        var result = new FlowExecutionResult();
+        var result = new FlowExecutionResult
+        {
+            // 由调用方（先建实例、再执行）传入，供异步节点把作业关联回实例。
+            InstanceId = instanceId,
+            FlowKey = flowKey
+        };
         FlowDslDocument dsl;
         try
         {
@@ -199,6 +235,14 @@ public class FlowExecutor : ITransientDependency
     {
         var snapshot = _systemContextBuilder.Build();
         var ctx = BuildContext(dsl, requestBodyJson, snapshot);
+
+        // C1 修复所需：异步节点要把作业关联回实例与租户。
+        // 由调用方（LogicApi / PublishedFlowInvoker / InstanceAppService）传入，
+        // 因为实例 Id 是它们在执行前生成的，FlowExecutor 内部无从得知。
+        ctx.InstanceId = result.InstanceId ?? Guid.Empty;
+        ctx.FlowKey = result.FlowKey;
+        ctx.TenantId = _currentTenant?.Id;
+
         result.Context = ctx;
 
         var nodeMap = dsl.Nodes.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
@@ -529,8 +573,27 @@ public class FlowExecutor : ITransientDependency
         if (hasCombineModel && node.Items is { Count: > 0 })
         {
             var itemResults = EvaluateConditionItems(node.Items, ctx);
-            var strategy = node.Strategy ?? "firstMatch";
+
+            // C12：strategy 原先从不校验，拼错会静默退化成"最后一条命中生效"，
+            // 与命名完全相反。取值合法性与语义在 ValidateDsl 里也已加严，这里只做兜底。
+            var strategy = string.IsNullOrWhiteSpace(node.Strategy)
+                ? "firstMatch"
+                : node.Strategy.Trim();
+
+            if (!strategy.Equals("firstMatch", StringComparison.OrdinalIgnoreCase) &&
+                !strategy.Equals("allMatch", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UserFriendlyException(
+                    $"Condition '{node.Id}' has unsupported strategy '{node.Strategy}'. " +
+                    "Supported: firstMatch（首个命中的边生效，默认）, allMatch（要求所有边的组合式同时成立）."
+                );
+            }
+
+            // allMatch 的语义是「所有边都必须命中」，这在多路分支里等价于全部分支汇合，
+            // 与 firstMatch 是两种明确不同的行为，命名与实现必须对齐。
+            var requireAll = strategy.Equals("allMatch", StringComparison.OrdinalIgnoreCase);
             FlowDslEdge? matched = null;
+
             foreach (var edge in edges.Where(e => !e.IsDefault))
             {
                 var combine = edge.Combine;
@@ -549,8 +612,14 @@ public class FlowExecutor : ITransientDependency
 
                 if (ConditionCombineEvaluator.Evaluate(combine, itemResults))
                 {
+                    if (requireAll)
+                    {
+                        matched = null;
+                        break;
+                    }
+
                     matched = edge;
-                    if (strategy.Equals("firstMatch", StringComparison.OrdinalIgnoreCase))
+                    if (!requireAll)
                     {
                         break;
                     }
@@ -766,6 +835,13 @@ public class FlowExecutor : ITransientDependency
                     break;
                 }
 
+                case "wait":
+                {
+                    await ExecuteWaitAsync(node, ctx, record, cancellationToken);
+                    CheckFailWhen(node, ctx);
+                    break;
+                }
+
                 case "code":
                 {
                     await ExecuteCodeNodeAsync(node, ctx, record, isDryRun, cancellationToken);
@@ -829,9 +905,14 @@ public class FlowExecutor : ITransientDependency
     }
 
     /// <summary>
-    /// 异步 Http：主链只排队，不写出参；后台发请求（副作用），失败仅记日志。
+    /// 异步 Http：主链只登记作业、不写出参；后台执行外呼。
+    ///
+    /// <para><b>C1 修复</b>：原实现是 <c>Task.Run(..., CancellationToken.None)</c> 且
+    /// 失败仅 <c>LogWarning</c>，导致结果、失败、JobId 全丢，而实例仍判成功。
+    /// 现在改为登记持久化作业 <see cref="FlowAsyncJob"/>，把 JobId 写进节点记录，
+    /// 成功与失败都由 <see cref="FlowAsyncJobDispatcher"/> 落库，可查询、可重试、可被 Wait 消费。</para>
     /// </summary>
-    private Task QueueHttpCallAsync(
+    private async Task QueueHttpCallAsync(
         FlowDslNode node,
         FlowRuntimeContext ctx,
         NodeExecutionRecord record,
@@ -912,72 +993,185 @@ public class FlowExecutor : ITransientDependency
             headerPairs.Add(new KeyValuePair<string, string>(k, headerValue));
         }
 
+        // A7：出站白闸。异步路径同样要过，且在<b>排队前</b>判定——
+        // 否则非法地址会先被接受、事后才在后台线程失败，问题暴露得太晚。
+        HttpEgressGuard.EnsureAllowed(finalUrl, _options.HttpAllowedHosts);
+
         record.Status = "AsyncQueued";
         record.InputJson = JsonSerializer.Serialize(
             new { async = true, method = method.Method, url = finalUrl, bodyMode, headers, parameters = nodeInput, body = bodyText },
             JsonOptions
         );
+
+        // mock:// 无需真实外呼，但同样登记作业，保证 mock 与真实路径的
+        // 节点状态、JobId 语义完全一致，避免设计器预览与生产行为分叉。
+        var isMock = finalUrl.StartsWith("mock://", StringComparison.OrdinalIgnoreCase);
+
+        // C1 修复：登记为持久化作业并回写 JobId。
+        // 原实现是 `_ = Task.Run(...)`，结果、失败、JobId 全部丢失。
+        var jobId = await _asyncJobDispatcher.EnqueueAsync(
+            ctx.InstanceId,
+            node.Id,
+            ctx.FlowKey,
+            method.Method,
+            finalUrl,
+            bodyText,
+            ctx.TenantId,
+            cancellationToken
+        );
+
+        record.AsyncJobId = jobId;
         record.OutputJson = JsonSerializer.Serialize(
             new
             {
                 async = true,
                 queued = true,
-                message = "HttpCall queued; outputs are not available on the main chain until Wait (P2)."
+                jobId,
+                status = isMock ? "Succeeded" : "Queued",
+                message = "HttpCall queued as a durable async job; use a Wait node to consume its result."
             },
             JsonOptions
         );
 
-        // mock:// 无需后台外呼
-        if (finalUrl.StartsWith("mock://", StringComparison.OrdinalIgnoreCase))
+        if (isMock)
         {
-            _logger.LogInformation("Async HttpCall {NodeId} mock skipped on queue: {Url}", node.Id, finalUrl);
-            return Task.CompletedTask;
+            _logger.LogInformation("Async HttpCall {NodeId} mock:// skipped; job {JobId} recorded only.", node.Id, jobId);
+            return;
         }
 
-        var clientFactory = _httpClientFactory;
-        var logger = _logger;
-        var nodeId = node.Id;
-        var methodCopy = method;
-        var urlCopy = finalUrl;
-        var bodyCopy = bodyText;
-        var bodyModeCopy = bodyMode;
-        var headersCopy = headerPairs;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                using var request = new HttpRequestMessage(methodCopy, urlCopy);
-                foreach (var (k, v) in headersCopy)
-                {
-                    request.Headers.TryAddWithoutValidation(k, v);
-                }
-
-                if (bodyCopy != null && methodCopy != HttpMethod.Get)
-                {
-                    var contentType = bodyModeCopy == "form"
-                        ? "application/x-www-form-urlencoded"
-                        : "application/json";
-                    request.Content = new StringContent(bodyCopy, Encoding.UTF8, contentType);
-                }
-
-                var client = clientFactory.CreateClient("OrchestrationHttpCall");
-                using var response = await client.SendAsync(request);
-                logger.LogInformation(
-                    "Async HttpCall {NodeId} completed status={Status} url={Url}",
-                    nodeId,
-                    (int)response.StatusCode,
-                    urlCopy
-                );
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Async HttpCall {NodeId} failed url={Url}", nodeId, urlCopy);
-            }
-        }, CancellationToken.None);
-
-        return Task.CompletedTask;
+        // 不再在此处起后台线程：作业已持久化，由 FlowAsyncJobWorker 轮询执行。
+        // 这样进程重启后队列里的作业仍会被执行——原实现的 Task.Run 一重启就丢。
+        _logger.LogInformation(
+            "Async HttpCall {NodeId} queued as job {JobId}; awaiting FlowAsyncJobWorker.",
+            node.Id,
+            jobId
+        );
     }
+
+    /// <summary>
+    /// Wait 节点：等待异步作业进入终态，并把结果接回主链。
+    ///
+    /// <para><b>为什么必须有它</b>：C1 修复让异步节点产生了可寻址的 JobId，
+    /// 但如果没有消费端，异步出参在下游<b>永远不可用</b>——异步节点只能做副作用，
+    /// 无法参与后续编排。Wait 是让异步真正可用的另一半。</para>
+    ///
+    /// <para><b>失败语义</b>：默认（<c>waitFailOnTimeout=true</c>）在作业失败或超时时让流程失败。
+    /// 这是刻意的保守选择——等不到结果却继续往下走，会把不确定性带进后续节点；
+    /// 需要"尽力而为"的业务可以显式关掉该开关，此时结果里会带 <c>timedOut=true</c>。</para>
+    /// </summary>
+    private async Task ExecuteWaitAsync(
+        FlowDslNode node,
+        FlowRuntimeContext ctx,
+        NodeExecutionRecord record,
+        CancellationToken cancellationToken
+    )
+    {
+        var rawJobId = node.JobId;
+        if (string.IsNullOrWhiteSpace(rawJobId))
+        {
+            // 缺省取入参 jobId，兼容"从 Http 节点 outputs 透传"的常见画法。
+            rawJobId = node.Inputs?
+                .FirstOrDefault(x => string.Equals(x.Name, "jobId", StringComparison.OrdinalIgnoreCase))
+                ?.From?.ToString();
+        }
+
+        // 先按模板把 {{results.xxx.jobId}} 内联，再按路径取值。
+        var jobIdText = FlowContextResolver.ResolvePath(
+            FlowContextResolver.ResolveTemplate(rawJobId ?? "", ctx),
+            ctx
+        )?.ToString();
+        if (string.IsNullOrWhiteSpace(jobIdText) || !Guid.TryParse(jobIdText, out var jobId))
+        {
+            throw new UserFriendlyException(
+                "Wait 节点需要一个有效的作业 Id（node.jobId 或入参 jobId）。" +
+                $"当前解析到：'{jobIdText}'。"
+            );
+        }
+
+        var timeoutMs = node.WaitTimeoutMs ?? node.TimeoutMs ?? 30_000;
+        if (timeoutMs <= 0)
+        {
+            throw new UserFriendlyException($"Wait 节点的等待时长必须为正毫秒数，当前为 {timeoutMs}。");
+        }
+
+        record.InputJson = JsonSerializer.Serialize(new { jobId, timeoutMs }, JsonOptions);
+
+var outcome = await WaitForJobAsync(ctx, jobId, timeoutMs, cancellationToken);
+        var job = outcome.Job;
+
+        var raw = new JsonObject
+        {
+            ["jobId"] = jobId.ToString(),
+            ["status"] = job?.Status.ToString() ?? "Unknown",
+            ["timedOut"] = outcome.TimedOut,
+            ["failed"] = job?.Status is FlowAsyncJobStatus.Failed or FlowAsyncJobStatus.Canceled,
+            ["statusCode"] = job?.ResponseStatusCode,
+            ["error"] = job?.Error,
+            ["body"] = ParseJsonNode(job?.ResponseBody)?.DeepClone()
+        };
+
+        record.Status = outcome.TimedOut
+            ? "WaitTimedOut"
+            : raw["failed"]!.GetValue<bool>()
+                ? "WaitJobFailed"
+                : "Succeeded";
+        record.OutputJson = raw.ToJsonString(JsonOptions);
+
+        // 把作业结果接回主链：走与 Http/Mqtt 节点同一套出参装配，
+        // 下游既可用 results.{nodeId}.body，也可用短名 {{body}}。
+        ApplyExecutableOutputs(node, raw, ctx);
+
+        // 默认保守：等不到结果就让流程失败，不把不确定性带进下游节点。
+        // 只有显式 waitFailOnTimeout=false 才放行，并留下 timedOut / failed 出参供下游自行判断。
+        if (node.WaitFailOnTimeout && !string.Equals(record.Status, "Succeeded", StringComparison.Ordinal))
+        {
+            throw new UserFriendlyException(
+                outcome.TimedOut
+                    ? $"Wait 节点等待异步作业 {jobId} 超时（{timeoutMs}ms，当前状态 {raw["status"]}）。" +
+                      "若确认该异步操作允许「尽力而为」，请显式设置 waitFailOnTimeout=false。"
+                    : $"Wait 节点所等的异步作业 {jobId} 未成功（{raw["status"]}）：{job?.Error ?? "未记录原因"}"
+            );
+        }
+    }
+
+    /// <summary>
+    /// 等待作业落终态。超时被表达为一种<b>结果</b>（<c>TimedOut=true</c>）而不是异常，
+    /// 以便上层统一决定「让流程失败」还是「放行」——把策略留在配置侧、执行侧只报事实。
+    /// </summary>
+    private async Task<WaitOutcome> WaitForJobAsync(
+        FlowRuntimeContext ctx,
+        Guid jobId,
+        int timeoutMs,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var job = await _asyncJobDispatcher.WaitForCompletionAsync(
+                jobId,
+                TimeSpan.FromMilliseconds(timeoutMs),
+                cancellationToken
+            );
+            return new WaitOutcome(job, false);
+        }
+        catch (FlowAsyncJobTimeoutException ex)
+        {
+            _logger.LogWarning(
+                "Wait 节点等待作业 {JobId} 超过 {TimeoutMs}ms（流程实例 {InstanceId}，作业仍停留在 {Status}）。",
+                jobId,
+                timeoutMs,
+                ctx.InstanceId,
+                ex.LastStatus
+            );
+
+            // 取一次快照，让下游至少能看到作业停在哪一步；查不到也不阻断（快照是加分项，不是必需项）。
+            var snapshot = await _asyncJobDispatcher.TryGetAsync(jobId, cancellationToken);
+            return new WaitOutcome(snapshot, true);
+        }
+    }
+
+    /// <param name="Job">作业快照；超时且作业已被清理时可能为 null。</param>
+    private sealed record WaitOutcome(FlowAsyncJob? Job, bool TimedOut);
 
     private async Task ExecuteHttpAsync(
         FlowDslNode node,
@@ -1008,6 +1202,10 @@ public class FlowExecutor : ITransientDependency
 
         string? bodyText = null;
         var finalUrl = url;
+
+        // A7：出站白闸。放在 query 拼接之前，这样无论 query 参数如何构造，
+        // 校验的都是用户真正会请求的那个 URL。
+        HttpEgressGuard.EnsureAllowed(finalUrl, _options.HttpAllowedHosts);
 
         switch (bodyMode)
         {
@@ -2349,10 +2547,74 @@ public class FlowExecutor : ITransientDependency
             "lte" or "<=" => Compare(left, right, "<="),
             "contains" => (Convert.ToString(left) ?? "").Contains(Convert.ToString(right) ?? "", StringComparison.OrdinalIgnoreCase),
             "notcontains" => !(Convert.ToString(left) ?? "").Contains(Convert.ToString(right) ?? "", StringComparison.OrdinalIgnoreCase),
+            "startswith" => (Convert.ToString(left) ?? "").StartsWith(Convert.ToString(right) ?? "", StringComparison.OrdinalIgnoreCase),
+            "endswith" => (Convert.ToString(left) ?? "").EndsWith(Convert.ToString(right) ?? "", StringComparison.OrdinalIgnoreCase),
+
+            // in / notIn / between：原先缺失，配了直接抛 "Unsupported condition op"。
+            // 语义与主流低代码一致：in 右侧可以是数组，也可以是逗号分隔字符串。
+            "in" => MatchesIn(left, right),
+            "notin" => !MatchesIn(left, right),
+            // between 语义与 FilterSqlBuilder 对齐：闭区间 [min, max]。
+            // （SQL 侧是半开区间，两边不一致本身就是缺陷，见评估文档 C20。）
+            "between" => Compare(left, BoundaryOf(item.Right, 0), ">=") &&
+                         Compare(left, BoundaryOf(item.Right, 1), "<="),
+
             "isempty" => left == null || string.IsNullOrWhiteSpace(Convert.ToString(left)),
             "isnotempty" => left != null && !string.IsNullOrWhiteSpace(Convert.ToString(left)),
-            _ => throw new UserFriendlyException($"Unsupported condition op '{item.Op}'.")
+            "isnull" => left == null,
+            "isnotnull" => left != null,
+            _ => throw new UserFriendlyException(
+                $"Unsupported condition op '{item.Op}'. " +
+                "Supported: eq/ne/gt/gte/lt/lte/contains/notcontains/startswith/endswith/" +
+                "in/notIn/between/isEmpty/isNotEmpty/isNull/isNotNull."
+            )
         };
+    }
+
+    /// <summary>in / notIn 的成员判定。右侧支持数组与逗号分隔字符串。</summary>
+    private static bool MatchesIn(object? left, object? right)
+    {
+        IEnumerable<object?> candidates;
+
+        switch (right)
+        {
+            case null:
+                return false;
+            case string s:
+                candidates = s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Cast<object?>();
+                break;
+            case System.Collections.IEnumerable seq and not string:
+                candidates = seq.Cast<object?>();
+                break;
+            default:
+                candidates = [right];
+                break;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (Compare(left, candidate, "=="))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>取 between 右侧数组的第 index 个边界；缺失时让比较自然失败。</summary>
+    private static object? BoundaryOf(JsonNode? right, int index)
+    {
+        if (right is not System.Text.Json.Nodes.JsonArray array || array.Count <= index)
+        {
+            return null;
+        }
+
+        var node = array[index];
+        return node is JsonValue jv && jv.TryGetValue<string>(out var s)
+            ? FlowContextResolver.ToClr(s)
+            : FlowContextResolver.ToClr(node);
     }
 
     private static bool EvaluateLegacyCondition(string? expression, FlowRuntimeContext ctx)
@@ -2516,6 +2778,31 @@ public class FlowExecutor : ITransientDependency
 
         foreach (var node in dsl.Nodes.Where(x => string.Equals(x.Type, "Condition", StringComparison.OrdinalIgnoreCase)))
         {
+            // C12：strategy 取值必须合法。原先从不校验，拼错会静默退化成
+            // "最后一条命中生效"——与命名完全相反，且无任何提示。
+            if (!string.IsNullOrWhiteSpace(node.Strategy) &&
+                !node.Strategy.Trim().Equals("firstMatch", StringComparison.OrdinalIgnoreCase) &&
+                !node.Strategy.Trim().Equals("allMatch", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UserFriendlyException(
+                    $"Condition '{node.Id}' has unsupported strategy '{node.Strategy}'. " +
+                    "Supported: firstMatch（默认）, allMatch."
+                );
+            }
+
+            var edges = dsl.Edges.Where(e => string.Equals(e.Source, node.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            // C11：只在边上写 combine、节点却没有 items 时，运行期会掉进 legacy 分支
+            // 把 combine 完全忽略并静默走第一条边。这里提前拦掉。
+            var hasEdgeCombine = edges.Any(e => !string.IsNullOrWhiteSpace(e.Combine));
+            if (hasEdgeCombine && node.Items is not { Count: > 0 })
+            {
+                throw new UserFriendlyException(
+                    $"Condition '{node.Id}' 的出边使用了 combine，但节点没有声明 items。" +
+                    "combine 引用的是节点 items 的条件编号；请在节点上补充 items，或改用 isDefault。"
+                );
+            }
+
             if (node.Items is { Count: > 0 })
             {
                 var nos = node.Items.Select(x => x.No).ToList();
@@ -2524,7 +2811,6 @@ public class FlowExecutor : ITransientDependency
                     throw new UserFriendlyException($"Condition '{node.Id}' has duplicate condition numbers.");
                 }
 
-                var edges = dsl.Edges.Where(e => string.Equals(e.Source, node.Id, StringComparison.OrdinalIgnoreCase)).ToList();
                 if (edges.Count == 0)
                 {
                     throw new UserFriendlyException($"Condition '{node.Id}' has no outgoing edges.");
@@ -2534,14 +2820,40 @@ public class FlowExecutor : ITransientDependency
                 {
                     ConditionCombineEvaluator.Validate(edge.Combine, nos);
                 }
+
+                // 条件算子白名单：原先只支持 9 个，in / notIn / between 等配了
+                // 在运行期才抛 "Unsupported condition op"，错误现场离配置现场很远。
+                foreach (var item in node.Items)
+                {
+                    ValidateConditionOp(item, node.Id);
+                }
             }
         }
 
         foreach (var node in dsl.Nodes)
         {
+            // C10：entry 只配 combine、items 为空时运行期直接 return true（恒真）。
+            if (node.Entry != null && !string.IsNullOrWhiteSpace(node.Entry.Combine) &&
+                node.Entry.Items.Count == 0)
+            {
+                throw new UserFriendlyException(
+                    $"节点 '{node.Id}' 的 entry 配了 combine，但没有声明 items，恒为真。" +
+                    "请补充 entry.items，或移除 entry。"
+                );
+            }
+
             if (node.Entry != null && node.Entry.Items.Count > 0 && !string.IsNullOrWhiteSpace(node.Entry.Combine))
             {
                 ConditionCombineEvaluator.Validate(node.Entry.Combine, node.Entry.Items.Select(x => x.No));
+            }
+
+            // failItems 走同一套算子，同样在发布期拦，避免运行期才抛。
+            if (node.FailItems is { Count: > 0 })
+            {
+                foreach (var item in node.FailItems)
+                {
+                    ValidateConditionOp(item, node.Id);
+                }
             }
 
             var type = (node.Type ?? "").Trim().ToLowerInvariant();
@@ -2551,6 +2863,41 @@ public class FlowExecutor : ITransientDependency
                 if (string.IsNullOrWhiteSpace(key))
                 {
                     throw new UserFriendlyException($"SubFlow node '{node.Id}' requires subFlowKey.");
+                }
+            }
+
+            if (type == "wait")
+            {
+                // A4：Wait 是异步出参唯一的消费入口，配错等于节点运行期才炸。
+                // 这里把「必然出错」的三类配置提前到发布期。
+                var inputNames = node.Inputs?.Select(x => x.Name).ToList() ?? [];
+                var hasJobId = !string.IsNullOrWhiteSpace(node.JobId) ||
+                               inputNames.Any(x => string.Equals(x, "jobId", StringComparison.OrdinalIgnoreCase));
+                if (!hasJobId)
+                {
+                    throw new UserFriendlyException(
+                        $"Wait 节点 '{node.Id}' 需要 jobId：要么配置 node.jobId，" +
+                        "要么声明一个名为 jobId 的入参（通常从 httpcall 节点的 jobId 出参透传）。"
+                    );
+                }
+
+                // 超时必须有上界：Wait 节点在主链上同步阻塞执行，
+                // 配成 0 / 负数会立即假超时，配成极大值则会把线程占死到进程回收。
+                if (node.WaitTimeoutMs is { } waitMs && (waitMs <= 0 || waitMs > MaxWaitTimeoutMs))
+                {
+                    throw new UserFriendlyException(
+                        $"Wait 节点 '{node.Id}' 的 waitTimeoutMs 必须在 1..{MaxWaitTimeoutMs} 之间，当前为 {waitMs}。"
+                    );
+                }
+
+                // 等待失败却放行、且又没有任何下游消费点时，这个节点毫无意义，
+                // 多半是配置写错了方向（想等结果却关了失败中断）。
+                if (node.WaitFailOnTimeout == false && node.Outputs is not { Count: > 0 })
+                {
+                    throw new UserFriendlyException(
+                        $"Wait 节点 '{node.Id}' 设了 waitFailOnTimeout=false 却不声明 outputs，" +
+                        "下游无从判断等待是否成功。请补充 outputs，或恢复默认的失败中断。"
+                    );
                 }
             }
 
@@ -2608,18 +2955,17 @@ public class FlowExecutor : ITransientDependency
     }
 
     /// <summary>
-    /// 输出契约与字段可见性校验（P0-2 / P0-3，评审 S7 / S12）。
+    /// 输出契约的**前置**校验（P0-2，评审 S7）：根级 <c>outputs</c> 或**每个** End 节点的
+    /// <c>finalOutputs</c> 至少声明其一，否则发布被拒——引擎不再回退输出全部中间变量（安全边界）。
+    /// 运行期 <see cref="FinishOutputsAsync"/> 仍有兜底报错。
     ///
-    /// P0-2：无最终契约时引擎不再回退输出全部中间变量（那是安全边界）——
-    /// 根级 <c>outputs</c> 或**每个** End 节点的 <c>finalOutputs</c> 至少声明其一，
-    /// 否则发布被拒。运行期 <see cref="FinishOutputsAsync"/> 仍有兜底报错。
-    ///
-    /// P0-3：<c>visibleTo.mode</c> 只接受 all/none/roles/permissions（拼错即拒）；
-    /// <c>roleIds</c> 不受支持（ICurrentUser 只暴露角色名，配了恒不匹配 → 显式拒绝而非静默失效）。
+    /// <para>字段级校验（aggregate/map 冲突、wrap 取值、visibleTo 嵌套）全部由发布期的
+    /// <c>FlowDefinitionAppService.ValidateOutputContracts</c> 承担——放在发布期才能拦住，
+    /// 留在运行期只是把错误推迟到用户请求时才暴露。</para>
     /// </summary>
     private static void ValidateOutputContract(FlowDslDocument dsl)
     {
-        var endNodes = dsl.Nodes
+        var endNodes = (dsl.Nodes ?? [])
             .Where(x => string.Equals(x.Type, "End", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -2632,21 +2978,8 @@ public class FlowExecutor : ITransientDependency
             );
         }
 
-        foreach (var output in dsl.Outputs)
-        {
-            ValidateVisibleTo($"outputs.{output.Name}", output.VisibleTo);
-        }
-
-        foreach (var end in endNodes)
-        {
-            foreach (var output in end.FinalOutputs ?? [])
-            {
-                ValidateVisibleTo($"End('{end.Id}').finalOutputs.{output.Name}", output.VisibleTo);
-            }
-        }
-
         // 注：节点级 outputs（FlowNodeBindingDsl）不承载 visibleTo —— 出参可见性只在
-        // 「契约层」（根级 outputs / End.finalOutputs）定义，故此处无需校验节点绑定。
+        // 「契约层」（根级 outputs / End.finalOutputs 及其嵌套字段）定义。
     }
 
     private static readonly HashSet<string> KnownVisibleToModes = new(StringComparer.OrdinalIgnoreCase)
@@ -2657,7 +2990,12 @@ public class FlowExecutor : ITransientDependency
         "permissions"
     };
 
-    private static void ValidateVisibleTo(string owner, FlowVisibleToDsl? visibleTo)
+    /// <summary>
+    /// <c>visibleTo</c> 校验规则。<b>internal</b> 而非 private：发布期的
+    /// <c>FlowDefinitionAppService.ValidateOutputContracts</c> 复用同一套规则，
+    /// 避免"运行期与发布期两套白名单"这种必然漂移的写法。
+    /// </summary>
+    internal static void ValidateVisibleTo(string owner, FlowVisibleToDsl? visibleTo)
     {
         if (visibleTo == null)
         {
@@ -2793,10 +3131,17 @@ public class FlowExecutor : ITransientDependency
     }
 
     /// <summary>
+    /// Wait 节点单次等待上限（默认 10 分钟）。Wait 在主链上同步阻塞，
+    /// 超过这个量级应该拆成「异步作业 + 回调/轮询」而不是让线程空等。
+    /// </summary>
+    public const int MaxWaitTimeoutMs = 10 * 60 * 1000;
+
+    /// <summary>
     /// 节点类型白名单（P0-1，评审 C2）。与 <see cref="DispatchNodeAsync"/> 的 case 清单**逐一对应**：
     /// 新增 dispatch 分支时必须同步加这里；否则发布期会拒绝该类型。
-    /// 注意：<c>sql</c> / <c>switch</c> / <c>wait</c> 刻意不在名单里 —— 引擎没有对应分支，
+    /// 注意：<c>sql</c> / <c>switch</c> 刻意不在名单里 —— 引擎没有对应分支，
     /// 配了就是"发布成功、调用即 500"，宁可发布失败。
+    /// <para><c>wait</c> 已于 A4 补齐 dispatch 分支，故在名单内。</para>
     /// </summary>
     public static readonly HashSet<string> SupportedNodeKinds = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -2826,6 +3171,8 @@ public class FlowExecutor : ITransientDependency
         "loop",
         "parallel",
         "when",
+        // 异步等待（A4：与httpcall 的 async 模式配套，让异步出参真正可被下游消费）
+        "wait",
         // 资源 CRUD（含 R4 批量三入口）
         "resourcequery",
         "resourceget",
@@ -2930,6 +3277,33 @@ public class FlowExecutor : ITransientDependency
 
         return reachable;
     }
+
+    /// <summary>
+    /// 条件算子白名单。与 <c>EvaluateConditionItem</c> 的 switch 保持同一份取值，
+    /// 避免"运行期才抛 Unsupported condition op"的错配。
+    /// </summary>
+    private static void ValidateConditionOp(FlowConditionItemDsl item, string nodeId)
+    {
+        var op = (item.Op ?? "eq").Trim().ToLowerInvariant();
+        if (SupportedConditionOps.Contains(op))
+        {
+            return;
+        }
+
+        throw new UserFriendlyException(
+            $"Condition '{nodeId}' 的条件 {item.No} 使用了不支持的算子 '{item.Op}'。" +
+            "受支持的算子：" + string.Join(", ", SupportedConditionOps) + "。"
+        );
+    }
+
+    /// <summary>受支持的条件算子。小写比较。</summary>
+    public static readonly HashSet<string> SupportedConditionOps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "eq", "==", "ne", "!=", "gt", ">", "gte", ">=", "lt", "<", "lte", "<=",
+        "contains", "notcontains", "startswith", "endswith",
+        "in", "notin", "between",
+        "isempty", "isnotempty", "isnull", "isnotnull"
+    };
 
     /// <summary>控制流原语（ForEach / Parallel）的结构校验：必需字段、枚举取值、子图完整性。</summary>
     private static void ValidateControlNode(FlowDslNode node)

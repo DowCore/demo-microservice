@@ -25,6 +25,18 @@ public class FlowRuntimeContext
     public SystemContextSnapshot? Snapshot { get; set; }
 
     public Dictionary<string, JsonNode?> FlatVarsLegacy { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 当前流程实例 Id。异步节点据此把作业关联回实例——
+    /// 没有它，作业记录就无从定位到发起它的执行。
+    /// </summary>
+    public Guid InstanceId { get; set; }
+
+    /// <summary>当前流程的 flowKey，用于异步作业归属与排障。</summary>
+    public string? FlowKey { get; set; }
+
+    /// <summary>租户 Id。异步作业必须带租户，否则跨租户读取作业结果会成为漏洞。</summary>
+    public Guid? TenantId { get; set; }
 }
 
 public static class FlowContextResolver

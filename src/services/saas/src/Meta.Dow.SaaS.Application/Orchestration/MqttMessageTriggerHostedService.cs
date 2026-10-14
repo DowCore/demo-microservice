@@ -3,7 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
-using MQTTnet.Client;
 using MQTTnet.Protocol;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
@@ -137,7 +136,7 @@ public class MqttMessageTriggerHostedService : BackgroundService
     )
     {
         var opts = ParseMqttOptions(source.ConnectionString!, trigger.Code);
-        var factory = new MqttFactory();
+        var factory = new MqttClientFactory();
         var client = factory.CreateMqttClient();
         var triggerCode = trigger.Code;
         var flowKey = trigger.FlowKey;

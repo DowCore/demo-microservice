@@ -13,7 +13,8 @@ namespace Meta.Dow.Orchestration.Tests;
 ///
 /// 三组规则的动机（见 docs/detail/logic-orchestration-review.md §4）：
 /// 1. **P0-1 节点类型白名单（C2）**：dispatch 对未知类型抛 500，此前"发布成功、调用即 500"。
-///    现在把这类错误提前到发布期。特别地 <c>Sql</c>/<c>Switch</c>/<c>Wait</c> 引擎没有分支，必须拒。
+///    现在把这类错误提前到发布期。特别地 <c>Sql</c>/<c>Switch</c> 引擎没有分支，必须拒；
+///    <c>Wait</c> 已由 A4 补齐分支并纳入名单，但其"缺 jobId"类配置错误同样在发布期拦。
 /// 2. **P0-2 输出契约强制（S7）**：未声明契约时引擎曾回退输出整个 <c>ctx.Vars</c>（内部变量整包外泄）。
 ///    现在根级 <c>outputs</c> 或**每个** End 的 <c>finalOutputs</c> 至少声明其一，否则拒绝发布。
 /// 3. **P0-3 可见性取值收敛（S12）**：<c>visibleTo.mode</c> 拼错曾兜底放行（等于公开）；
@@ -63,7 +64,6 @@ public class FlowExecutorDslValidationTests
     [Theory]
     [InlineData("Sql")] // 引擎无 "sql" dispatch 分支
     [InlineData("Switch")] // 引擎无 "switch" 分支（多路分支须用 Condition）
-    [InlineData("Wait")] // 引擎无 "wait" 分支
     [InlineData("HttppCall")] // 拼错类型
     public void Unsupported_node_type_is_rejected_at_publish(string type)
     {
@@ -75,10 +75,16 @@ public class FlowExecutorDslValidationTests
     [Fact]
     public void Whitelist_excludes_types_without_dispatch_branch()
     {
-        // 这三个类型是评审 C2/E1/E2 的核心：曾"发布成功、调用即 500"。
+        // 这两个类型是评审 C2/E1/E2 的核心：曾"发布成功、调用即 500"。
         Assert.DoesNotContain("sql", FlowExecutor.SupportedNodeKinds);
         Assert.DoesNotContain("switch", FlowExecutor.SupportedNodeKinds);
-        Assert.DoesNotContain("wait", FlowExecutor.SupportedNodeKinds);
+    }
+
+    [Fact]
+    public void Whitelist_now_includes_wait()
+    {
+        // A4 补齐了 wait 的 dispatch 分支，wait 从"白名单拒绝"转为"可用但必须配 jobId"。
+        Assert.Contains("wait", FlowExecutor.SupportedNodeKinds);
     }
 
     [Fact]
@@ -215,7 +221,17 @@ public class FlowExecutorDslValidationTests
 
     // ==================================================================
     // P0-3 visibleTo 取值收敛
+    //
+    // 校验入口是发布期的 FlowDefinitionAppService.ValidateOutputContracts，
+    // 不是 FlowExecutor.ValidateDsl：可见性错配必须在"发布"这个动作上就失败，
+    // 留到运行期只是把错误推迟到用户请求时暴露。ValidateOutputContract 本身
+    // 只保留"是否声明了输出契约"的前置检查（因为它被 DSL 反序列化后的其他路径共用）。
     // ==================================================================
+
+    /// <summary>visibleTo 的校验入口：与 PublishAsync 走同一条路径。</summary>
+    private static Volo.Abp.UserFriendlyException ValidateContract(string dsl) =>
+        Assert.Throws<Volo.Abp.UserFriendlyException>(
+            () => FlowDefinitionAppService.ValidateOutputContractsForTest(ParseDsl(dsl)));
 
     private static string VisibleToDsl(string visibleToJson) =>
         $$"""
@@ -242,14 +258,15 @@ public class FlowExecutorDslValidationTests
     [InlineData("permissions")]
     public void Known_visible_to_mode_passes_validation(string mode)
     {
-        FlowExecutor.ValidateDsl(ParseDsl(VisibleToDsl($"{{ \"mode\": \"{mode}\" }}")));
+        FlowDefinitionAppService.ValidateOutputContractsForTest(
+            ParseDsl(VisibleToDsl($"{{ \"mode\": \"{mode}\" }}")));
     }
 
     [Fact]
     public void Unknown_visible_to_mode_is_rejected()
     {
         // 此前未知 mode 会走到 `return true` 兜底 = 字段对所有角色公开。
-        var ex = Validate(VisibleToDsl("{ \"mode\": \"evryone\" }"));
+        var ex = ValidateContract(VisibleToDsl("{ \"mode\": \"evryone\" }"));
 
         Assert.Contains("visibleTo.mode", ex.Message, StringComparison.Ordinal);
     }
@@ -258,7 +275,7 @@ public class FlowExecutorDslValidationTests
     public void Role_ids_in_visible_to_is_rejected()
     {
         // ICurrentUser 只暴露角色名，roleIds 与角色名比较恒不匹配 = 静默失效。
-        var ex = Validate(VisibleToDsl(
+        var ex = ValidateContract(VisibleToDsl(
             "{ \"mode\": \"roles\", \"roleIds\": [\"11111111-1111-1111-1111-111111111111\"] }"));
 
         Assert.Contains("roleIds", ex.Message, StringComparison.Ordinal);
@@ -286,9 +303,10 @@ public class FlowExecutorDslValidationTests
             }
             """;
 
-        var ex = Validate(dsl);
+        var ex = ValidateContract(dsl);
 
         Assert.Contains("visibleTo.mode", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("finalOutputs", ex.Message, StringComparison.Ordinal);
     }
 
     // ==================================================================

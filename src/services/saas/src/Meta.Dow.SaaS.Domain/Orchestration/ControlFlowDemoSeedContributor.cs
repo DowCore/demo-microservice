@@ -14,7 +14,8 @@ namespace Meta.Dow.SaaS.Orchestration;
 /// 覆盖 v1.2 新增的两个原语：
 /// 1. <c>cf-foreach-demo</c>        —— ForEach + 内联循环体 + continueOnError
 /// 2. <c>cf-foreach-subflow-demo</c> —— ForEach + subFlowKey（复用已发布的 order-http-demo）
-/// 3. <c>cf-parallel-demo</c>       —— Parallel 三分支并发聚合（分支内含 Condition）
+/// 3. <c>cf-parallel-demo</c>       —— Parallel 三分支，各自调用已发布流程并声明入参/出参
+/// 4. <c>cf-line-check</c>          —— ForEach 循环体是一段脚本：逐行清洗、计价、打风险标
 ///
 /// 与 <see cref="FlowDefinitionDataSeedContributor"/> 同样遵循"开发期刷新演示 DSL"的口径：
 /// 已存在则 draft 覆盖 + published 版本号自增，便于随代码演进持续修正演示。
@@ -26,6 +27,8 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
     public const string ForEachSubFlowDemoCode = "cf-foreach-subflow-demo";
 
     public const string ParallelDemoCode = "cf-parallel-demo";
+
+    public const string LineCheckDemoCode = "cf-line-check";
 
     private readonly IRepository<FlowDefinition, Guid> _definitionRepository;
     private readonly IRepository<FlowVersion, Guid> _versionRepository;
@@ -63,9 +66,33 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
             );
             await SeedOneAsync(
                 context?.TenantId,
+                "cf-branch-basic",
+                "控制流演示：分支流程·订单核对",
+                BuildBranchBasicDsl()
+            );
+            await SeedOneAsync(
+                context?.TenantId,
+                "cf-branch-risk",
+                "控制流演示：分支流程·金额风险",
+                BuildBranchRiskDsl()
+            );
+            await SeedOneAsync(
+                context?.TenantId,
+                "cf-branch-audit",
+                "控制流演示：分支流程·提交审计",
+                BuildBranchAuditDsl()
+            );
+            await SeedOneAsync(
+                context?.TenantId,
                 ParallelDemoCode,
                 "控制流演示：并发聚合（Parallel）",
                 BuildParallelDsl()
+            );
+            await SeedOneAsync(
+                context?.TenantId,
+                LineCheckDemoCode,
+                "控制流演示：逐行处理（ForEach 脚本）",
+                BuildLineCheckDsl()
             );
         }
     }
@@ -75,7 +102,7 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
         var existing = await _definitionRepository.FirstOrDefaultAsync(x => x.Code == code);
         if (existing != null)
         {
-            existing.MarkSystem();
+            existing.ClearSystemMark();
             existing.SetReusable(true);
             existing.UpdateDraft(name, "演示", graphJson: "{}", dslJson: dslJson, isReusable: true);
             var next = (existing.PublishedVersion ?? 0) + 1;
@@ -103,7 +130,7 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
             "演示",
             tenantId,
             isReusable: true,
-            isSystem: true
+            isSystem: false
         );
         definition.UpdateDraft(name, "演示", graphJson: "{}", dslJson: dslJson, isReusable: true);
         definition.MarkPublished(1);
@@ -310,9 +337,187 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
 """;
     }
 
+    /// <summary>被并行分支调用：核对订单，返回 orderId、status，另带一个调用点不取的 note。</summary>
+    public static string BuildBranchBasicDsl()
+    {
+        return """
+{
+  "version": "1.1",
+  "key": "cf-branch-basic",
+  "trigger": { "type": "Manual" },
+  "inputs": [
+    { "name": "orderId", "type": "string", "required": true, "source": "input" }
+  ],
+  "outputs": [
+    { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
+    { "name": "status", "type": "string", "from": "status", "visibleTo": { "mode": "all" } },
+    { "name": "note", "type": "string", "from": "note", "visibleTo": { "mode": "all" } }
+  ],
+  "nodes": [
+    { "id": "start", "type": "Start" },
+    {
+      "id": "pick",
+      "type": "Assign",
+      "ref": "pick",
+      "inputs": [
+        { "name": "orderId", "from": "input.orderId" },
+        { "name": "status", "from": { "literal": "verified" } },
+        { "name": "note", "from": { "literal": "internal" } }
+      ],
+      "outputs": [
+        { "name": "orderId", "from": "orderId" },
+        { "name": "status", "from": "status" },
+        { "name": "note", "from": "note" }
+      ]
+    },
+    {
+      "id": "end",
+      "type": "End",
+      "finalOutputs": [
+        { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
+        { "name": "status", "type": "string", "from": "status", "visibleTo": { "mode": "all" } },
+        { "name": "note", "type": "string", "from": "note", "visibleTo": { "mode": "all" } }
+      ]
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "pick" },
+    { "source": "pick", "target": "end" }
+  ]
+}
+""";
+    }
+
+    /// <summary>被并行分支调用：金额大于 1000 标 high，否则 normal。</summary>
+    public static string BuildBranchRiskDsl()
+    {
+        return """
+{
+  "version": "1.1",
+  "key": "cf-branch-risk",
+  "trigger": { "type": "Manual" },
+  "inputs": [
+    { "name": "amount", "type": "number", "source": "input", "default": 0 }
+  ],
+  "outputs": [
+    { "name": "riskLevel", "type": "string", "from": "riskLevel", "visibleTo": { "mode": "all" } },
+    { "name": "amount", "type": "number", "from": "amount", "visibleTo": { "mode": "all" } }
+  ],
+  "nodes": [
+    { "id": "start", "type": "Start" },
+    {
+      "id": "gate",
+      "type": "Condition",
+      "ref": "gate",
+      "items": [ { "no": 1, "left": "input.amount", "op": "gt", "right": 1000 } ]
+    },
+    {
+      "id": "high",
+      "type": "Assign",
+      "ref": "high",
+      "inputs": [
+        { "name": "riskLevel", "from": { "literal": "high" } },
+        { "name": "amount", "from": "input.amount" }
+      ],
+      "outputs": [
+        { "name": "riskLevel", "from": "riskLevel" },
+        { "name": "amount", "from": "amount" }
+      ]
+    },
+    {
+      "id": "normal",
+      "type": "Assign",
+      "ref": "normal",
+      "inputs": [
+        { "name": "riskLevel", "from": { "literal": "normal" } },
+        { "name": "amount", "from": "input.amount" }
+      ],
+      "outputs": [
+        { "name": "riskLevel", "from": "riskLevel" },
+        { "name": "amount", "from": "amount" }
+      ]
+    },
+    {
+      "id": "end",
+      "type": "End",
+      "finalOutputs": [
+        { "name": "riskLevel", "type": "string", "from": "riskLevel", "visibleTo": { "mode": "all" } },
+        { "name": "amount", "type": "number", "from": "amount", "visibleTo": { "mode": "all" } }
+      ]
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "gate" },
+    { "source": "gate", "target": "high", "combine": "1" },
+    { "source": "gate", "target": "normal", "isDefault": true },
+    { "source": "high", "target": "end" },
+    { "source": "normal", "target": "end" }
+  ]
+}
+""";
+    }
+
+    /// <summary>被并行分支调用：记下订单、操作人和已审计标记。</summary>
+    public static string BuildBranchAuditDsl()
+    {
+        return """
+{
+  "version": "1.1",
+  "key": "cf-branch-audit",
+  "trigger": { "type": "Manual" },
+  "inputs": [
+    { "name": "orderId", "type": "string", "required": true, "source": "input" }
+  ],
+  "outputs": [
+    { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
+    { "name": "operator", "type": "string", "from": "operator", "visibleTo": { "mode": "all" } },
+    { "name": "audited", "type": "boolean", "from": "audited", "visibleTo": { "mode": "all" } }
+  ],
+  "nodes": [
+    { "id": "start", "type": "Start" },
+    {
+      "id": "log",
+      "type": "Log",
+      "ref": "log",
+      "message": "审计：订单 {{input.orderId}} 由 {{sys.userName}} 提交"
+    },
+    {
+      "id": "pick",
+      "type": "Assign",
+      "ref": "pick",
+      "inputs": [
+        { "name": "orderId", "from": "input.orderId" },
+        { "name": "operator", "from": "sys.userName" },
+        { "name": "audited", "from": { "literal": true } }
+      ],
+      "outputs": [
+        { "name": "orderId", "from": "orderId" },
+        { "name": "operator", "from": "operator" },
+        { "name": "audited", "from": "audited" }
+      ]
+    },
+    {
+      "id": "end",
+      "type": "End",
+      "finalOutputs": [
+        { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
+        { "name": "operator", "type": "string", "from": "operator", "visibleTo": { "mode": "all" } },
+        { "name": "audited", "type": "boolean", "from": "audited", "visibleTo": { "mode": "all" } }
+      ]
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "log" },
+    { "source": "log", "target": "pick" },
+    { "source": "pick", "target": "end" }
+  ]
+}
+""";
+    }
+
     /// <summary>
-    /// Parallel（WHEN）+ ALL：三个分支并发执行后汇合。
-    /// 其中 risk 分支内部含 Condition 多出边（高/低风险），用于演示"子图内同样支持分支"。
+    /// Parallel：三条分支分别调用已发布流程。调用点声明入参和出参，
+    /// basic 的出参不含被调流程里的 note，用于确认出参投影生效。
     /// </summary>
     public static string BuildParallelDsl()
     {
@@ -347,156 +552,38 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
       "branches": [
         {
           "ref": "basic",
+          "subFlowKey": "cf-branch-basic",
           "inputs": [
             { "name": "orderId", "from": "input.orderId" }
           ],
-          "body": {
-            "inputs": [
-              { "name": "orderId", "type": "string", "source": "input" }
-            ],
-            "nodes": [
-              { "id": "b_s", "type": "Start" },
-              {
-                "id": "b_a",
-                "type": "Assign",
-                "ref": "bA",
-                "inputs": [
-                  { "name": "orderId", "from": "input.orderId" },
-                  { "name": "status", "from": { "literal": "verified" } }
-                ],
-                "outputs": [
-                  { "name": "orderId", "from": "orderId" },
-                  { "name": "status", "from": "status" }
-                ]
-              },
-              {
-                "id": "b_e",
-                "type": "End",
-                "finalOutputs": [
-                  { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
-                  { "name": "status", "type": "string", "from": "status", "visibleTo": { "mode": "all" } }
-                ]
-              }
-            ],
-            "edges": [
-              { "source": "b_s", "target": "b_a" },
-              { "source": "b_a", "target": "b_e" }
-            ]
-          }
+          "outputs": [
+            { "name": "orderId", "from": "orderId" },
+            { "name": "status", "from": "status" }
+          ]
         },
         {
           "ref": "risk",
+          "subFlowKey": "cf-branch-risk",
           "inputs": [
             { "name": "amount", "from": "input.amount" }
           ],
-          "body": {
-            "inputs": [
-              { "name": "amount", "type": "number", "source": "input" }
-            ],
-            "nodes": [
-              { "id": "r_s", "type": "Start" },
-              {
-                "id": "r_c",
-                "type": "Condition",
-                "ref": "rC",
-                "items": [
-                  { "no": 1, "left": "input.amount", "op": "gt", "right": 1000 }
-                ]
-              },
-              {
-                "id": "r_hi",
-                "type": "Assign",
-                "ref": "rHi",
-                "inputs": [
-                  { "name": "riskLevel", "from": { "literal": "high" } },
-                  { "name": "amount", "from": "input.amount" }
-                ],
-                "outputs": [
-                  { "name": "riskLevel", "from": "riskLevel" },
-                  { "name": "amount", "from": "amount" }
-                ]
-              },
-              {
-                "id": "r_lo",
-                "type": "Assign",
-                "ref": "rLo",
-                "inputs": [
-                  { "name": "riskLevel", "from": { "literal": "normal" } },
-                  { "name": "amount", "from": "input.amount" }
-                ],
-                "outputs": [
-                  { "name": "riskLevel", "from": "riskLevel" },
-                  { "name": "amount", "from": "amount" }
-                ]
-              },
-              {
-                "id": "r_e",
-                "type": "End",
-                "finalOutputs": [
-                  { "name": "riskLevel", "type": "string", "from": "riskLevel", "visibleTo": { "mode": "all" } },
-                  { "name": "amount", "type": "number", "from": "amount", "visibleTo": { "mode": "all" } }
-                ]
-              }
-            ],
-            "edges": [
-              { "source": "r_s", "target": "r_c" },
-              { "source": "r_c", "target": "r_hi", "combine": "1" },
-              { "source": "r_c", "target": "r_lo", "isDefault": true },
-              { "source": "r_hi", "target": "r_e" },
-              { "source": "r_lo", "target": "r_e" }
-            ]
-          }
+          "outputs": [
+            { "name": "riskLevel", "from": "riskLevel" },
+            { "name": "amount", "from": "amount" }
+          ]
         },
         {
           "ref": "audit",
           "optional": true,
+          "subFlowKey": "cf-branch-audit",
           "inputs": [
             { "name": "orderId", "from": "input.orderId" }
           ],
-          "body": {
-            "inputs": [
-              { "name": "orderId", "type": "string", "source": "input" }
-            ],
-            "nodes": [
-              { "id": "a_s", "type": "Start" },
-              {
-                "id": "a_l",
-                "type": "Log",
-                "ref": "aL",
-                "message": "审计：订单 {{input.orderId}} 由 {{sys.userName}} 提交",
-                "outputs": [{ "name": "message", "from": "message" }]
-              },
-              {
-                "id": "a_a",
-                "type": "Assign",
-                "ref": "aA",
-                "inputs": [
-                  { "name": "orderId", "from": "input.orderId" },
-                  { "name": "operator", "from": "sys.userName" },
-                  { "name": "audited", "from": { "literal": true } }
-                ],
-                "outputs": [
-                  { "name": "orderId", "from": "orderId" },
-                  { "name": "operator", "from": "operator" },
-                  { "name": "audited", "from": "audited" }
-                ]
-              },
-              {
-                "id": "a_e",
-                "type": "End",
-                "finalOutputs": [
-                  { "name": "orderId", "type": "string", "from": "orderId", "visibleTo": { "mode": "all" } },
-                  { "name": "operator", "type": "string", "from": "operator", "visibleTo": { "mode": "all" } },
-                  { "name": "audited", "type": "boolean", "from": "audited", "visibleTo": { "mode": "all" } }
-                ]
-              }
-            ],
-            "edges": [
-              { "source": "a_s", "target": "a_l" },
-              { "source": "a_l", "target": "a_a" },
-              { "source": "a_a", "target": "a_e" }
-            ]
-          }
+          "outputs": [
+            { "name": "orderId", "from": "orderId" },
+            { "name": "operator", "from": "operator" },
+            { "name": "audited", "from": "audited" }
+          ]
         }
       ],
       "outputs": [
@@ -524,6 +611,93 @@ public class ControlFlowDemoSeedContributor : IDataSeedContributor, ITransientDe
   "edges": [
     { "source": "start", "target": "fan" },
     { "source": "fan", "target": "end" }
+  ]
+}
+""";
+    }
+
+    /// <summary>
+    /// ForEach 的循环体是一段脚本：对当前行清洗 sku、计算 amount、按数量打 riskLevel。
+    /// qty &gt; 100 为 high，否则 normal。return 的对象就是 items 的一项。
+    /// </summary>
+    public static string BuildLineCheckDsl()
+    {
+        return """
+{
+  "version": "1.1",
+  "key": "cf-line-check",
+  "trigger": { "type": "Manual" },
+  "inputs": [
+    {
+      "name": "lines",
+      "type": "array",
+      "required": true,
+      "source": "input",
+      "description": "明细，元素形如 { sku, qty }"
+    }
+  ],
+  "outputs": [
+    { "name": "items", "type": "array", "from": "items", "visibleTo": { "mode": "all" } },
+    { "name": "count", "type": "number", "from": "count", "visibleTo": { "mode": "all" } },
+    { "name": "succeeded", "type": "number", "from": "succeeded", "visibleTo": { "mode": "all" } },
+    { "name": "failed", "type": "array", "from": "failed", "visibleTo": { "mode": "all" } }
+  ],
+  "nodes": [
+    { "id": "start", "type": "Start" },
+    {
+      "id": "each",
+      "type": "ForEach",
+      "ref": "each",
+      "itemsPath": "input.lines",
+      "itemVar": "line",
+      "indexVar": "index",
+      "concurrency": 2,
+      "maxIterations": 50,
+      "itemErrorMode": "continueOnError",
+      "loopBody": {
+        "inputs": [],
+        "nodes": [
+          { "id": "body_start", "type": "Start" },
+          {
+            "id": "body_code",
+            "type": "Code",
+            "ref": "eachRow",
+            "script": "const line = input[\"line\"];\nconst index = Number(input[\"index\"] || 0);\nconst row = line || {};\nconst sku = String(row.sku || '').trim();\nconst qty = Number(row.qty || 0);\nconst price = Number(row.price || 0);\nreturn {\n  sku: sku,\n  qty: qty,\n  price: price,\n  amount: qty * price,\n  riskLevel: qty > 100 ? 'high' : 'normal',\n  keep: Boolean(sku) && qty > 0,\n  index: index\n};"
+          },
+          {
+            "id": "body_end",
+            "type": "End",
+            "finalOutputs": [
+              { "name": "row", "type": "object", "from": "return", "promote": true, "visibleTo": { "mode": "all" } }
+            ]
+          }
+        ],
+        "edges": [
+          { "source": "body_start", "target": "body_code" },
+          { "source": "body_code", "target": "body_end" }
+        ]
+      },
+      "outputs": [
+        { "name": "items", "type": "array", "from": "items" },
+        { "name": "count", "type": "number", "from": "count" },
+        { "name": "succeeded", "type": "number", "from": "succeeded" },
+        { "name": "failed", "type": "array", "from": "failed" }
+      ]
+    },
+    {
+      "id": "end",
+      "type": "End",
+      "finalOutputs": [
+        { "name": "items", "type": "array", "from": "items", "visibleTo": { "mode": "all" } },
+        { "name": "count", "type": "number", "from": "count", "visibleTo": { "mode": "all" } },
+        { "name": "succeeded", "type": "number", "from": "succeeded", "visibleTo": { "mode": "all" } },
+        { "name": "failed", "type": "array", "from": "failed", "visibleTo": { "mode": "all" } }
+      ]
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "each" },
+    { "source": "each", "target": "end" }
   ]
 }
 """;

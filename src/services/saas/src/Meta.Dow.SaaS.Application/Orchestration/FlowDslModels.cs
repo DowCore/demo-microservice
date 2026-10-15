@@ -506,13 +506,20 @@ public class FlowDslBranchDsl
     /// <summary>结果键。汇合后写入 results.{parallelRef}.{Ref}</summary>
     public string Ref { get; set; } = null!;
 
-    /// <summary>分支调用的已发布流程编码</summary>
+    /// <summary>分支调用的已发布流程编码。与 Body 同时存在时，Body 优先。</summary>
     public string? SubFlowKey { get; set; }
 
-    /// <summary>分支内联子图</summary>
+    /// <summary>分支内联子图。调用已有流程时留空。</summary>
     public FlowDslSubGraphDsl? Body { get; set; }
 
+    /// <summary>从并行节点上下文映射进被调流程的入参。</summary>
     public List<FlowNodeBindingDsl>? Inputs { get; set; }
+
+    /// <summary>
+    /// 调用点出参。有值时，分支结果只保留这些字段，from 相对被调流程的返回对象。
+    /// 为空则原样采用被调流程的产出。
+    /// </summary>
+    public List<FlowNodeBindingDsl>? Outputs { get; set; }
 
     /// <summary>分支级超时（毫秒）</summary>
     public int? TimeoutMs { get; set; }

@@ -88,6 +88,20 @@ public class FlowDefinitionController : SaaSController, IFlowDefinitionAppServic
     }
 
     [HttpPost]
+    [Route("{id}/disable")]
+    public Task<FlowDefinitionDto> DisableAsync(Guid id)
+    {
+        return _service.DisableAsync(id);
+    }
+
+    [HttpPost]
+    [Route("{id}/enable")]
+    public Task<FlowDefinitionDto> EnableAsync(Guid id)
+    {
+        return _service.EnableAsync(id);
+    }
+
+    [HttpPost]
     [Route("{id}/publish")]
     public Task<FlowVersionDto> PublishAsync(Guid id)
     {

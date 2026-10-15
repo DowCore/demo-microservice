@@ -61,7 +61,7 @@ public class PublishedFlowCache : ITransientDependency
         _broadcaster = broadcaster;
     }
 
-    public async Task<PublishedFlowSnapshot> GetByKeyAsync(string flowKey)
+    public virtual async Task<PublishedFlowSnapshot> GetByKeyAsync(string flowKey)
     {
         if (string.IsNullOrWhiteSpace(flowKey))
         {

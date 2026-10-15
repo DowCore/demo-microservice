@@ -2112,7 +2112,8 @@ var outcome = await WaitForJobAsync(ctx, jobId, timeoutMs, cancellationToken);
                     filterOutputsByRole,
                     currentUser
                 );
-                return new BranchOutcome(branchRef, outcome.Ok, outcome.Output, outcome.Error, branch.Optional);
+                var projected = ProjectBranchOutputs(branch.Outputs, outcome.Output, ctx);
+                return new BranchOutcome(branchRef, outcome.Ok, projected, outcome.Error, branch.Optional);
             }
             catch (OperationCanceledException) when (
                 branchCts is not null && !cancellationToken.IsCancellationRequested)
@@ -2130,6 +2131,37 @@ var outcome = await WaitForJobAsync(ctx, jobId, timeoutMs, cancellationToken);
                 return new BranchOutcome(branchRef, false, null, ex.Message, branch.Optional);
             }
         }
+    }
+
+    /// <summary>
+    /// 按分支声明的出参裁剪被调流程的返回。未声明出参时保持原对象。
+    /// from 不带 input/sys/results 前缀时，相对这次调用的返回对象取值。
+    /// </summary>
+    private static JsonNode? ProjectBranchOutputs(
+        List<FlowNodeBindingDsl>? outputs,
+        JsonNode? result,
+        FlowRuntimeContext ctx
+    )
+    {
+        if (outputs == null || outputs.Count == 0)
+        {
+            return result;
+        }
+
+        var projected = new JsonObject();
+        foreach (var output in outputs)
+        {
+            var name = (output.Name ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var from = output.From ?? JsonValue.Create(name);
+            projected[name] = FinalOutputAssembler.ResolveRelative(from, result, ctx)?.DeepClone();
+        }
+
+        return projected;
     }
 
     /// <summary>

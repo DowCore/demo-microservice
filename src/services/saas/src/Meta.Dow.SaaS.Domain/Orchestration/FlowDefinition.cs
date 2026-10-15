@@ -78,6 +78,9 @@ public class FlowDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public void MarkSystem() => IsSystem = true;
 
+    /// <summary>控制流演示可改、可发布。资源系统流仍保持锁定。</summary>
+    public void ClearSystemMark() => IsSystem = false;
+
     public void MarkPublished(int version)
     {
         PublishedVersion = version;

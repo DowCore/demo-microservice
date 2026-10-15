@@ -210,7 +210,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         ArgumentNullException.ThrowIfNull(input);
 
         var entity = await _definitionRepository.GetAsync(id);
-        if (entity.IsSystem)
+        if (IsImmutableSystem(entity))
         {
             throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
         }
@@ -298,7 +298,7 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
     public async Task<FlowVersionDto> PublishAsync(Guid id)
     {
         var entity = await _definitionRepository.GetAsync(id);
-        if (entity.IsSystem)
+        if (IsImmutableSystem(entity))
         {
             throw new UserFriendlyException(L["Orchestration:SystemFlowLocked"]);
         }
@@ -538,5 +538,20 @@ public class FlowDefinitionAppService : SaaSAppService, IFlowDefinitionAppServic
         return new ListResultDto<FlowUsageDto>(
             ObjectMapper.Map<List<FlowUsage>, List<FlowUsageDto>>(list)
         );
+    }
+
+    /// <summary>
+    /// 资源系统流锁定。控制流演示（cf-）允许修改和发布，方便按示例改入参、出参和被调流程。
+    /// 删除、停用仍锁定，避免演示被清掉。
+    /// </summary>
+    private static bool IsImmutableSystem(FlowDefinition entity)
+    {
+        if (!entity.IsSystem)
+        {
+            return false;
+        }
+
+        var code = entity.Code ?? "";
+        return !code.StartsWith("cf-", StringComparison.OrdinalIgnoreCase);
     }
 }

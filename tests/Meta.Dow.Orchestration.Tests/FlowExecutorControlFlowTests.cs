@@ -1,9 +1,11 @@
 using System;
 using System.Globalization;
+using System.Security.Claims;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Meta.Dow.SaaS.Orchestration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.MultiTenancy;
 using Volo.Abp.Users;
 using Xunit;
@@ -625,6 +627,10 @@ public class FlowExecutorControlFlowTests
     [InlineData("cf-foreach-demo")]
     [InlineData("cf-foreach-subflow-demo")]
     [InlineData("cf-parallel-demo")]
+    [InlineData("cf-branch-basic")]
+    [InlineData("cf-branch-risk")]
+    [InlineData("cf-branch-audit")]
+    [InlineData("cf-line-check")]
     public void Seeded_flows_pass_dsl_validation(string which)
     {
         var json = which switch
@@ -633,6 +639,10 @@ public class FlowExecutorControlFlowTests
             "cf-foreach-demo" => ControlFlowDemoSeedContributor.BuildForEachDsl(),
             "cf-foreach-subflow-demo" => ControlFlowDemoSeedContributor.BuildForEachSubFlowDsl(),
             "cf-parallel-demo" => ControlFlowDemoSeedContributor.BuildParallelDsl(),
+            "cf-branch-basic" => ControlFlowDemoSeedContributor.BuildBranchBasicDsl(),
+            "cf-branch-risk" => ControlFlowDemoSeedContributor.BuildBranchRiskDsl(),
+            "cf-branch-audit" => ControlFlowDemoSeedContributor.BuildBranchAuditDsl(),
+            "cf-line-check" => ControlFlowDemoSeedContributor.BuildLineCheckDsl(),
             _ => throw new ArgumentOutOfRangeException(nameof(which))
         };
 
@@ -658,7 +668,15 @@ public class FlowExecutorControlFlowTests
     {
         var result = await RunAsync(
             ControlFlowDemoSeedContributor.BuildParallelDsl(),
-            """{ "orderId": "ORD-9", "amount": 5000 }"""
+            """{ "orderId": "ORD-9", "amount": 5000 }""",
+            publishedFlowCache: new ScriptedPublishedFlowCache(
+                new Dictionary<string, string>
+                {
+                    ["cf-branch-basic"] = ControlFlowDemoSeedContributor.BuildBranchBasicDsl(),
+                    ["cf-branch-risk"] = ControlFlowDemoSeedContributor.BuildBranchRiskDsl(),
+                    ["cf-branch-audit"] = ControlFlowDemoSeedContributor.BuildBranchAuditDsl()
+                }
+            )
         );
 
         var data = Parse(result.OutputDataJson);
@@ -666,6 +684,34 @@ public class FlowExecutorControlFlowTests
         Assert.Equal("3", data["succeeded"]!.ToJsonString());
         Assert.Equal("high", data["risk"]!["riskLevel"]!.GetValue<string>());
         Assert.Equal("verified", data["basic"]!["status"]!.GetValue<string>());
+        Assert.Equal("ORD-9", data["basic"]!["orderId"]!.GetValue<string>());
+        Assert.Null(data["basic"]!["note"]);
+        Assert.True(data["audit"]!["audited"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Seeded_line_check_demo_runs_foreach_script()
+    {
+        var result = await RunAsync(
+            ControlFlowDemoSeedContributor.BuildLineCheckDsl(),
+            """{ "lines": [ { "sku": " A-1 ", "qty": 2, "price": 15 }, { "sku": "B-9", "qty": 1200, "price": 3 } ] }""",
+            withCode: true
+        );
+
+        var data = Parse(result.OutputDataJson);
+        Assert.Equal("2", data["count"]!.ToJsonString());
+        Assert.Equal("2", data["succeeded"]!.ToJsonString());
+        Assert.Empty(data["failed"]!.AsArray());
+
+        var items = data["items"]!.AsArray();
+        Assert.Equal("A-1", items[0]!["sku"]!.GetValue<string>());
+        Assert.Equal(30d, items[0]!["amount"]!.GetValue<double>());
+        Assert.Equal("normal", items[0]!["riskLevel"]!.GetValue<string>());
+        Assert.True(items[0]!["keep"]!.GetValue<bool>());
+        Assert.Equal("B-9", items[1]!["sku"]!.GetValue<string>());
+        Assert.Equal("high", items[1]!["riskLevel"]!.GetValue<string>());
+        Assert.Equal(3600d, items[1]!["amount"]!.GetValue<double>());
+        Assert.Equal(1200d, items[1]!["qty"]!.GetValue<double>());
     }
 
     // ------------------------------------------------------------------
@@ -693,15 +739,23 @@ public class FlowExecutorControlFlowTests
         return node.AsObject();
     }
 
-    private static async Task<FlowExecutionResult> RunRawAsync(string dslJson, string? bodyJson)
+    private static async Task<FlowExecutionResult> RunRawAsync(
+        string dslJson,
+        string? bodyJson,
+        bool withCode = false,
+        PublishedFlowCache? publishedFlowCache = null)
     {
-        var executor = CreateExecutor();
+        var executor = CreateExecutor(withCode, publishedFlowCache);
         return await executor.ExecuteAsync(dslJson, bodyJson, isDryRun: false);
     }
 
-    private static async Task<FlowExecutionResult> RunAsync(string dslJson, string? bodyJson)
+    private static async Task<FlowExecutionResult> RunAsync(
+        string dslJson,
+        string? bodyJson,
+        bool withCode = false,
+        PublishedFlowCache? publishedFlowCache = null)
     {
-        var result = await RunRawAsync(dslJson, bodyJson);
+        var result = await RunRawAsync(dslJson, bodyJson, withCode, publishedFlowCache);
         Assert.True(result.Succeeded, result.Error);
         return result;
     }
@@ -710,16 +764,18 @@ public class FlowExecutorControlFlowTests
     /// 只构造执行控制流所必需的依赖：SystemContextBuilder 用 stub 用户/租户；
     /// 其余（Http / SQL / Code / Rabbit / 资源 CRUD / 已发布流程缓存）在本组用例的节点集合中不会被触达。
     /// </summary>
-    private static FlowExecutor CreateExecutor()
+    private static FlowExecutor CreateExecutor(bool withCode = false, PublishedFlowCache? publishedFlowCache = null)
     {
         return new FlowExecutor(
             httpClientFactory: null!,
             systemContextBuilder: new SystemContextBuilder(new StubCurrentUser(), new StubCurrentTenant()),
-            permissionChecker: null!,
+            permissionChecker: withCode ? new DenyAllPermissionChecker() : null!,
             dataSourceResolver: null!,
-            codeSandboxExecutor: null!,
+            codeSandboxExecutor: withCode
+                ? new CodeSandboxExecutor(null!, null!, null!, null!)
+                : null!,
             rabbitPublisher: null!,
-            publishedFlowCache: null!,
+            publishedFlowCache: publishedFlowCache!,
             resourceCrudExecutor: null!,
             logger: NullLogger<FlowExecutor>.Instance
         );
@@ -964,6 +1020,49 @@ public class FlowExecutorControlFlowTests
           ]
         }
         """;
+
+    private sealed class ScriptedPublishedFlowCache : PublishedFlowCache
+    {
+        private readonly Dictionary<string, string> _byKey;
+
+        public ScriptedPublishedFlowCache(Dictionary<string, string> byKey)
+            : base(null!, null!, null!, null!, null!)
+        {
+            _byKey = byKey;
+        }
+
+        public override Task<PublishedFlowSnapshot> GetByKeyAsync(string flowKey)
+        {
+            if (!_byKey.TryGetValue(flowKey, out var json))
+            {
+                throw new Volo.Abp.UserFriendlyException($"未准备被调流程 {flowKey}");
+            }
+
+            return Task.FromResult(new PublishedFlowSnapshot
+            {
+                DefinitionId = Guid.Empty,
+                DefinitionName = flowKey,
+                FlowKey = flowKey,
+                Version = 1,
+                DslJson = json,
+                Dsl = ParseDsl(json)
+            });
+        }
+    }
+
+    private sealed class DenyAllPermissionChecker : IPermissionChecker
+    {
+        public Task<bool> IsGrantedAsync(string name) => Task.FromResult(false);
+
+        public Task<bool> IsGrantedAsync(ClaimsPrincipal? claimsPrincipal, string name) =>
+            Task.FromResult(false);
+
+        public Task<MultiplePermissionGrantResult> IsGrantedAsync(string[] names) =>
+            Task.FromResult(new MultiplePermissionGrantResult(names, PermissionGrantResult.Prohibited));
+
+        public Task<MultiplePermissionGrantResult> IsGrantedAsync(ClaimsPrincipal? claimsPrincipal, string[] names) =>
+            Task.FromResult(new MultiplePermissionGrantResult(names, PermissionGrantResult.Prohibited));
+    }
 
     private sealed class StubCurrentUser : ICurrentUser
     {

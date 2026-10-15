@@ -35,10 +35,10 @@
 | 编排契约 §2：Wait「❌ 无」 | **已实现**（§6.4 有规格） |
 | 编排契约 §2：Http「SSRF 无防护」 | 已加**出站闸门**（§11.6） |
 | 数据集合与报表契约：`batchupdate` 不可用 | 已在 `91d75bd` 修掉 |
-| benchmark §1.5：沙箱是 Roslyn `CSharpScript` | 实为 **Jint 4.4.1** |
+| benchmark §1.5：沙箱是 Roslyn `CSharpScript` | 实为 **Jint**，`Directory.Packages.props` 钉在 **4.17.0** |
 | 编排契约：承诺 `NodeExecution.asyncJobId` | 原模型中不存在，**现已补上** `NodeExecutionRecord.AsyncJobId` |
 | `src/CLAUDE.md`：分析器已启用 | 未启用 |
-| 前端规则文件 `logic-orchestration.mdc`：`wait` 未实现 | **已实现**，前端待接入 |
+| 前端规则文件 `logic-orchestration.mdc`：`wait` 未实现 | 规则现状段已改为 **已实现**；设计器面板仍未接入 |
 | 编排契约 §14-22：`from` 模板与字面量「无消费点」 | ❗**这条陈述本身是错的**——两者**均已实现**（`FlowContextResolver.ResolveTemplate` / `ResolvePath`）。真正不生效的只有 `inputs[].type` 不参与必填校验 |
 
 两条引用纪律：

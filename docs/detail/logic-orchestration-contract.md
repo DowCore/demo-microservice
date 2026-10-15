@@ -195,7 +195,7 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 | `sql` | string? | null | ❌ 独立 Sql 节点不存在，该字段悬空 |
 | Rabbit 组 | `exchange`/`exchangeType`/`routingKey`/`persistent`/`onError`/`payload`/`payloadMode`/`payloadFrom` | | ⚠️ `payloadMode=array` 无分支 🐞 |
 | `subFlowKey` | string? | null | ✅ SubFlow |
-| 控制流组 | `itemsPath`/`itemVar`/`indexVar`/`maxIterations`/`itemErrorMode`/`concurrency`/`loopBody`/`joinMode`/`branchTimeoutMs`/`branches[]` | | ✅ §7 |
+| 控制流组 | `itemsPath`/`itemVar`/`indexVar`/`maxIterations`/`itemErrorMode`/`concurrency`/`loopBody`/`joinMode`/`branchTimeoutMs`/`branches[]`（含 `outputs`） | | ✅ §7 |
 
 ### 3.4 边 `FlowDslEdge`
 
@@ -414,17 +414,20 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 
 产出契约 `{ items[], count, succeeded, failed[] }`，其中单项产出 = 循环体 End 的 `finalOutputs`。
 
+循环体可以是一段脚本：Start → Code → End。Code 把 `return` 写在原始结果上；End 用 `finalOutputs` 的 `from: return` 且 `promote: true` 时，返回的对象成为 `items[i]`。标量 `promote` 在运行时拒绝。种子 `cf-line-check` 即此形态。没有 `break` / `continue`；过滤一行靠脚本返回 `keep: false`。
+
 🐞 `failFast` 在**整窗跑完后**才抛，不取消同窗其它迭代。
 
 ### 7.2 Parallel / WHEN（`:1726-1900`）
 
 | 字段 | 默认 | 语义 |
 |---|---|---|
-| `branches[]` | 至少 2 条 | 每条含 `ref`（结果键）、`subFlowKey` 或 `body`、`inputs`、`timeoutMs`、`optional` |
+| `branches[]` | 至少 2 条，至多 16 条，`ref` 唯一且非空 | 每条含 `ref`（结果键）、`subFlowKey` 或 `body`、`inputs`、`outputs`、`timeoutMs`、`optional` |
 | `joinMode` | `all` | `all` 全部成功才继续（非 optional 分支失败即抛）；`any` 首个成功即用；`allSettled` 等全部结束 |
-| `branchTimeoutMs` | 继承 `timeoutMs` | 单分支超时 |
+| `branchTimeoutMs` | 继承 `timeoutMs` | 单分支超时。实际取值 `branch.TimeoutMs ?? node.BranchTimeoutMs ?? node.TimeoutMs ?? 30s` |
+| `branch.outputs` | 空 | 空则保留被调流程的完整结果。非空时 `ProjectBranchOutputs` 用 `FinalOutputAssembler.ResolveRelative` 投影；无点号的短名相对被调结果，`input.` / `sys.` / `results.` / `vars.` 相对父上下文 |
 
-分支并发为**异步 I/O 并发**（一次性启动全部 Task），非线程并行。汇合结果写 `results.{parallelRef}.{branchRef}`。
+分支并发为**异步 I/O 并发**（一次性启动全部 Task），非线程并行。汇合结果写 `results.{parallelRef}.{branchRef}`。`body` 与 `subFlowKey` 同时存在时执行 `body`。设计器在选中已发布流程时清掉 `body`。种子 `cf-parallel-demo` 的三条分支只写 `subFlowKey` 与入参出参，分别调用 `cf-branch-basic`、`cf-branch-risk`、`cf-branch-audit`。被调流程多返回的字段（如 basic 的 `note`）不在调用方 `outputs` 里时，投影后为空。
 
 🐞 `joinMode=any` **不取消其余分支**（`FlowDslModels.cs:378` 注释称会取消），副作用在流程继续后仍在发生。
 
@@ -435,7 +438,7 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 - **嵌套上限 5 层**（`MaxSubFlowDepth = 5`），**禁止循环**（调用栈含同一 `flowKey` 即抛）。
 - `onError`：`fail`（默认）中断父流程；`ignore` 继续并写出 `success=false`。
 - **不单独落子实例**：子流程节点明细不写入父 `FlowInstance.Nodes`（仅本 SubFlow 节点一条记录）。
-- 🐞 子流程以 `currentUser: null` 执行 ⇒ **父流程的角色可见性在子图内被旁路**（§9.4）。
+- 子图透传父调用的 `filterOutputsByRole` 与 `currentUser`（`ExecuteSubFlowAsync` / `ExecuteForEachAsync` / `ExecuteParallelAsync` / `RunControlBodyAsync`）。入口本身传 `false` 或 `null` 时，子图同样不裁剪。
 - 引用索引 `FlowUsage`：`GET /api/orchestration/definitions/reusable-lookup`、`/usages/by-callee`、`/{id}/usages`。
 
 ### 7.4 触发层（不扩展画布）
@@ -528,7 +531,7 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 ### 9.4 `visibleTo` 判定矩阵
 
 `bypass = isDryRun || !filterOutputsByRole || currentUser == null`（`FlowExecutor.cs:455`）。
-`filterOutputsByRole: true` 仅来自系统 API（`LogicApiAppService.cs:59`）与资源/报表执行入口；**其余调用点全为 false**，包括 SubFlow 与 ForEach/Parallel 子图。
+`filterOutputsByRole: true` 来自系统 API 与资源/报表执行入口。SubFlow、ForEach、Parallel 把父调用传入的 `filterOutputsByRole` 与 `currentUser` 继续往下传，不再在控制体里写死 `false` / `null`。
 
 | `mode` | 判定 | 行号 |
 |---|---|---|
@@ -540,8 +543,6 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 | **其它未知值** | 🐞 **true（兜底放行）** | `:95` |
 
 🐞 **权限收集缺口**：`CollectPermissionNames`（`FinalOutputAssembler.cs:870-898`）只收集 `output.visibleTo.permissions`、`output.map`（递归）、`group.children.map` —— **从不遍历 `group.header`** ⇒ `header[].visibleTo.permissions` 永不生效，非 bypass 时该表头**必然被丢弃**。
-
-🐞 **子图旁路**：SubFlow（`:1518-1527`）与 ForEach/Parallel 体（`:1943-1952`）以 `filterOutputsByRole:false, currentUser:null` 执行 ⇒ `bypass=true` ⇒ 子图的 `finalOutputs.visibleTo` **完全不生效**。
 
 判定点共 5 处：出参、promote 出参、`group.header`、`group.children`、`map.item`。
 

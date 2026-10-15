@@ -6,7 +6,7 @@
 - 证据来源：[契约](./logic-orchestration-contract.md)（§2 唯一权威能力表）、[评审](./logic-orchestration-review.md)、[方案](./logic-orchestration-plan.md)、[对标](./logic-orchestration-benchmark.md)、[取舍](./logic-orchestration-tradeoffs.md)
 - 代码基线：`91d75bd`；文档基线：`2dd0179`
 - 单测基线：后端 91/91、前端 336/336
-- **整改后**：后端 **297/297**（本文 §八 记录的实施结果，含第二轮"校验覆盖范围"批次）
+- **整改后**：§8.4 记录落地时 **297** 条。2026-10-15 对 Debug 构建 `dotnet test --list-tests` 为 **302** 条（§8.9，含控制流演示用例）
 
 > **引用纪律**：本文**只引用符号名，不引用行号**。契约 §2–§13 的行号对应旧提交 `0c4f7eb`，`91d75bd` 批次使 `FlowExecutor.cs` 净增约 190 行，旧行号整体下移 0～+188。请一律按符号名检索。沿用这条纪律本身，就是本文对 §四 计数类断言错误问题的直接整改。
 >
@@ -395,7 +395,7 @@ Wait 节点进而要求：**超时是一种结果，不是一种异常**。为�
 - 异步 Http 的提示文案现写「下游不可引用本节点出参（需 Wait，规划中）」——**既过时又语义相反**，现在可通过 Wait 消费。
 - Condition 面板补`strategy` 下拉：前端目前恒为 `firstMatch`（`designer.vue` 中硬编码），后端新增的 `allMatch` 语义**对前端不可达**。
 - Http 面板提示内网地址会被出站闸门拒绝，减少反复排查。
-- 前端规则文件 `logic-orchestration.mdc` 第 4 条仍写「`sql` / `switch` / `wait` 未实现」——**已过期**。
+- 规则文件 `.cursor/rules/logic-orchestration.mdc` 的现状段已在 2026-10-15 改为：`wait` 已实现，`sql` / `switch` 仍发布期拒绝。§8.8 写下时该文件仍把三者都当成未实现。
 
 **不需要改**
 
@@ -406,3 +406,14 @@ Wait 节点进而要求：**超时是一种结果，不是一种异常**。为�
 **一处易踩的坑**：`shared/filter-model.ts` 里也有 `between` / `in` / `startswith`，但它服务的是**资源与报表筛选器**（右值为 `{min,max}`，走 `FilterSqlBuilder`），与编排 Condition 的 DSL 语义是两套东西，**不可混用、不可"顺手对齐"**。
 
 **一条更根本的问题**：前端节点清单与后端 `SupportedNodeKinds` 是**双向手工对齐**，无任何机制保证同步。后端也没有暴露「支持哪些节点」的端点。这正是前端规则文件第 4 条「新增节点类型必须服务端先行」想防的情况，但目前靠人守。若后续还要继续补轨道 B 的节点（Switch / Sql / MqttPublish），建议先加一个 `GET .../node-kinds` 端点，让前端清单由服务端驱动——否则每加一个节点就要改两处，且没有任何东西会在漂移时报错。
+
+### 8.9 控制流编写方式（2026-10-15，代码 `73aec3d` / 前端 `6f88348`）
+
+§8.8 的四项在这一天复核后仍然成立：设计器没有 Wait、条件算子仍是 10 个、列表没有停用/启用、`graphToDsl` 仍会在没有 `items` 时写出 `combine`。
+
+同一次复核里，文档此前没写、代码已经在跑的有：
+
+- ForEach 一项的编辑面是脚本。`cf-line-check` 的循环体是 Code，返回对象经 `promote` 成为 `items[i]`。
+- Parallel 一条分支的编辑面是入参、出参和 `subFlowKey`。`FlowDslBranchDsl.Outputs` 由 `ProjectBranchOutputs` 投影。内联 `body` 仍可执行，且在与 `subFlowKey` 并存时优先。
+- `cf-` 演示可以更新和发布。删除、停用、启用仍锁全部 `IsSystem`。资源系统流保持锁定。种子在下一次 DbMigrator 之后写成 `isSystem: false`。
+- 上面四项前端缺口没有改成已完成。轨道 A 的 A2、A6、A9、A10、A11、A12 也没有。

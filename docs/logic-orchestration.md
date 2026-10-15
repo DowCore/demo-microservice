@@ -2,7 +2,7 @@
 
 把 if、顺序、循环、并行和内部调用抽成 `POST /api/logic/{flowKey}`。主对标是 LiteFlow。运行保障对照 n8n 和 Temporal，不照搬它们的产品形态。
 
-证据在 [契约](./detail/logic-orchestration-contract.md)、[评审](./detail/logic-orchestration-review.md)、[方案](./detail/logic-orchestration-plan.md)。代码基线 `91d75bd`。
+证据在 [契约](./detail/logic-orchestration-contract.md)、[评审](./detail/logic-orchestration-review.md)、[方案](./detail/logic-orchestration-plan.md)。代码基线 `73aec3d`。设计器在 `D:\Project\vue-demo`，对应提交 `6f88348`。
 
 引擎质量评估、逐条不足清单和十维对标矩阵在 [评估](./detail/logic-orchestration-assessment.md)。
 
@@ -14,13 +14,16 @@
 - 发布校验：出边基数、可达性、控制流结构、超时取值、写重试必须声明幂等键、节点类型白名单、输出契约、**未知与未实现 DSL 字段**。`sql` / `switch` 在发布期拒绝。
 - 运行保障：HTTP 非安全方法不重试；节点超时包在唯一分发点；非 HTTP 写默认不重试；批量写在一个 SQL 事务里，批量删除仍走 `DeleteFlowKey`。
 - 出参按角色和权限在接口层裁剪，子图透传调用方角色。
-- 触发：REST、RabbitMQ、Kafka、MQTT、Cron。
+- 触发：REST、RabbitMQ、Kafka、MQTT、Cron。Cron（`FlowScheduleHostedService`）取分布式锁后再触发；Rabbit / Kafka / MQTT 三个 `BackgroundService` 仍没有这把锁。
 - 版本快照、`FlowUsage` 影响索引、发布 / 停用 / 删除均失效缓存，并通过共享失效代数跨副本生效。
+- **ForEach 的一项**：循环体可以是一段脚本。种子 `cf-line-check` 的 `loopBody` 是 Start → Code → End；Code 的 `return` 对象经 End 的 `finalOutputs`（`from: return`，`promote: true`）成为 `items[i]`。脚本里没有 `break` / `continue`，跳过一行用返回字段 `keep: false`。`itemErrorMode=continueOnError` 时，抛错记入 `failed[]` 并继续。
+- **Parallel 的一条分支**：调用一条已发布流程。`FlowDslBranchDsl` 写 `ref`、`subFlowKey`、`inputs`、`outputs`。`ProjectBranchOutputs` 按声明的 `outputs` 投影被调流程的结果；`outputs` 为空则保留被调流程的完整结果。`body` 与 `subFlowKey` 同时存在时执行 `body`。种子 `cf-parallel-demo` 调用 `cf-branch-basic`、`cf-branch-risk`、`cf-branch-audit`。
+- **`cf-` 演示可改可发布**。`IsImmutableSystem` 对 code 以 `cf-` 开头的系统行放行 `UpdateAsync` / `PublishAsync`。`Delete` / `Disable` / `Enable` 仍锁全部 `IsSystem`。资源系统流（`sys.*` 与 `SystemResourceFlowKeys`）保持锁定。`ControlFlowDemoSeedContributor` 新建行 `isSystem: false`，重跑迁移时对已有行调用 `ClearSystemMark`。未跑迁移前，库里的旧行仍可能是 `IsSystem=true`，保存和发布仍按 `cf-` 前缀放行。
 - **出站与内联 SQL 安全闸门**：Http 出站拒绝私网、回环、链路本地与云元数据地址（可配白名单豁免，默认禁止跟随重定向）；内联 SQL 写判定覆盖 `WITH` 前缀并同时作用于 `db.query`。
 
 ## 已修复的不足
 
-评估文档列出的轨道 A 护栏已落地以下 7 项（详见[评估](./detail/logic-orchestration-assessment.md)§6）：
+评估文档列出的轨道 A 护栏已落地 A1、A3、A4、A5、A7、A8（详见[评估](./detail/logic-orchestration-assessment.md)§8）。条件算子另列一行，不占用 A6：
 
 | # | 事项 | 落点 |
 |---|---|---|
@@ -30,7 +33,7 @@
 | A5 | 停用 / 删除失效缓存并跨副本广播 | `FlowDefinitionInvalidationBroadcaster`（共享单调代数）+ `PublishedFlowCache` 记代数比对；新增 `DisableAsync` / `EnableAsync` |
 | A7 | Http 出站 SSRF 防护 | `HttpEgressGuard`：协议、主机白名单、`localhost`、解析后逐地址判定（含 IPv4-mapped IPv6、云元数据） |
 | A8 | SQL 写判定覆盖 `WITH` 与 `db.query` | `SqlWriteClassifier`（独立成类以便纯单测）+ `CodeSandboxExecutor.Query` 补闸门 |
-| A6 | 条件算子与控制流语义 | 补`startswith` / `endswith` / `in` / `notin` / `between` / `isnull` / `isnotnull`；`strategy` 加白名单并明确 `firstMatch` / `allMatch` 语义 |
+| — | 条件算子与控制流语义 | 补 `startswith` / `endswith` / `in` / `notin` / `between` / `isnull` / `isnotnull`；`strategy` 加白名单并明确 `firstMatch` / `allMatch` 语义。这一项不是轨道 A 的 A6；A6 仍是下方「单流程调用权限」，未做 |
 
 同时收紧了三处「配置被接受但不生效」：`condition.strategy` 拼错不再静默退化、`entry` 只配 `combine` 不再恒真、出边 `combine` 无 `items` 不再被忽略。
 
@@ -48,7 +51,7 @@
 
 ⚠️ **`payload` 那条是第二轮自己引入的回归**——第一轮为了「让静默失效变成显式拒绝」，误把一个已实现字段当成未实现。这类错误的教训是：把"未实现字段"列成黑名单时，必须先确认它真的没有消费点，而不能只看它是不是没被文档写全。
 
-测试从 91 条增至 **297 条**（`tests/Meta.Dow.Orchestration.Tests`）。
+测试从 91 条增至整改落地时的 297 条。2026-10-15 对 Debug 构建执行 `dotnet test tests/Meta.Dow.Orchestration.Tests --list-tests`，展开 `InlineData` 后为 **302** 条。多出的用例覆盖 `cf-branch-*`、`cf-parallel-demo` 与 `cf-line-check`。
 
 ## 部署配置
 
@@ -70,7 +73,14 @@
 
 前端在 `D:\Project\vue-demo`（**不在本仓**），其节点类型清单、条件算子清单、流程操作都是**双向硬编码**，需同步跟进。完整清单与具体落点见[评估文档](./detail/logic-orchestration-assessment.md)§8.8。
 
-**必须改的四项**
+**设计器已跟上的两项**（`vue-demo` `6f88348`）
+
+| 项 | 前端落点 |
+|---|---|
+| ForEach 用脚本编辑当前项 | `designer.vue` 的循环脚本面板；`dsl-graph.ts` 的 `buildLoopScriptBody` / `readLoopScript`。查看系统流时脚本和示例仍可改，画布、保存、发布保持锁定；改完用「试运行」。`cf-` 可以保存并发布 |
+| Parallel 分支写成调用契约 | 每条分支：`ref`、可选、已发布流程、入参行、出参行。选中 `subFlowKey` 时去掉内联 `body`。`DslBranch.outputs` 写回 DSL |
+
+**仍须改的四项**（2026-10-15 复核，设计器里仍然没有）
 
 | 项 | 前端落点 |
 |---|---|
@@ -81,7 +91,7 @@
 
 ⚠️ **别改错文件**：`shared/filter-model.ts` 也有 `between` / `in`，但它服务资源与报表筛选器（右值 `{min,max}`，半开区间），与编排 Condition 的 DSL 语义是两套东西。
 
-⚠️ **前端规则文件已过期**：`logic-orchestration.mdc` 第 4 条仍写「`sql` / `switch` / `wait` 未实现」，其中 `wait` 现已实现。
+规则文件 `.cursor/rules/logic-orchestration.mdc` 的现状段已按 `73aec3d` 改过：`wait` 视为已实现，`sql` / `switch` 仍是发布期拒绝。
 
 **根因**：前端清单与后端 `SupportedNodeKinds` 靠人守，无同步机制。若轨道 B 还要继续补节点，建议先加 `GET .../node-kinds` 端点让清单由服务端驱动。
 

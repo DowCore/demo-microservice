@@ -30,18 +30,18 @@ alwaysApply: true
 
 - REST 发布：`POST /api/logic/{flowKey}`；
 - MQ 触发：RabbitMQ / Kafka / MQTT 三个 `BackgroundService`；
-- `async` 节点（当前 fire-and-forget 是已知缺陷 C1）；
+- `async` 节点（作业已落库；多副本无 claim，仍可能重复外呼）；
 - 批量写（batchcreate / batchupdate / batchdelete）。
 
-# 当前实现状态（2026-10-14，HEAD `a95fb0e`，代码基线 `91d75bd`；引用前实测复核）
+# 当前实现状态（2026-10-15，代码基线 `73aec3d`；引用前实测复核）
 
-文档正文有滞后句，**以符号与本段为准**，不要按旧行号跳转（P0 批次在 `FlowExecutor.cs` 净增约 190 行）。定稿只看 `docs/`；`docx/` 里的 Word 是本地导出，不作为现状。
+能力现状以 `docs/logic-orchestration.md` 为准。本段只纠正仍会把已实现功能当成未实现的句子。不要按旧行号跳转。定稿只看 `docs/`；`docx/` 里的 Word 是本地导出，不作为现状。
 
-**已实现（勿再当未实现）**：统一调度器 `RunSegmentAsync`；ForEach / Parallel / SubFlow；R1 HTTP 非安全方法禁重试（`ServiceDefaults/Extensions.cs` `DisableForUnsafeHttpMethods()`）；R2 节点级 `timeoutMs`（`ExecuteNodeAsync` 单点包裹，默认 30s / 上限 600s）；R3 非 HTTP 写弹性 `NodeResiliencePolicy.cs` + DSL `retryOnWrite`（声明即校验）；R4 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey。
+**已实现（勿再当未实现）**：统一调度器 `RunSegmentAsync`；ForEach / Parallel / SubFlow；R1 HTTP 非安全方法禁重试（`ServiceDefaults/Extensions.cs` `DisableForUnsafeHttpMethods()`）；R2 节点级 `timeoutMs`（`ExecuteNodeAsync` 单点包裹，默认 30s / 上限 600s）；R3 非 HTTP 写弹性 `NodeResiliencePolicy.cs` + DSL `retryOnWrite`（声明即校验）；R4 批量三入口 + 单事务 + `/batch-delete` 走 DeleteFlowKey。Wait（`ExecuteWaitAsync`）、未知 DSL 字段发布报错（`DslSchemaValidator`）、异步作业落库（`FlowAsyncJobWorker`，无 claim）、发布缓存跨副本失效（`FlowDefinitionInvalidationBroadcaster`）、Http 出站闸门（`HttpEgressGuard`）均已落地。ForEach 一项可以是脚本（`cf-line-check`）；Parallel 分支按 `subFlowKey` + `inputs` + `outputs` 调用已发布流程（`ProjectBranchOutputs`）。`cf-` 演示可更新、可发布。
 
-**P0 止血已落地（`91d75bd`，勿再当缺陷）**：C2 `SupportedNodeKinds` 白名单（`sql` / `switch` / `wait` **发布期拒绝**，多出边只留 Condition）；S7 `ValidateOutputContract`（根 `outputs` 或每个 End 的 `finalOutputs`）；S12 未知 `visibleTo.mode` 与 `roleIds` 发布期拒绝；S6 子图透传 `filterOutputsByRole` / `currentUser`；C13 PG SQLSTATE 按字符串分类 + Oracle 瞬态码；C16 `batchupdate` 写新戳、比旧戳，并合并 `filter.Args`。
+**P0 止血已落地（`91d75bd`，勿再当缺陷）**：C2 `SupportedNodeKinds` 白名单（`sql` / `switch` **发布期拒绝**；`wait` 已实现，不再拒绝；多出边只留 Condition）；S7 `ValidateOutputContract`（根 `outputs` 或每个 End 的 `finalOutputs`）；S12 未知 `visibleTo.mode` 与 `roleIds` 发布期拒绝；S6 子图透传 `filterOutputsByRole` / `currentUser`；C13 PG SQLSTATE 按字符串分类 + Oracle 瞬态码；C16 `batchupdate` 写新戳、比旧戳，并合并 `filter.Args`。
 
-**已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` / `Wait` 节点（现在是发布失败，不是调用 500）；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；异步节点结果回收（R5，`Task.Run` + `CancellationToken.None` 仍在）；发布缓存跨进程失效（C3/E8）；单流程调用权限码（S14/E10）；未知 DSL 字段报错（仍静默忽略）；评审 P0-5～P0-14（约定列 Origin、破坏性 DDL、默认口令、SSRF、OA 驳回语义等）。Code 沙箱是 **Jint**，不是 Roslyn。
+**已确认未实现（勿当已实现）**：独立 `Sql` / `Switch` 节点（发布期拒绝）；`txMode`；while / range-for / break / continue；持久化执行 / 断点续跑；幂等键**运行时**去重（R6）；`FlowAsyncJobWorker` 的 claim / 乐观锁；单流程调用权限码（S14/E10，轨道 A6）；Rabbit / Kafka / MQTT 触发器分布式锁（Cron 已有锁）。Code 沙箱是 **Jint 4.17.0**，不是 Roslyn。前端设计器仍缺 Wait 面板、7 个条件算子、停用/启用按钮，以及无 `items` 时不写 `combine` 的兜底。
 
 **权威清单**（改动前必读）：
 - 功能入口 `docs/overview.md`，各功能描述在 `docs/logic-orchestration.md`、`docs/data-collection.md`、`docs/form.md`、`docs/report.md`、`docs/oa.md`、`docs/identity.md`
@@ -59,5 +59,5 @@ alwaysApply: true
 # 工程门禁
 
 - 构建：`dotnet build Meta.Dow.slnx -c Release`（CPM 在 `Directory.Packages.props`）。
-- 测试：`dotnet test tests/Meta.Dow.Orchestration.Tests`（当前基线 **91**：66 个 `[Fact]` + 25 条 `[InlineData]`；2026-10-14 按特性计数与文档声称的 91/91 一致，本轮未重跑测试进程）。
+- 测试：`dotnet test tests/Meta.Dow.Orchestration.Tests`。2026-10-15 对 Debug 构建 `--list-tests` 为 **302** 条（含 `InlineData` 展开）。换基线前重新计数。
 - 本仓**无提交钩子**；提交 = commit + push，推送后以 `git ls-remote origin refs/heads/main` 为准核对（本机 push 存在"服务端已收、客户端假失败"，勿盲目重推）。

@@ -34,4 +34,8 @@ public interface IFlowScheduleAppService : IApplicationService
     Task DeleteAsync(Guid id);
     /// <summary>立即触发一次（调试）</summary>
     Task<LogicRunResultDto> RunNowAsync(Guid id);
+
+    Task<PagedResultDto<FlowScheduleFireDto>> GetFiresAsync(Guid id, FlowScheduleFireGetListInput input);
+
+    Task<FlowScheduleFireDto> RetryFireAsync(Guid id, Guid fireId);
 }

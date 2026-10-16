@@ -13,18 +13,21 @@ namespace Meta.Dow.SaaS.Orchestration;
 public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
 {
     private readonly IRepository<FlowSchedule, Guid> _repository;
+    private readonly IRepository<FlowScheduleFire, Guid> _fires;
     private readonly IRepository<FlowDefinition, Guid> _definitionRepository;
-    private readonly IPublishedFlowInvoker _invoker;
+    private readonly FlowScheduleRunner _runner;
 
     public FlowScheduleAppService(
         IRepository<FlowSchedule, Guid> repository,
+        IRepository<FlowScheduleFire, Guid> fires,
         IRepository<FlowDefinition, Guid> definitionRepository,
-        IPublishedFlowInvoker invoker
+        FlowScheduleRunner runner
     )
     {
         _repository = repository;
+        _fires = fires;
         _definitionRepository = definitionRepository;
-        _invoker = invoker;
+        _runner = runner;
     }
 
     [Authorize(OrchestrationPermissions.Schedules.Default)]
@@ -68,6 +71,7 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
 
         await EnsurePublishedFlowAsync(input.FlowKey);
         ValidateCron(input.Cron, input.TimeZone);
+        ValidateRetry(input.MaxAttempts, input.RetryDelaysSeconds);
 
         var entity = new FlowSchedule(
             GuidGenerator.Create(),
@@ -80,6 +84,7 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
             input.Description,
             CurrentTenant.Id
         );
+        entity.SetRetryPolicy(input.MaxAttempts, input.RetryDelaysSeconds);
         entity.SetNextFireAt(ComputeNext(entity.Cron, entity.TimeZone, DateTime.UtcNow));
         await _repository.InsertAsync(entity, autoSave: true);
         return Map(entity);
@@ -92,6 +97,7 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
         var entity = await _repository.GetAsync(id);
         await EnsurePublishedFlowAsync(input.FlowKey);
         ValidateCron(input.Cron, input.TimeZone);
+        ValidateRetry(input.MaxAttempts, input.RetryDelaysSeconds);
 
         entity.Update(
             input.Name.Trim(),
@@ -100,7 +106,9 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
             input.TimeZone,
             input.VariablesJson,
             input.IsEnabled,
-            input.Description
+            input.Description,
+            input.MaxAttempts,
+            input.RetryDelaysSeconds
         );
         entity.SetNextFireAt(ComputeNext(entity.Cron, entity.TimeZone, DateTime.UtcNow));
         await _repository.UpdateAsync(entity, autoSave: true);
@@ -108,35 +116,39 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
     }
 
     [Authorize(OrchestrationPermissions.Schedules.Delete)]
-    public async Task DeleteAsync(Guid id) => await _repository.DeleteAsync(id, autoSave: true);
+    public async Task DeleteAsync(Guid id)
+    {
+        await _fires.DeleteAsync(x => x.ScheduleId == id, autoSave: true);
+        await _repository.DeleteAsync(id, autoSave: true);
+    }
 
     [Authorize(OrchestrationPermissions.Schedules.Run)]
-    public async Task<LogicRunResultDto> RunNowAsync(Guid id)
-    {
-        var entity = await _repository.GetAsync(id);
-        var result = await _invoker.InvokeAsync(
-            entity.FlowKey,
-            entity.VariablesJson ?? "{}",
-            triggerSource: $"Schedule:{entity.Code}",
-            tenantId: CurrentTenant.Id,
-            filterOutputsByRole: false
-        );
+    public Task<LogicRunResultDto> RunNowAsync(Guid id) => _runner.RunNowAsync(id);
 
-        return new LogicRunResultDto
+    [Authorize(OrchestrationPermissions.Schedules.Default)]
+    public async Task<PagedResultDto<FlowScheduleFireDto>> GetFiresAsync(Guid id, FlowScheduleFireGetListInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        await _repository.GetAsync(id);
+        var query = await _fires.GetQueryableAsync();
+        query = query.Where(x => x.ScheduleId == id);
+        if (input.Status.HasValue)
         {
-            Success = result.Success,
-            InstanceId = result.InstanceId,
-            DataJson = result.DataJson,
-            Error = result.Error,
-            Meta = new LogicRunMetaDto
-            {
-                FlowKey = result.FlowKey,
-                Version = result.Version,
-                ExecuteMs = result.ExecuteMs,
-                TotalMs = result.ExecuteMs
-            }
-        };
+            query = query.Where(x => x.Status == input.Status.Value);
+        }
+
+        var total = query.Count();
+        var items = query
+            .OrderByDescending(x => x.StartedAt)
+            .Skip(input.SkipCount)
+            .Take(input.MaxResultCount)
+            .ToList();
+        return new PagedResultDto<FlowScheduleFireDto>(total, items.Select(MapFire).ToList());
     }
+
+    [Authorize(OrchestrationPermissions.Schedules.Run)]
+    public async Task<FlowScheduleFireDto> RetryFireAsync(Guid id, Guid fireId) =>
+        MapFire(await _runner.QueueRetryAsync(id, fireId));
 
     private async Task EnsurePublishedFlowAsync(string flowKey)
     {
@@ -274,9 +286,66 @@ public class FlowScheduleAppService : SaaSAppService, IFlowScheduleAppService
             Description = x.Description,
             LastFiredAt = AsUtc(x.LastFiredAt),
             NextFireAt = next,
+            MaxAttempts = x.EffectiveMaxAttempts,
+            RetryDelaysSeconds = FlowScheduleTickPlanner.Delays(x.RetryDelaysSeconds).ToList(),
+            LastFireStatus = x.LastFireStatus,
+            LastError = x.LastError,
+            ConsecutiveFailures = x.ConsecutiveFailures,
             CreationTime = x.CreationTime,
             LastModificationTime = x.LastModificationTime
         };
+    }
+
+    private static FlowScheduleFireDto MapFire(FlowScheduleFire x) => new()
+    {
+        Id = x.Id,
+        ScheduleId = x.ScheduleId,
+        TriggerKind = x.TriggerKind,
+        NominalTimeUtc = DateTime.SpecifyKind(x.NominalTimeUtc, DateTimeKind.Utc),
+        Status = x.Status,
+        Attempt = x.Attempt,
+        MaxAttempts = x.MaxAttempts,
+        NextRetryAt = AsUtc(x.NextRetryAt),
+        StartedAt = DateTime.SpecifyKind(x.StartedAt, DateTimeKind.Utc),
+        FinishedAt = AsUtc(x.FinishedAt),
+        Error = x.Error,
+        SkipReason = x.SkipReason,
+        Attempts = x.Attempts.Select(a => new FlowScheduleFireAttemptDto
+        {
+            N = a.N,
+            InstanceId = a.InstanceId,
+            StartedAt = DateTime.SpecifyKind(a.StartedAt, DateTimeKind.Utc),
+            FinishedAt = AsUtc(a.FinishedAt),
+            Success = a.Success,
+            Error = a.Error
+        }).ToList()
+    };
+
+    private static void ValidateRetry(int maxAttempts, IReadOnlyList<int>? delays)
+    {
+        if (maxAttempts is < OrchestrationConsts.ScheduleMinAttempts or > OrchestrationConsts.ScheduleMaxAttempts)
+        {
+            throw new UserFriendlyException(
+                $"重试次数必须在 {OrchestrationConsts.ScheduleMinAttempts} 到 {OrchestrationConsts.ScheduleMaxAttempts} 之间（含第一次）。"
+            );
+        }
+
+        if (delays == null)
+        {
+            return;
+        }
+
+        if (delays.Count > OrchestrationConsts.ScheduleMaxRetryDelaySlots)
+        {
+            throw new UserFriendlyException($"重试等待最多 {OrchestrationConsts.ScheduleMaxRetryDelaySlots} 档。");
+        }
+
+        if (delays.Any(x => x is < 1 or > OrchestrationConsts.ScheduleMaxRetryDelaySeconds))
+        {
+            throw new UserFriendlyException(
+                $"每一档等待秒数必须在 1 到 {OrchestrationConsts.ScheduleMaxRetryDelaySeconds} 之间。"
+            );
+        }
     }
 
     private static DateTime? AsUtc(DateTime? value) =>

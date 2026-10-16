@@ -2,10 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Volo.Abp.Data;
-using Volo.Abp.DistributedLocking;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.MultiTenancy;
-using Volo.Abp.Uow;
 
 namespace Meta.Dow.SaaS.Orchestration;
 
@@ -17,17 +15,14 @@ public class FlowScheduleHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<FlowScheduleHostedService> _logger;
-    private readonly IAbpDistributedLock _distributedLock;
 
     public FlowScheduleHostedService(
         IServiceScopeFactory scopeFactory,
-        ILogger<FlowScheduleHostedService> logger,
-        IAbpDistributedLock distributedLock
+        ILogger<FlowScheduleHostedService> logger
     )
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
-        _distributedLock = distributedLock;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -68,122 +63,48 @@ public class FlowScheduleHostedService : BackgroundService
     private async Task TickAsync(CancellationToken cancellationToken)
     {
         var utcNow = DateTime.UtcNow;
-        List<FlowSchedule> due;
+        List<Guid> dueIds;
 
         using (var scope = _scopeFactory.CreateScope())
         {
             var dataFilter = scope.ServiceProvider.GetRequiredService<IDataFilter>();
             var repo = scope.ServiceProvider.GetRequiredService<IRepository<FlowSchedule, Guid>>();
+            var fires = scope.ServiceProvider.GetRequiredService<IRepository<FlowScheduleFire, Guid>>();
             using (dataFilter.Disable<IMultiTenant>())
             {
-                var all = await repo.GetListAsync(x => x.IsEnabled, cancellationToken: cancellationToken);
-                due = all
-                    .Where(s =>
-                    {
-                        if (s.NextFireAt.HasValue)
-                        {
-                            return s.NextFireAt.Value <= utcNow;
-                        }
-
-                        // 首次：若从未算过 Next，补算；到点则触发
-                        var next = FlowScheduleAppService.ComputeNext(s.Cron, s.TimeZone, utcNow.AddMinutes(-1));
-                        return next.HasValue && next.Value <= utcNow;
-                    })
-                    .ToList();
+                var enabled = await repo.GetListAsync(x => x.IsEnabled, cancellationToken: cancellationToken);
+                var due = enabled.Where(s => IsDue(s, utcNow)).Select(s => s.Id);
+                var open = await fires.GetListAsync(
+                    x => x.Status == FlowScheduleFireStatus.Running || x.Status == FlowScheduleFireStatus.RetryWait,
+                    cancellationToken: cancellationToken
+                );
+                dueIds = due.Concat(open.Select(x => x.ScheduleId)).Distinct().ToList();
             }
         }
 
-        foreach (var schedule in due)
+        foreach (var id in dueIds)
         {
             try
             {
-                await FireAsync(schedule, utcNow, cancellationToken);
+                using var scope = _scopeFactory.CreateScope();
+                var runner = scope.ServiceProvider.GetRequiredService<FlowScheduleRunner>();
+                await runner.TickAsync(id, utcNow, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
-                    "Schedule {Code} fire failed for FlowKey={FlowKey}",
-                    schedule.Code,
-                    schedule.FlowKey
-                );
+                _logger.LogError(ex, "Schedule {ScheduleId} tick failed.", id);
             }
         }
     }
 
-    private async Task FireAsync(FlowSchedule schedule, DateTime utcNow, CancellationToken cancellationToken)
+    private static bool IsDue(FlowSchedule schedule, DateTime utcNow)
     {
-        // 多实例防重：同一计划同一时刻只允许一个实例触发（Redis 锁；未配置 Redis 时退化为进程内锁）。
-        await using var handle = await _distributedLock.TryAcquireAsync(
-            $"meta-dow:flow-schedule:{schedule.Code}",
-            TimeSpan.FromSeconds(30),
-            cancellationToken
-        );
-        if (handle == null)
+        if (schedule.NextFireAt.HasValue)
         {
-            _logger.LogDebug("Schedule {Code} 已被其它实例接管，跳过本次触发。", schedule.Code);
-            return;
+            return schedule.NextFireAt.Value <= utcNow;
         }
 
-        using var scope = _scopeFactory.CreateScope();
-        var invoker = scope.ServiceProvider.GetRequiredService<IPublishedFlowInvoker>();
-        var repo = scope.ServiceProvider.GetRequiredService<IRepository<FlowSchedule, Guid>>();
-        var uowManager = scope.ServiceProvider.GetRequiredService<IUnitOfWorkManager>();
-        var dataFilter = scope.ServiceProvider.GetRequiredService<IDataFilter>();
-
-        Exception? invokeError = null;
-        try
-        {
-            await invoker.InvokeAsync(
-                schedule.FlowKey,
-                schedule.VariablesJson ?? "{}",
-                triggerSource: $"Schedule:{schedule.Code}",
-                tenantId: schedule.TenantId,
-                filterOutputsByRole: false,
-                cancellationToken: cancellationToken
-            );
-        }
-        catch (Exception ex)
-        {
-            invokeError = ex;
-            _logger.LogError(
-                ex,
-                "Schedule invoke failed. Code={Code} FlowKey={FlowKey}",
-                schedule.Code,
-                schedule.FlowKey
-            );
-        }
-
-        // 无论调用成败都推进下次时间，避免 NextFireAt 卡在过去反复空转
-        var next = FlowScheduleAppService.ComputeNext(schedule.Cron, schedule.TimeZone, utcNow);
-        if (next.HasValue && next.Value <= utcNow)
-        {
-            next = FlowScheduleAppService.ComputeNext(
-                schedule.Cron,
-                schedule.TimeZone,
-                utcNow.AddSeconds(1)
-            );
-        }
-
-        using (dataFilter.Disable<IMultiTenant>())
-        using (var uow = uowManager.Begin(requiresNew: true, isTransactional: false))
-        {
-            var entity = await repo.GetAsync(schedule.Id, cancellationToken: cancellationToken);
-            entity.MarkFired(utcNow, next);
-            await repo.UpdateAsync(entity, autoSave: true, cancellationToken: cancellationToken);
-            await uow.CompleteAsync(cancellationToken);
-        }
-
-        if (invokeError != null)
-        {
-            throw invokeError;
-        }
-
-        _logger.LogInformation(
-            "Schedule fired. Code={Code} FlowKey={FlowKey} Next={Next}",
-            schedule.Code,
-            schedule.FlowKey,
-            next
-        );
+        var next = FlowScheduleAppService.ComputeNext(schedule.Cron, schedule.TimeZone, utcNow.AddMinutes(-1));
+        return next.HasValue && next.Value <= utcNow;
     }
 }

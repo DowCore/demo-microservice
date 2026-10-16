@@ -17,6 +17,21 @@ public static class OrchestrationConsts
     public const int MaxScheduleCodeLength = 64;
     public const int MaxCronLength = 128;
     public const int MaxTimeZoneLength = 64;
+
+    /// <summary>一次触发最多调用几次，含第一次。</summary>
+    public const int ScheduleMinAttempts = 1;
+
+    public const int ScheduleMaxAttempts = 5;
+
+    public const int ScheduleMaxRetryDelaySeconds = 3600;
+
+    public const int ScheduleMaxRetryDelaySlots = 4;
+
+    public const int ScheduleFireRetention = 200;
+
+    public const int ScheduleFireStaleMinutes = 15;
+
+    public const int ScheduleFireErrorMaxLength = 2000;
     public const int CodeScriptTimeoutSeconds = 8;
     public const int CodeMaxStatements = 20_000;
     public const int CodeDbBatchMaxRows = 500;

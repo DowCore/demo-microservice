@@ -111,4 +111,14 @@ public class FlowScheduleController : SaaSController, IFlowScheduleAppService
     [HttpPost]
     [Route("{id}/run-now")]
     public Task<LogicRunResultDto> RunNowAsync(Guid id) => _service.RunNowAsync(id);
+
+    [HttpGet]
+    [Route("{id}/fires")]
+    public Task<PagedResultDto<FlowScheduleFireDto>> GetFiresAsync(Guid id, FlowScheduleFireGetListInput input) =>
+        _service.GetFiresAsync(id, input);
+
+    [HttpPost]
+    [Route("{id}/fires/{fireId}/retry")]
+    public Task<FlowScheduleFireDto> RetryFireAsync(Guid id, Guid fireId) =>
+        _service.RetryFireAsync(id, fireId);
 }

@@ -82,6 +82,26 @@ public class SaaSMongoDbModule : AbpModule
         await CreateIndexAsync(services, logger, db => db.Collection<WorkflowTask>(),
             Builders<WorkflowTask>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.Kind),
             name: "ix_task_status_kind");
+
+        await CreateIndexAsync(services, logger, db => db.Collection<FlowScheduleFire>(),
+            Builders<FlowScheduleFire>.IndexKeys
+                .Ascending(x => x.TenantId)
+                .Ascending(x => x.ScheduleId)
+                .Ascending(x => x.NominalTimeUtc),
+            unique: true,
+            name: "ux_fire_cron_nominal",
+            partial: Builders<FlowScheduleFire>.Filter.Eq(x => x.TriggerKind, FlowScheduleTriggerKind.Cron));
+
+        await CreateIndexAsync(services, logger, db => db.Collection<FlowScheduleFire>(),
+            Builders<FlowScheduleFire>.IndexKeys
+                .Ascending(x => x.ScheduleId)
+                .Ascending(x => x.Status)
+                .Ascending(x => x.NextRetryAt),
+            name: "ix_fire_schedule_status_retry");
+
+        await CreateIndexAsync(services, logger, db => db.Collection<FlowScheduleFire>(),
+            Builders<FlowScheduleFire>.IndexKeys.Ascending(x => x.ScheduleId).Descending(x => x.StartedAt),
+            name: "ix_fire_schedule_started");
     }
 
     private static async Task CreateIndexAsync<T>(
@@ -90,12 +110,13 @@ public class SaaSMongoDbModule : AbpModule
         Func<SaaSDbContext, IMongoCollection<T>> collection,
         IndexKeysDefinition<T> keys,
         bool unique = false,
-        string? name = null)
+        string? name = null,
+        FilterDefinition<T>? partial = null)
     {
         try
         {
             var db = services.GetRequiredService<SaaSDbContext>();
-            var options = new CreateIndexOptions { Unique = unique, Name = name };
+            var options = new CreateIndexOptions<T> { Unique = unique, Name = name, PartialFilterExpression = partial };
             await collection(db).Indexes.CreateOneAsync(new CreateIndexModel<T>(keys, options));
         }
         catch (Exception ex)

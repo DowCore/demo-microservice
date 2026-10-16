@@ -14,7 +14,8 @@
 - 发布校验：出边基数、可达性、控制流结构、超时取值、写重试必须声明幂等键、节点类型白名单、输出契约、**未知与未实现 DSL 字段**。`sql` / `switch` 在发布期拒绝。
 - 运行保障：HTTP 非安全方法不重试；节点超时包在唯一分发点；非 HTTP 写默认不重试；批量写在一个 SQL 事务里，批量删除仍走 `DeleteFlowKey`。
 - 出参按角色和权限在接口层裁剪，子图透传调用方角色。
-- 触发：REST、RabbitMQ、Kafka、MQTT、Cron。Cron（`FlowScheduleHostedService`）取分布式锁后再触发；Rabbit / Kafka / MQTT 三个 `BackgroundService` 仍没有这把锁。
+- 触发：REST、RabbitMQ、Kafka、MQTT、Cron。Cron（`FlowScheduleHostedService` → `FlowScheduleRunner`）取分布式锁后再触发；Rabbit / Kafka / MQTT 三个 `BackgroundService` 仍没有这把锁。
+- **定时任务的重试与失败记录**：计划上可配 `maxAttempts`（1～5，默认 1）和 `retryDelaysSeconds`（默认 60/300/900）。每次正点或手工执行写入 `FlowScheduleFire`。Cron 水位在接纳时推进；重试挂在同一次触发上。次数用尽为 `Dead`，可 `POST .../fires/{fireId}/retry` 再排一次。上一次仍在执行或等待重试时，新的正点记为 `Skipped`。执行超过 15 分钟仍为 `Running` 的，按失败处理。
 - 版本快照、`FlowUsage` 影响索引、发布 / 停用 / 删除均失效缓存，并通过共享失效代数跨副本生效。
 - **ForEach 的一项**：循环体可以是一段脚本。种子 `cf-line-check` 的 `loopBody` 是 Start → Code → End；Code 的 `return` 对象经 End 的 `finalOutputs`（`from: return`，`promote: true`）成为 `items[i]`。脚本里没有 `break` / `continue`，跳过一行用返回字段 `keep: false`。`itemErrorMode=continueOnError` 时，抛错记入 `failed[]` 并继续。
 - **Parallel 的一条分支**：调用一条已发布流程。`FlowDslBranchDsl` 写 `ref`、`subFlowKey`、`inputs`、`outputs`。`ProjectBranchOutputs` 按声明的 `outputs` 投影被调流程的结果；`outputs` 为空则保留被调流程的完整结果。`body` 与 `subFlowKey` 同时存在时执行 `body`。种子 `cf-parallel-demo` 调用 `cf-branch-basic`、`cf-branch-risk`、`cf-branch-audit`。
@@ -171,6 +172,8 @@
 持久化执行（断点续跑）是**决定引擎适用边界的根本问题**，不是普通排期。低成本形态是 `Paused` + `ResumeFrom`；是否引入 Elsa 3 / Temporal 风格尚未决策。
 
 节点级 OpenTelemetry 依赖轨道 A 的埋点，字段级审计依赖 A9 落地，均未排期。
+
+定时任务的重试次数和失败记录已按 [flow-schedule-plan.md](./detail/flow-schedule-plan.md) 落地。默认仍是 1 次，避免在没有运行时幂等时自动重跑写流程。
 
 ## 已知的实现取舍
 

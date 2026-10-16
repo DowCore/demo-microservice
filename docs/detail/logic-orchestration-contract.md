@@ -447,7 +447,7 @@ DSL 反序列化：**camelCase + 大小写不敏感**（`FlowExecutor.cs:40-44`�
 |---|---|---|
 | MessageSource | DataSource | 登记 Rabbit / Kafka / MQTT 连接；Rabbit 连接串留空 = 平台 `rabbitmq` |
 | FlowTrigger | — | 队列 + 绑定 → `flowKey`；消息 JSON = 流程入参 |
-| FlowSchedule | — | Cron + 固定 VariablesJson → `flowKey` |
+| FlowSchedule | — | Cron + 固定 VariablesJson → `flowKey`。`maxAttempts` / `retryDelaysSeconds` 在计划上；每次触发落 `FlowScheduleFire`（`FlowScheduleRunner`） |
 
 已落地 Rabbit / Kafka / MQTT 消费 HostedService（约 20s 热更新监听）+ Cronos 进程内轮询。
 🐞 `FlowScheduleHostedService` 用了 `IAbpDistributedLock`，但 Rabbit/Kafka/MQTT 三个触发器**都没有**；MQTT 的 client id 含随机 Guid ⇒ **多副本必然重复触发**。

@@ -184,6 +184,11 @@ public class FlowScheduleDto : EntityDto<Guid>
     public string? Description { get; set; }
     public DateTime? LastFiredAt { get; set; }
     public DateTime? NextFireAt { get; set; }
+    public int MaxAttempts { get; set; } = 1;
+    public List<int> RetryDelaysSeconds { get; set; } = [];
+    public FlowScheduleFireStatus? LastFireStatus { get; set; }
+    public string? LastError { get; set; }
+    public int ConsecutiveFailures { get; set; }
     public DateTime CreationTime { get; set; }
     public DateTime? LastModificationTime { get; set; }
 }
@@ -219,6 +224,10 @@ public class CreateFlowScheduleDto
 
     [StringLength(512)]
     public string? Description { get; set; }
+
+    public int MaxAttempts { get; set; } = 1;
+
+    public List<int>? RetryDelaysSeconds { get; set; }
 }
 
 public class UpdateFlowScheduleDto
@@ -244,4 +253,39 @@ public class UpdateFlowScheduleDto
 
     [StringLength(512)]
     public string? Description { get; set; }
+
+    public int MaxAttempts { get; set; } = 1;
+
+    public List<int>? RetryDelaysSeconds { get; set; }
+}
+
+public class FlowScheduleFireDto : EntityDto<Guid>
+{
+    public Guid ScheduleId { get; set; }
+    public FlowScheduleTriggerKind TriggerKind { get; set; }
+    public DateTime NominalTimeUtc { get; set; }
+    public FlowScheduleFireStatus Status { get; set; }
+    public int Attempt { get; set; }
+    public int MaxAttempts { get; set; }
+    public DateTime? NextRetryAt { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public string? Error { get; set; }
+    public string? SkipReason { get; set; }
+    public List<FlowScheduleFireAttemptDto> Attempts { get; set; } = [];
+}
+
+public class FlowScheduleFireAttemptDto
+{
+    public int N { get; set; }
+    public Guid? InstanceId { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+}
+
+public class FlowScheduleFireGetListInput : PagedAndSortedResultRequestDto
+{
+    public FlowScheduleFireStatus? Status { get; set; }
 }

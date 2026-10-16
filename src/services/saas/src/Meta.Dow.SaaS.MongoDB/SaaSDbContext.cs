@@ -31,6 +31,8 @@ public class SaaSDbContext : AbpMongoDbContext
 
     public IMongoCollection<FlowSchedule> FlowSchedules => Collection<FlowSchedule>();
 
+    public IMongoCollection<FlowScheduleFire> FlowScheduleFires => Collection<FlowScheduleFire>();
+
     public IMongoCollection<TableDefinition> TableDefinitions => Collection<TableDefinition>();
 
     public IMongoCollection<DbQueryObject> DbQueryObjects => Collection<DbQueryObject>();
